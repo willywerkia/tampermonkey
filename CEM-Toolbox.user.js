@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.4
+// @version      1.3.5
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -854,7 +854,7 @@
       tag.dataset.kamStatus = status2?.value || "";
       tag.textContent = `KAM Status: ${status2.label}`;
       tag.title = loading ? `KAM Status des ${matchType} wird im Hintergrund geladen` : `KAM Status des ${matchType}: ${status2.label}`;
-      tag.style.cssText = `display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:0;padding:5px 9px;border:${out ? "2px solid #c92a2a" : "1px solid rgba(0,0,0,0.26)"};border-radius:999px;background:${out ? "#fa5252" : "rgba(255,255,255,0.16)"};color:${out ? "#fff" : "rgba(0,0,0,0.64)"};font-size:12px;font-weight:${out ? "900" : "700"};line-height:1.2;white-space:nowrap;vertical-align:middle;box-shadow:${out ? "0 2px 5px rgba(201,42,42,0.28)" : "none"};opacity:${loading && !out ? "0.72" : "1"};`;
+      tag.style.cssText = `display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:0;padding:5px 9px;border:${out ? "2px solid #c92a2a" : "1px solid rgba(0,0,0,0.26)"};border-radius:999px;background:${out ? "#fa5252" : "rgba(255,255,255,0.16)"};color:${out ? "#fff" : "rgba(0,0,0,0.64)"};font-size:12px;font-weight:400;line-height:1.2;white-space:nowrap;vertical-align:middle;box-shadow:${out ? "0 2px 5px rgba(201,42,42,0.28)" : "none"};opacity:${loading && !out ? "0.72" : "1"};`;
     }
     function setTag(row, status2, chip = getMatchTypeChip(row)) {
       const existing = row.querySelector(`.${TAG_CLASS}`);
