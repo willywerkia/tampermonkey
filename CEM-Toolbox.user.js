@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.3
+// @version      1.3.4
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -837,6 +837,9 @@
   function getCandidateIdFromRoute(hash = location.hash || "") {
     return String(hash).match(/^#\/Candidate\/([a-f0-9-]{36})\/show\/7/i)?.[1] || "";
   }
+  function getMatchTypeChip(row) {
+    return row?.querySelector(".MuiChip-root") || null;
+  }
   function executeReverseMatchKamStatus(runtime) {
     runtime.registerSource("cem/toolbox/src/features/cem-ofm/reverse-match-kam-status.js");
     const statusCache = /* @__PURE__ */ new Map();
@@ -845,33 +848,29 @@
     let running = false;
     let renderTimer = null;
     const isPotentialMatchesPage = () => POTENTIAL_MATCHES_ROUTE.test(location.hash || "");
-    const reverseMatchChip = (row) => [...row?.querySelectorAll(".MuiChip-root") || []].find((chip) => {
-      const label = chip.querySelector(".MuiChip-label")?.textContent || chip.textContent || "";
-      return label.trim().toLowerCase() === "reverse match";
-    }) || null;
-    function updateTag(tag, status2) {
+    function updateTag(tag, status2, matchType) {
       const out = status2?.value === "out";
       const loading = status2?.value === "loading";
       tag.dataset.kamStatus = status2?.value || "";
       tag.textContent = `KAM Status: ${status2.label}`;
-      tag.title = loading ? "KAM Status des Reverse Match wird im Hintergrund geladen" : `KAM Status des bereits gesendeten Reverse Match: ${status2.label}`;
+      tag.title = loading ? `KAM Status des ${matchType} wird im Hintergrund geladen` : `KAM Status des ${matchType}: ${status2.label}`;
       tag.style.cssText = `display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:0;padding:5px 9px;border:${out ? "2px solid #c92a2a" : "1px solid rgba(0,0,0,0.26)"};border-radius:999px;background:${out ? "#fa5252" : "rgba(255,255,255,0.16)"};color:${out ? "#fff" : "rgba(0,0,0,0.64)"};font-size:12px;font-weight:${out ? "900" : "700"};line-height:1.2;white-space:nowrap;vertical-align:middle;box-shadow:${out ? "0 2px 5px rgba(201,42,42,0.28)" : "none"};opacity:${loading && !out ? "0.72" : "1"};`;
     }
-    function setTag(row, status2) {
+    function setTag(row, status2, chip = getMatchTypeChip(row)) {
       const existing = row.querySelector(`.${TAG_CLASS}`);
-      const chip = reverseMatchChip(row);
+      const matchType = chip?.querySelector(".MuiChip-label")?.textContent?.trim() || chip?.textContent?.trim() || "Match";
       if (!status2?.label) {
         existing?.remove();
         return;
       }
       if (existing) {
-        updateTag(existing, status2);
+        updateTag(existing, status2, matchType);
         if (chip && chip.nextElementSibling !== existing) chip.insertAdjacentElement("afterend", existing);
         return;
       }
       const tag = document.createElement("span");
       tag.className = TAG_CLASS;
-      updateTag(tag, status2);
+      updateTag(tag, status2, matchType);
       if (chip) chip.insertAdjacentElement("afterend", tag);
       else row.querySelector("td.column-connection, td.column-reverse")?.appendChild(tag);
     }
@@ -914,7 +913,7 @@
           try {
             statuses = await lookupStatuses(task.candidateId, task.employerId);
           } catch (error) {
-            console.warn("[CEM Reverse-Match] KAM-Status konnte nicht geladen werden:", error);
+            console.warn("[CEM Match] KAM-Status konnte nicht geladen werden:", error);
           }
           task.jobIds.forEach((jobId) => cacheStatus(`${task.candidateId}|${jobId}`, statuses?.get(jobId) || (statuses ? { value: "not-found", label: "nicht gefunden" } : { value: "lookup-error", label: "Ladefehler" }), statuses ? CACHE_TTL_MS : 15 * 1e3));
           tasks.delete(task.key);
@@ -929,7 +928,8 @@
       const candidateId = getCandidateIdFromRoute();
       if (!candidateId) return;
       document.querySelectorAll("tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root").forEach((row) => {
-        if (!reverseMatchChip(row)) {
+        const chip = getMatchTypeChip(row);
+        if (!chip) {
           setTag(row, null);
           return;
         }
@@ -938,10 +938,10 @@
         if (!jobId || !employerId) return;
         const status2 = cachedStatus(`${candidateId}|${jobId}`);
         if (status2 !== void 0) {
-          setTag(row, status2);
+          setTag(row, status2, chip);
           return;
         }
-        setTag(row, { value: "loading", label: "lädt…" });
+        setTag(row, { value: "loading", label: "lädt…" }, chip);
         enqueue(candidateId, employerId, jobId);
       });
     }
