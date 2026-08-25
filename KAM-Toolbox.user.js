@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.7
+// @version      1.1.8
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3182,10 +3182,16 @@
       const bar = document.createElement("div");
       bar.id = TERM_BAR_ID;
       bar.style.cssText = `
+      position: absolute;
+      top: 72px;
+      left: 50%;
+      z-index: 2;
+      width: min(620px, calc(100% - 72px));
+      box-sizing: border-box;
+      transform: translateX(-50%);
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 14px;
-      margin: 0 0 16px;
       min-height: 132px;
       padding: 18px;
       border: 1px solid #f1c89d;
@@ -3232,8 +3238,20 @@
       });
       actions.append(copy, paste);
       bar.append(content, actions);
-      appointmentFields.insertAdjacentElement("beforebegin", bar);
+      if (window.getComputedStyle(dialog).position === "static") {
+        bar.dataset.restoreDialogPosition = dialog.style.position;
+        dialog.style.position = "relative";
+      }
+      dialog.appendChild(bar);
       updateDashboard(bar, dialog);
+    }
+    function removeTermDashboard() {
+      const dashboard = document.getElementById(TERM_BAR_ID);
+      const dialog = dashboard?.closest('.MuiDialog-paper, [role="dialog"]');
+      if (dashboard?.dataset.restoreDialogPosition !== void 0 && dialog) {
+        dialog.style.position = dashboard.dataset.restoreDialogPosition;
+      }
+      dashboard?.remove();
     }
     function dashboardDetail(label, value) {
       const item = document.createElement("div");
@@ -3265,11 +3283,11 @@
       const dialog = appointmentDialog();
       const existing = document.getElementById(TERM_BAR_ID);
       if (!dialog) {
-        existing?.remove();
+        removeTermDashboard();
         return;
       }
       if (existing?.closest('.MuiDialog-paper, [role="dialog"]') === dialog) return;
-      existing?.remove();
+      removeTermDashboard();
       addTermButtons(dialog);
     }
     let syncTimer = null;
