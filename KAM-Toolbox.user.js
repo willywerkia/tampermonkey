@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.6
+// @version      1.1.7
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2983,11 +2983,26 @@
   var TERM_KEY = "werkia_termine_copy_v4";
   var TERM_BAR_ID = "werkia-termine-buttons";
   var APPOINTMENT_INPUT_SELECTOR = ".RaArrayInput-root input.MuiPickersInputBase-input";
+  var APPOINTMENT_PICKER_SELECTOR = ".MuiPickersInputBase-root";
   function getAppointments(root = document) {
     return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el) => el.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
   }
   function hasAppointmentFields(dialog) {
     return Boolean(dialog?.querySelector?.(APPOINTMENT_INPUT_SELECTOR));
+  }
+  function appointmentCountChange(currentCount, targetCount) {
+    const current = Math.max(0, Number(currentCount) || 0);
+    const target = Math.max(0, Number(targetCount) || 0);
+    return { add: Math.max(0, target - current), remove: Math.max(0, current - target) };
+  }
+  function normalizeTermTemplate(data) {
+    if (!data || typeof data !== "object") return null;
+    return {
+      location: typeof data.location === "string" ? data.location : "",
+      instructions: typeof data.instructions === "string" ? data.instructions : "",
+      notes: typeof data.notes === "string" ? data.notes : "",
+      appointments: Array.isArray(data.appointments) ? data.appointments.filter((value) => typeof value === "string") : []
+    };
   }
   function parseAppointmentValue(value) {
     const parts = value.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$/);
@@ -3010,6 +3025,21 @@
     }
     function appointmentDialog() {
       return [...document.querySelectorAll('.MuiDialog-paper, [role="dialog"]')].filter((dialog) => isVisible(dialog) && hasAppointmentFields(dialog)).at(-1) || null;
+    }
+    function appointmentArrayRoot(dialog) {
+      return [...dialog.querySelectorAll(".RaArrayInput-root")].find((root) => root.querySelector(APPOINTMENT_INPUT_SELECTOR)) || null;
+    }
+    function appointmentPickerRoots(dialog) {
+      return [...appointmentArrayRoot(dialog)?.querySelectorAll(APPOINTMENT_PICKER_SELECTOR) || []];
+    }
+    function storedTerms() {
+      const raw = localStorage.getItem(TERM_KEY);
+      if (!raw) return null;
+      try {
+        return normalizeTermTemplate(JSON.parse(raw));
+      } catch {
+        return null;
+      }
     }
     function termToast(text) {
       const el = document.createElement("div");
@@ -3063,7 +3093,7 @@
         setValue(input, `${values[0]}.${values[1]}.${values[2]} ${values[3]}:${values[4]}`);
       }
     }
-    function copyTerms(dialog) {
+    function copyTerms(dialog, dashboard) {
       const data = {
         location: dialog.querySelector(".MuiSelect-select")?.innerText?.trim() || "",
         instructions: dialog.querySelector('input[name="instructions"]')?.value || "",
@@ -3072,6 +3102,7 @@
       };
       localStorage.setItem(TERM_KEY, JSON.stringify(data));
       console.log("Werkia Terminvorschläge kopiert:", data);
+      updateDashboard(dashboard, dialog);
       termToast(`Terminvorschläge kopiert: ${data.appointments.length} Termine`);
     }
     async function selectMuiOptionByText(dialog, text) {
@@ -3083,63 +3114,110 @@
       const option = [...document.querySelectorAll('[role="option"], .MuiMenuItem-root')].find((o) => isVisible(o) && o.innerText.trim() === text.trim());
       if (option) option.click();
     }
-    async function pasteTerms(dialog) {
-      const raw = localStorage.getItem(TERM_KEY);
-      if (!raw) {
+    async function waitFor(check, timeoutMs = 2500, intervalMs = 80) {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        if (check()) return true;
+        await new Promise((resolve) => runtime.setTimeout(resolve, intervalMs));
+      }
+      return false;
+    }
+    function addAppointmentButton(root) {
+      return root?.querySelector('.RaSimpleFormIterator-add button[aria-label="Neu"], button[class*="button-add-"], button.button-add, button[aria-label="Neu"]');
+    }
+    function removeAppointmentButton(root) {
+      const buttons = [...root?.querySelectorAll('.RaSimpleFormIterator-line button[class*="button-remove-"], .RaSimpleFormIterator-line button.button-remove, .RaSimpleFormIterator-line button[aria-label="Entfernen"], .RaSimpleFormIterator-line button[aria-label="Löschen"]') || []];
+      return buttons.filter(isVisible).at(-1) || buttons.at(-1) || null;
+    }
+    async function ensureAppointmentCount(dialog, targetCount) {
+      const target = Math.max(0, targetCount);
+      let guard = 0;
+      while (appointmentCountChange(appointmentPickerRoots(dialog).length, target).remove > 0 && guard < 20) {
+        const root = appointmentArrayRoot(dialog);
+        const before = appointmentPickerRoots(dialog).length;
+        const remove = removeAppointmentButton(root);
+        if (!remove) return false;
+        remove.click();
+        if (!await waitFor(() => appointmentPickerRoots(dialog).length < before)) return false;
+        guard += 1;
+      }
+      while (appointmentCountChange(appointmentPickerRoots(dialog).length, target).add > 0 && guard < 20) {
+        const root = appointmentArrayRoot(dialog);
+        const before = appointmentPickerRoots(dialog).length;
+        const add = addAppointmentButton(root);
+        if (!add) return false;
+        add.click();
+        if (!await waitFor(() => appointmentPickerRoots(dialog).length > before)) return false;
+        guard += 1;
+      }
+      return appointmentPickerRoots(dialog).length === target;
+    }
+    async function pasteTerms(dialog, dashboard) {
+      const data = storedTerms();
+      if (!data) {
         termToast("Keine kopierten Terminvorschläge gefunden");
         return;
       }
-      let data;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        termToast("Gespeicherte Terminvorschläge sind ungültig");
+      if (!await ensureAppointmentCount(dialog, data.appointments.length)) {
+        termToast("Terminanzahl konnte nicht vollständig angepasst werden");
         return;
       }
-      const appointments = Array.isArray(data.appointments) ? data.appointments : [];
       const instructions = dialog.querySelector('input[name="instructions"]');
-      if (instructions) setValue(instructions, data.instructions || "");
+      if (instructions) setValue(instructions, data.instructions);
       const notes = dialog.querySelector('textarea[name="notes"]');
-      if (notes) setValue(notes, data.notes || "");
-      const pickerRoots = [...dialog.querySelectorAll(".RaArrayInput-root .MuiPickersInputBase-root")];
-      appointments.forEach((value, index) => {
+      if (notes) setValue(notes, data.notes);
+      const pickerRoots = appointmentPickerRoots(dialog);
+      data.appointments.forEach((value, index) => {
         if (pickerRoots[index]) {
           setPicker(pickerRoots[index], value);
         }
       });
       await selectMuiOptionByText(dialog, data.location);
-      termToast(`Terminvorschläge eingefügt: ${appointments.length} Termine`);
+      updateDashboard(dashboard, dialog);
+      termToast(`Terminvorschläge eingefügt: ${data.appointments.length} Termine`);
     }
     function addTermButtons(dialog) {
-      const appointmentFields = dialog.querySelector(".RaArrayInput-root");
+      const appointmentFields = appointmentArrayRoot(dialog);
       if (!appointmentFields) return;
       const bar = document.createElement("div");
       bar.id = TERM_BAR_ID;
       bar.style.cssText = `
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 0 0 12px;
-      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      margin: 0 0 16px;
+      min-height: 132px;
+      padding: 18px;
       border: 1px solid #f1c89d;
-      border-radius: 6px;
-      background: #fff3e0;
-      font: 600 13px/1.2 Arial, sans-serif;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #fff9f2, #fff0df);
+      box-shadow: 0 3px 12px rgba(112, 54, 0, .08);
+      font: 600 13px/1.35 Arial, sans-serif;
       color: #663000;
     `;
-      const label = document.createElement("span");
-      label.textContent = "Terminvorschläge";
+      const content = document.createElement("div");
+      const title = document.createElement("div");
+      title.textContent = "Terminvorlage";
+      title.style.cssText = "font-size:16px; font-weight:800; color:#7a3600;";
+      const summary = document.createElement("div");
+      summary.className = "werkia-termine-summary";
+      summary.style.cssText = "margin-top:3px; color:#8a5a32; font-weight:500;";
+      const details = document.createElement("div");
+      details.className = "werkia-termine-details";
+      details.style.cssText = "display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 18px; margin-top:14px;";
+      content.append(title, summary, details);
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end; gap:8px;";
       const copy = document.createElement("button");
       copy.type = "button";
       copy.textContent = "Kopieren";
       copy.title = "Terminvorschläge aus diesem Dialog kopieren";
-      copy.onclick = () => copyTerms(dialog);
+      copy.onclick = () => copyTerms(dialog, bar);
       const paste = document.createElement("button");
       paste.type = "button";
       paste.textContent = "Einfügen";
       paste.title = "Kopierte Terminvorschläge in diesen Dialog einfügen";
-      paste.onclick = () => pasteTerms(dialog);
+      paste.onclick = () => pasteTerms(dialog, bar);
       [copy, paste].forEach((btn) => {
         btn.style.cssText = `
         background: #bf5b00;
@@ -3152,8 +3230,36 @@
         font-size: 13px;
       `;
       });
-      bar.append(label, copy, paste);
+      actions.append(copy, paste);
+      bar.append(content, actions);
       appointmentFields.insertAdjacentElement("beforebegin", bar);
+      updateDashboard(bar, dialog);
+    }
+    function dashboardDetail(label, value) {
+      const item = document.createElement("div");
+      const heading = document.createElement("div");
+      heading.textContent = label;
+      heading.style.cssText = "font-size:11px; font-weight:800; letter-spacing:.03em; text-transform:uppercase; color:#a6652f;";
+      const text = document.createElement("div");
+      text.textContent = value || "Nicht belegt";
+      text.style.cssText = "margin-top:2px; color:#593015; font-weight:600; white-space:pre-wrap; overflow:hidden; text-overflow:ellipsis;";
+      item.append(heading, text);
+      return item;
+    }
+    function updateDashboard(bar, dialog) {
+      const template = storedTerms();
+      const summary = bar.querySelector(".werkia-termine-summary");
+      const details = bar.querySelector(".werkia-termine-details");
+      if (!summary || !details) return;
+      const currentCount = appointmentPickerRoots(dialog).length;
+      const count = template?.appointments.length || 0;
+      summary.textContent = template ? `${count} gespeicherte ${count === 1 ? "Terminvorschlag" : "Terminvorschläge"} werden in diesen Dialog übernommen.` : `Noch keine Vorlage gespeichert. Der Dialog enthält ${currentCount} Termin${currentCount === 1 ? "" : "e"}.`;
+      details.replaceChildren(
+        dashboardDetail("Gespeicherte Termine", template?.appointments.join("\n") || "Keine"),
+        dashboardDetail("Ort", template?.location),
+        dashboardDetail("Hinweise", template?.instructions),
+        dashboardDetail("Notizen", template?.notes)
+      );
     }
     function syncTermButtons() {
       const dialog = appointmentDialog();
