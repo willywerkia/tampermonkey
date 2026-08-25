@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.5
+// @version      1.1.6
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2982,8 +2982,12 @@
   // src/features/kam-suite/appointment-copy-paste.js
   var TERM_KEY = "werkia_termine_copy_v4";
   var TERM_BAR_ID = "werkia-termine-buttons";
+  var APPOINTMENT_INPUT_SELECTOR = ".RaArrayInput-root input.MuiPickersInputBase-input";
   function getAppointments(root = document) {
-    return [...root.querySelectorAll(".RaArrayInput-root input.MuiPickersInputBase-input")].map((el) => el.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
+    return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el) => el.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
+  }
+  function hasAppointmentFields(dialog) {
+    return Boolean(dialog?.querySelector?.(APPOINTMENT_INPUT_SELECTOR));
   }
   function parseAppointmentValue(value) {
     const parts = value.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$/);
@@ -2998,6 +3002,15 @@
   }
   function executeAppointmentCopyPaste(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/appointment-copy-paste.js");
+    function isVisible(element) {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    }
+    function appointmentDialog() {
+      return [...document.querySelectorAll('.MuiDialog-paper, [role="dialog"]')].filter((dialog) => isVisible(dialog) && hasAppointmentFields(dialog)).at(-1) || null;
+    }
     function termToast(text) {
       const el = document.createElement("div");
       el.textContent = text;
@@ -3050,69 +3063,83 @@
         setValue(input, `${values[0]}.${values[1]}.${values[2]} ${values[3]}:${values[4]}`);
       }
     }
-    function copyTerms() {
+    function copyTerms(dialog) {
       const data = {
-        location: document.querySelector(".MuiSelect-select")?.innerText?.trim() || "",
-        instructions: document.querySelector('input[name="instructions"]')?.value || "",
-        notes: document.querySelector('textarea[name="notes"]')?.value || "",
-        appointments: getAppointments()
+        location: dialog.querySelector(".MuiSelect-select")?.innerText?.trim() || "",
+        instructions: dialog.querySelector('input[name="instructions"]')?.value || "",
+        notes: dialog.querySelector('textarea[name="notes"]')?.value || "",
+        appointments: getAppointments(dialog)
       };
       localStorage.setItem(TERM_KEY, JSON.stringify(data));
       console.log("Werkia Terminvorschläge kopiert:", data);
       termToast(`Terminvorschläge kopiert: ${data.appointments.length} Termine`);
     }
-    async function selectMuiOptionByText(text) {
+    async function selectMuiOptionByText(dialog, text) {
       if (!text) return;
-      const select = document.querySelector(".MuiSelect-select");
+      const select = dialog.querySelector(".MuiSelect-select");
       if (!select) return;
       select.click();
       await new Promise((resolve) => runtime.setTimeout(resolve, 300));
-      const option = [...document.querySelectorAll('[role="option"], .MuiMenuItem-root')].find((o) => o.innerText.trim() === text.trim());
+      const option = [...document.querySelectorAll('[role="option"], .MuiMenuItem-root')].find((o) => isVisible(o) && o.innerText.trim() === text.trim());
       if (option) option.click();
     }
-    async function pasteTerms() {
+    async function pasteTerms(dialog) {
       const raw = localStorage.getItem(TERM_KEY);
       if (!raw) {
         termToast("Keine kopierten Terminvorschläge gefunden");
         return;
       }
-      const data = JSON.parse(raw);
-      const instructions = document.querySelector('input[name="instructions"]');
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        termToast("Gespeicherte Terminvorschläge sind ungültig");
+        return;
+      }
+      const appointments = Array.isArray(data.appointments) ? data.appointments : [];
+      const instructions = dialog.querySelector('input[name="instructions"]');
       if (instructions) setValue(instructions, data.instructions || "");
-      const notes = document.querySelector('textarea[name="notes"]');
+      const notes = dialog.querySelector('textarea[name="notes"]');
       if (notes) setValue(notes, data.notes || "");
-      const pickerRoots = [...document.querySelectorAll(".RaArrayInput-root .MuiPickersInputBase-root")];
-      data.appointments.forEach((value, index) => {
+      const pickerRoots = [...dialog.querySelectorAll(".RaArrayInput-root .MuiPickersInputBase-root")];
+      appointments.forEach((value, index) => {
         if (pickerRoots[index]) {
           setPicker(pickerRoots[index], value);
         }
       });
-      await selectMuiOptionByText(data.location);
-      termToast(`Terminvorschläge eingefügt: ${data.appointments.length} Termine`);
+      await selectMuiOptionByText(dialog, data.location);
+      termToast(`Terminvorschläge eingefügt: ${appointments.length} Termine`);
     }
-    function addTermButtons() {
-      if (document.getElementById(TERM_BAR_ID)) return;
-      const popup = document.querySelector(".MuiDialog-paper");
-      if (!popup || !document.querySelector(".RaArrayInput-root")) return;
+    function addTermButtons(dialog) {
+      const appointmentFields = dialog.querySelector(".RaArrayInput-root");
+      if (!appointmentFields) return;
       const bar = document.createElement("div");
       bar.id = TERM_BAR_ID;
       bar.style.cssText = `
-      position: fixed;
-      z-index: 9999999;
       display: flex;
+      align-items: center;
+      flex-wrap: wrap;
       gap: 8px;
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border: 1px solid #f1c89d;
+      border-radius: 6px;
+      background: #fff3e0;
+      font: 600 13px/1.2 Arial, sans-serif;
+      color: #663000;
     `;
-      function positionBar() {
-        const rect = popup.getBoundingClientRect();
-        bar.style.top = `${rect.top - 60}px`;
-        bar.style.left = `${rect.right - 330}px`;
-      }
+      const label = document.createElement("span");
+      label.textContent = "Terminvorschläge";
       const copy = document.createElement("button");
-      copy.textContent = "Terminvorschläge kopieren";
-      copy.onclick = copyTerms;
+      copy.type = "button";
+      copy.textContent = "Kopieren";
+      copy.title = "Terminvorschläge aus diesem Dialog kopieren";
+      copy.onclick = () => copyTerms(dialog);
       const paste = document.createElement("button");
-      paste.textContent = "Terminvorschläge einfügen";
-      paste.onclick = pasteTerms;
+      paste.type = "button";
+      paste.textContent = "Einfügen";
+      paste.title = "Kopierte Terminvorschläge in diesen Dialog einfügen";
+      paste.onclick = () => pasteTerms(dialog);
       [copy, paste].forEach((btn) => {
         btn.style.cssText = `
         background: #bf5b00;
@@ -3125,18 +3152,31 @@
         font-size: 13px;
       `;
       });
-      bar.append(copy, paste);
-      document.body.appendChild(bar);
-      positionBar();
-      runtime.addWindowListener("resize", positionBar);
+      bar.append(label, copy, paste);
+      appointmentFields.insertAdjacentElement("beforebegin", bar);
     }
-    runtime.setInterval(() => {
-      if (document.querySelector(".RaArrayInput-root")) {
-        addTermButtons();
-      } else {
-        document.getElementById(TERM_BAR_ID)?.remove();
+    function syncTermButtons() {
+      const dialog = appointmentDialog();
+      const existing = document.getElementById(TERM_BAR_ID);
+      if (!dialog) {
+        existing?.remove();
+        return;
       }
-    }, 500);
+      if (existing?.closest('.MuiDialog-paper, [role="dialog"]') === dialog) return;
+      existing?.remove();
+      addTermButtons(dialog);
+    }
+    let syncTimer = null;
+    function scheduleSync() {
+      if (syncTimer !== null) return;
+      syncTimer = runtime.setTimeout(() => {
+        syncTimer = null;
+        syncTermButtons();
+      }, 100);
+    }
+    runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleSync);
+    scheduleSync();
   }
 
   // kam-legacy-userscript:shared/userscripts/dringende_vakanzen_highlight.user.js
