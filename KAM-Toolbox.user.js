@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.17
+// @version      1.1.18
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3364,12 +3364,12 @@ ${next}`;
     const style = document.createElement("style");
     style.id = STYLE_ID2;
     style.textContent = `
-    [${LAYOUT_ROOT_ATTR}="left"] { position:relative !important; }
-    [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:61% !important; max-width:61% !important; margin-left:39% !important; flex:0 0 61% !important; }
+    [${LAYOUT_ROOT_ATTR}="left"] { --om-flags-panel-width:min(620px, max(500px, 35%)); position:relative !important; }
+    [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:calc(100% - var(--om-flags-panel-width)) !important; max-width:calc(100% - var(--om-flags-panel-width)) !important; margin-left:var(--om-flags-panel-width) !important; flex:0 0 calc(100% - var(--om-flags-panel-width)) !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}] textarea, [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}] input { min-height:82px !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] textarea, [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] input { min-height:56px !important; }
     #${TOOLBAR_ID} { --om-surface:#fff; --om-surface-muted:var(--apt-color-surface-muted,#f1eef7); --om-border:var(--apt-color-border,#e2e0e8); --om-text:var(--apt-color-text,#1c1a22); --om-text-muted:var(--apt-color-text-muted,#6b6775); --om-primary:var(--apt-color-primary,#6d4aff); --om-primary-tint:var(--apt-color-primary-tint,#f1edff); --om-focus:var(--apt-color-focus,#b6a4ff); display:block; box-sizing:border-box; overflow:hidden; border:1px solid var(--om-border); border-radius:16px; background:var(--om-surface); color:var(--om-text); box-shadow:0 10px 24px rgba(28,26,34,.16); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
-    #${TOOLBAR_ID}[data-layout="left"] { position:absolute; left:0; z-index:10; width:35%; min-width:500px; max-width:620px; margin:0; }
+    #${TOOLBAR_ID}[data-layout="left"] { position:absolute; left:0; z-index:10; width:var(--om-flags-panel-width); margin:0; }
     #${TOOLBAR_ID}[data-layout="above"] { width:min(720px, 100%); margin:0 0 10px; }
     #${TOOLBAR_ID} .werkia-om-notes-head { padding:10px 12px; background:var(--apt-color-header-bg,#3a3548); color:#fff; }
     #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#fff; font:650 17px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:-.01em; }
