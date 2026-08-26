@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.15
+// @version      1.1.16
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3366,23 +3366,25 @@ ${next}`;
     style.textContent = `
     [${LAYOUT_ROOT_ATTR}="left"] { position:relative !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:64% !important; max-width:64% !important; margin-left:36% !important; flex:0 0 64% !important; }
+    [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}] textarea, [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}] input { min-height:82px !important; }
+    [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] textarea, [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] input { min-height:56px !important; }
     #${TOOLBAR_ID} { --om-surface:#fff; --om-surface-muted:var(--apt-color-surface-muted,#f1eef7); --om-border:var(--apt-color-border,#e2e0e8); --om-text:var(--apt-color-text,#1c1a22); --om-text-muted:var(--apt-color-text-muted,#6b6775); --om-primary:var(--apt-color-primary,#6d4aff); --om-primary-tint:var(--apt-color-primary-tint,#f1edff); --om-focus:var(--apt-color-focus,#b6a4ff); display:block; box-sizing:border-box; overflow:hidden; border:1px solid var(--om-border); border-radius:16px; background:var(--om-surface); color:var(--om-text); box-shadow:0 10px 24px rgba(28,26,34,.16); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
     #${TOOLBAR_ID}[data-layout="left"] { position:absolute; left:0; z-index:10; width:33%; min-width:440px; max-width:540px; margin:0; }
     #${TOOLBAR_ID}[data-layout="above"] { width:min(720px, 100%); margin:0 0 10px; }
-    #${TOOLBAR_ID} .werkia-om-notes-head { padding:10px 12px; background:var(--apt-color-header-bg,#3a3548); color:#fff; }
-    #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#fff; font:650 16px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:-.01em; }
-    #${TOOLBAR_ID} .werkia-om-notes-help { margin:3px 0 0; color:#e7e4ee; font:500 11px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    #${TOOLBAR_ID} .werkia-om-notes-groups { display:grid; grid-template-columns:1fr 1fr; gap:9px 12px; padding:10px 12px 0; }
+    #${TOOLBAR_ID} .werkia-om-notes-head { padding:8px 10px; background:var(--apt-color-header-bg,#3a3548); color:#fff; }
+    #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#fff; font:650 15px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:-.01em; }
+    #${TOOLBAR_ID} .werkia-om-notes-help { margin:2px 0 0; color:#e7e4ee; font:500 10px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-groups { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; padding:8px 10px 0; }
     #${TOOLBAR_ID} .werkia-om-notes-group { min-width:0; }
-    #${TOOLBAR_ID} .werkia-om-notes-group-label { display:block; margin-bottom:5px; color:var(--om-text-muted); font:650 11px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    #${TOOLBAR_ID} .werkia-om-notes-chips { display:flex; flex-wrap:wrap; gap:5px; }
-    #${TOOLBAR_ID} .werkia-om-notes-chip { min-height:29px; padding:4px 9px; border:1px solid var(--om-border); border-radius:999px; background:var(--om-surface-muted); color:var(--om-text-muted); cursor:pointer; font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif; transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease; }
+    #${TOOLBAR_ID} .werkia-om-notes-group-label { display:block; margin-bottom:3px; color:var(--om-text-muted); font:650 10px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-chips { display:flex; flex-wrap:wrap; gap:4px; }
+    #${TOOLBAR_ID} .werkia-om-notes-chip { min-height:26px; padding:4px 8px; border:1px solid var(--om-border); border-radius:999px; background:var(--om-surface-muted); color:var(--om-text-muted); cursor:pointer; font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif; transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease; }
     #${TOOLBAR_ID} .werkia-om-notes-chip:hover { border-color:var(--om-primary); background:var(--om-primary-tint); color:var(--om-primary); }
     #${TOOLBAR_ID} .werkia-om-notes-chip.is-active { border-color:var(--om-primary); background:var(--om-primary-tint); color:var(--om-primary); }
     #${TOOLBAR_ID} .werkia-om-notes-chip:focus-visible, #${TOOLBAR_ID} .werkia-om-notes-custom input:focus-visible, #${TOOLBAR_ID} .werkia-om-notes-custom select:focus-visible, #${TOOLBAR_ID} .werkia-om-notes-custom button:focus-visible { outline:2px solid var(--om-focus); outline-offset:2px; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom { display:grid; grid-template-columns:minmax(120px, 1fr) minmax(150px, auto) auto; gap:5px; margin:10px 12px 12px; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom input, #${TOOLBAR_ID} .werkia-om-notes-custom select { min-width:0; height:34px; padding:5px 8px; border:1px solid var(--om-border); border-radius:10px; background:var(--om-surface); color:var(--om-text); font:400 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom button { min-height:34px; padding:5px 10px; border:1px solid var(--om-primary); border-radius:10px; background:var(--om-primary); color:#fff; cursor:pointer; font:600 12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom { display:grid; grid-template-columns:minmax(120px, 1fr) minmax(150px, auto) auto; gap:5px; margin:7px 10px 10px; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom input, #${TOOLBAR_ID} .werkia-om-notes-custom select { min-width:0; height:31px; padding:5px 8px; border:1px solid var(--om-border); border-radius:10px; background:var(--om-surface); color:var(--om-text); font:400 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom button { min-height:31px; padding:5px 10px; border:1px solid var(--om-primary); border-radius:10px; background:var(--om-primary); color:#fff; cursor:pointer; font:600 12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
     #${TOOLBAR_ID} .werkia-om-notes-custom button:hover { background:var(--apt-color-primary-hover,#5535d6); }
     @media (max-width:1180px) { [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:100% !important; max-width:100% !important; margin-left:0 !important; flex-basis:100% !important; } #${TOOLBAR_ID}[data-layout="left"] { position:relative; width:min(720px, 100%); min-width:0; max-width:none; margin:0 0 10px; } }
     @media (max-width:520px) { #${TOOLBAR_ID} .werkia-om-notes-groups { grid-template-columns:1fr; } #${TOOLBAR_ID} .werkia-om-notes-custom { grid-template-columns:1fr; } }
@@ -3404,9 +3406,17 @@ ${next}`;
     const ElementClass = toolbar.ownerDocument.defaultView?.HTMLElement;
     const positioningRoot = ElementClass && toolbar.offsetParent instanceof ElementClass ? toolbar.offsetParent : fallbackRoot;
     if (!positioningRoot) return;
+    const documentRef = toolbar.ownerDocument;
+    const viewportHeight = documentRef.defaultView?.innerHeight || 0;
     const rootRect = positioningRoot.getBoundingClientRect();
     const omRect = anchor.getBoundingClientRect();
-    toolbar.style.top = `${Math.max(0, Math.round(omRect.top - rootRect.top + positioningRoot.scrollTop))}px`;
+    const toolbarHeight = toolbar.getBoundingClientRect().height;
+    const saveButton = [...documentRef.querySelectorAll("button")].find((button) => /speichern/i.test(button.textContent || ""));
+    const actionBar = saveButton?.closest('footer, [class*="Actions"], [class*="Toolbar"]') || saveButton?.parentElement;
+    const actionBarTop = actionBar?.getBoundingClientRect().top;
+    const bottomLimit = Number.isFinite(actionBarTop) && actionBarTop > omRect.top ? actionBarTop - 8 : viewportHeight ? viewportHeight - 8 : omRect.bottom;
+    const viewportTop = Math.max(8, Math.min(omRect.top, bottomLimit - toolbarHeight));
+    toolbar.style.top = `${Math.max(0, Math.round(viewportTop - rootRect.top + positioningRoot.scrollTop))}px`;
   }
   function removeToolbar() {
     document.querySelectorAll(`[${LAYOUT_ROOT_ATTR}]`).forEach((root) => root.removeAttribute(LAYOUT_ROOT_ATTR));
