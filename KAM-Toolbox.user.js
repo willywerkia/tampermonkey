@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.10
+// @version      1.1.11
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -470,7 +470,8 @@
   var OUT_FEEDBACK_OPTIONS = [
     { value: "language_skills", label: "Sprachkenntnisse", nativeValue: "others", customFeedback: "Sprachkenntnisse" },
     { value: "no_drivers_license", label: "Kein Führerschein", nativeValue: "others", customFeedback: "Kein Führerschein" },
-    { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" }
+    { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" },
+    { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" }
   ];
   var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
   var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
