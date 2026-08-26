@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.20
+// @version      1.1.21
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3299,7 +3299,7 @@
     }
     __typename
   }
-  employees: allEmployees(filter: {}) { id firstName lastName __typename }
+  employees: allEmployees(filter: {}) { id firstName lastName slackId __typename }
 }`;
   function isTargetPage5(hash = location.hash, role) {
     return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
@@ -3311,18 +3311,21 @@
     return APPOINTMENT_DATE_RE.test(String(text || ""));
   }
   function employeeMention(employee) {
+    const slackId = String(employee?.slackId || "").trim();
+    if (slackId) return `<@${slackId}>`;
     const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(" ");
     return name ? `@${name}` : "";
   }
   function buildSlackText(type, { candidateName, employerName, jobTitle, kam, cem }, taggedRole) {
-    const tag = employeeMention(taggedRole === "kam" ? kam : cem);
+    const employee = taggedRole === "kam" ? kam : cem;
+    const tag = employeeMention(employee);
     if (type === "VTA") return [candidateName, employerName, tag].join("\n");
     return [candidateName, employerName, jobTitle, "", "", tag].join("\n");
   }
   function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath }) {
     runtime.registerSource(sourcePath);
     const matchDataCache = /* @__PURE__ */ new Map();
-    const taggedRole = role === "kam" ? "cem" : "kam";
+    const taggedRole = String(role).toLowerCase() === "kam" ? "cem" : "kam";
     let syncTimer = null;
     function ensureStyle() {
       if (document.getElementById(STYLE_ID2)) return;
