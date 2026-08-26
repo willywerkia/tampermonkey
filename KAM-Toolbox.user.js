@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.12
+// @version      1.1.13
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -452,7 +452,6 @@
   };
   var ROW_SELECTOR = "tbody tr.RaDataTable-row";
   var WVL_CELL_SELECTOR = "td.column-kamFollowUpDate";
-  var KAM_STATUS_CELL_SELECTOR = "td.column-kamStatus";
   var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
   var KAM_STATUS_OPTIONS = [
     { value: "", label: "Leer" },
@@ -471,7 +470,22 @@
     { value: "language_skills", label: "Sprachkenntnisse", nativeValue: "others", customFeedback: "Sprachkenntnisse" },
     { value: "no_drivers_license", label: "Kein Führerschein", nativeValue: "others", customFeedback: "Kein Führerschein" },
     { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" },
-    { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" }
+    { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" },
+    { value: "candidate_not_responsive", label: "BEW nicht responsive", nativeValue: "candidate_not_responsive", customFeedback: null },
+    { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG", nativeValue: "candidate_not_interested_in_employer", customFeedback: null },
+    { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW", nativeValue: "employer_not_interested_in_candidate", customFeedback: null },
+    { value: "stays_with_current_employer", label: "BEW bleibt beim aktuellen AG", nativeValue: "stays_with_current_employer", customFeedback: null },
+    { value: "found_privately", label: "Privat etwas gefunden", nativeValue: "found_privately", customFeedback: null },
+    { value: "hired_by_partner", label: "Hired bei Partner", nativeValue: "hired_by_partner", customFeedback: null },
+    { value: "distance_too_far", label: "Entfernung zu weit", nativeValue: "distance_too_far", customFeedback: null },
+    { value: "technical_error", label: "Technischer Fehler", nativeValue: "technical_error", customFeedback: null },
+    { value: "candidate_known", label: "BEW bereits bekannt", nativeValue: "candidate_known", customFeedback: null },
+    { value: "willing_to_travel", label: "Montagebereitschaft", nativeValue: "willing_to_travel", customFeedback: null },
+    { value: "conditions", label: "Konditionen", nativeValue: "conditions", customFeedback: null },
+    { value: "experience", label: "Erfahrung", nativeValue: "experience", customFeedback: null },
+    { value: "applicant_not_responsive", label: "BEW nicht responsive", nativeValue: "applicant_not_responsive", customFeedback: null },
+    { value: "position_filled", label: "Stelle besetzt", nativeValue: "position_filled", customFeedback: null },
+    { value: "qualification", label: "Qualifikation", nativeValue: "qualification", customFeedback: null }
   ];
   var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
   var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
@@ -490,29 +504,28 @@
     status
   }
 }`;
-  var MONTHS = {
-    januar: 1,
-    january: 1,
-    februar: 2,
-    february: 2,
-    maerz: 3,
-    "märz": 3,
-    march: 3,
-    april: 4,
-    mai: 5,
-    may: 5,
-    juni: 6,
-    june: 6,
-    juli: 7,
-    july: 7,
-    august: 8,
-    september: 9,
-    oktober: 10,
-    october: 10,
-    november: 11,
-    dezember: 12,
-    december: 12
-  };
+  var UPDATE_MATCH_STATUS_MUTATION = `mutation updateMatch($id: String!, $kamStatus: String) {
+  data: updateMatch(id: $id, kamStatus: $kamStatus) {
+    id
+    kamStatus
+    __typename
+  }
+}`;
+  var UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION = `mutation updateMatch($id: String!, $kamStatus: String, $kamFeedback: String) {
+  data: updateMatch(id: $id, kamStatus: $kamStatus, kamFeedback: $kamFeedback) {
+    id
+    kamStatus
+    kamFeedback
+    __typename
+  }
+}`;
+  var UPDATE_MATCH_WVL_MUTATION = `mutation updateMatch($id: String!, $kamFollowUpDate: Date) {
+  data: updateMatch(id: $id, kamFollowUpDate: $kamFollowUpDate) {
+    id
+    kamFollowUpDate
+    __typename
+  }
+}`;
   function isTargetPage(hash = location.hash) {
     return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
@@ -530,14 +543,8 @@
   function openInterviewIds(items) {
     return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
   }
-  function dateMatches(actual, expected) {
-    return Number(actual.year) === Number(expected.year) && Number(actual.month) === Number(expected.month) && Number(actual.day) === Number(expected.day);
-  }
-  function dateIsEmpty(actual) {
-    return !actual.day && !actual.month && !actual.year;
-  }
-  function monthDifference(from, to) {
-    return (Number(to.year) - Number(from.year)) * 12 + Number(to.month) - Number(from.month);
+  function resolveOutFeedbackText(reason) {
+    return reason?.customFeedback || reason?.label || "";
   }
   function executeBulkMatchActions(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/bulk-match-actions.js");
@@ -586,9 +593,6 @@
     function matchIdFromRow(row) {
       const link = row.querySelector('a[href*="#/Match/"]');
       return link?.href.match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
-    }
-    function currentRowByMatchId(matchId) {
-      return getRows().find((row) => matchIdFromRow(row) === matchId) || null;
     }
     function getEmployerChoices() {
       const choices = /* @__PURE__ */ new Map();
@@ -665,6 +669,13 @@
       dialog.querySelector('[data-action="close"]').hidden = true;
       applyButton.focus();
     }
+    function handleDialogClose(dialog) {
+      if (dialog.dataset.needsReload === "true") {
+        location.reload();
+        return;
+      }
+      if (!running) dialog.remove();
+    }
     function renderDialog() {
       document.getElementById(IDS.dialog)?.remove();
       const choices = getEmployerChoices();
@@ -680,42 +691,34 @@
           </select>
         </label>
         <label>Neues KAM-WVL-Datum
-          <input name="date" type="date" required>
+          <input name="date" type="date">
         </label>
-        <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden.</div>
-        <div id="${IDS.status}">Bitte Arbeitgeber und Datum prüfen.</div>
+        <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Datumsfeld leer lassen, um die KAM WVL zu entfernen statt sie zu setzen.</div>
+        <div id="${IDS.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Datum anwenden</button>
         </div>
       </form>`;
       document.body.appendChild(dialog);
+      const dateInput = dialog.querySelector('input[name="date"]');
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      const syncApplyLabel = () => {
+        applyButton.textContent = dateInput.value ? "Datum anwenden" : "Datum entfernen";
+      };
+      dateInput.addEventListener("input", syncApplyLabel);
+      syncApplyLabel();
       dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
-      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
+      applyButton.addEventListener("click", (event) => {
         if (event.currentTarget.dataset.completed === "true") {
           dialog.close();
           return;
         }
         applyFromDialog(dialog);
       });
-      dialog.addEventListener("close", () => {
-        if (!running) dialog.remove();
-      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
       dialog.showModal();
-      dialog.querySelector('input[name="date"]').focus();
-    }
-    function visibleListbox() {
-      return [...document.querySelectorAll('[role="listbox"]')].find((element) => {
-        const paper = element.closest(".MuiPopover-paper, .MuiMenu-paper") || element;
-        const style = getComputedStyle(paper);
-        const rect = paper.getBoundingClientRect();
-        return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
-      }) || null;
-    }
-    function closeStatusListbox() {
-      const listbox = visibleListbox() || document.querySelector('[role="listbox"]');
-      if (!listbox) return;
-      listbox.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+      dateInput.focus();
     }
     function renderStatusDialog() {
       document.getElementById(IDS.dialog)?.remove();
@@ -769,14 +772,9 @@
         }
         applyStatusFromDialog(dialog);
       });
-      dialog.addEventListener("close", () => {
-        if (!running) dialog.remove();
-      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
       dialog.showModal();
       dialog.querySelector('[name="kamStatus"]').focus();
-    }
-    function visibleOutFeedbackDialog() {
-      return [...document.querySelectorAll('[role="dialog"]')].find((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]')) || null;
     }
     function visibleOutFeedbackDialogs() {
       return [...document.querySelectorAll('[role="dialog"]')].filter((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]'));
@@ -789,39 +787,11 @@
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    async function completeOutFeedback(reason) {
-      const feedbackDialog = await waitFor(visibleOutFeedbackDialog, 7e3, 100);
-      if (!feedbackDialog) throw new Error("Grund-Dialog für Status „Out“ wurde nicht geöffnet");
-      const radio = feedbackDialog.querySelector(`input[name="feedback"][value="${reason.nativeValue}"]`);
-      if (!radio) throw new Error(`Grund „${reason.label}“ wurde im Out-Dialog nicht gefunden`);
-      clickLikeUser(radio);
-      const selected = await waitFor(() => radio.checked, 3e3, 75);
-      if (!selected) throw new Error(`Grund „${reason.label}“ konnte nicht ausgewählt werden`);
-      if (reason.customFeedback) {
-        const customInput = await waitFor(
-          () => feedbackDialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]'),
-          3e3,
-          75
-        );
-        if (!customInput) throw new Error("Textfeld für „Anderes“ wurde nicht gefunden");
-        setControlledInputValue(customInput, reason.customFeedback);
-        const textSet = await waitFor(() => normalize(customInput.value) === reason.customFeedback, 2e3, 75);
-        if (!textSet) throw new Error(`Text für „${reason.label}“ konnte nicht gesetzt werden`);
-      }
-      const saveButton = await waitFor(() => [...feedbackDialog.querySelectorAll("button")].find((button) => normalize(button.textContent).toLowerCase() === "speichern" && !button.disabled), 4e3, 75);
-      if (!saveButton) throw new Error("Aktiver „Speichern“-Button wurde im Out-Dialog nicht gefunden");
-      clickLikeUser(saveButton);
-      const closed = await waitFor(
-        () => !feedbackDialog.isConnected || !visibleOverlay(feedbackDialog),
-        1e4,
-        100
-      );
-      if (!closed) throw new Error("Out-Grund wurde nach „Speichern“ nicht übernommen");
-    }
     async function applyNativeOutFeedback(dialog, reason) {
       const radio = dialog.querySelector(`input[name="feedback"][value="${reason.nativeValue}"]`);
-      if (!radio) throw new Error("Option „Anderes“ wurde im Out-Dialog nicht gefunden");
+      if (!radio) throw new Error(`Option „${reason.nativeValue}“ wurde im Out-Dialog nicht gefunden`);
       clickLikeUser(radio);
+      if (!reason.customFeedback) return;
       const customInput = await waitFor(
         () => dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]'),
         3e3,
@@ -855,104 +825,22 @@
         });
       });
     }
-    async function setKamStatusInRow(matchId, targetStatus, outFeedback = null) {
-      if (visibleListbox()) {
-        closeStatusListbox();
-        await waitFor(() => !visibleListbox(), 2500);
+    async function updateMatchKamStatus(matchId, targetStatus, kamFeedback) {
+      const { request } = getKamGraphqlAdapter();
+      const mutation = kamFeedback ? UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION : UPDATE_MATCH_STATUS_MUTATION;
+      const variables = kamFeedback ? { id: matchId, kamStatus: targetStatus.value, kamFeedback } : { id: matchId, kamStatus: targetStatus.value };
+      const result = await request(mutation, variables);
+      const match = result?.data;
+      if (match?.id !== matchId || match.kamStatus !== targetStatus.value) {
+        throw new Error(`KAM Status wurde nicht auf „${targetStatus.label}“ bestätigt`);
       }
-      let row = await waitFor(() => currentRowByMatchId(matchId), 5e3, 100);
-      if (!row) throw new Error("Match-Zeile wurde nach Aktualisierung nicht gefunden");
-      let combo = row.querySelector(`${KAM_STATUS_CELL_SELECTOR} [role="combobox"]`);
-      if (!combo) throw new Error("KAM-Status-Feld nicht gefunden");
-      const nativeInput = row.querySelector(`${KAM_STATUS_CELL_SELECTOR} input.MuiSelect-nativeInput`);
-      if (nativeInput?.value === targetStatus.value) return;
-      row.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-      await sleep(300);
-      let listbox = null;
-      for (let attempt = 0; attempt < 3 && !listbox; attempt += 1) {
-        row = currentRowByMatchId(matchId) || row;
-        combo = row.querySelector(`${KAM_STATUS_CELL_SELECTOR} [role="combobox"]`);
-        if (!combo) throw new Error("KAM-Status-Feld nach Aktualisierung nicht gefunden");
-        combo.focus();
-        clickLikeUser(combo);
-        listbox = await waitFor(visibleListbox, 3e3, 75);
-        if (!listbox) {
-          closeStatusListbox();
-          await sleep(500);
-        }
-      }
-      if (!listbox) throw new Error("Status-Liste wurde nicht geöffnet");
-      const option = [...listbox.querySelectorAll('[role="option"]')].find((item) => (item.getAttribute("data-value") || "") === targetStatus.value);
-      if (!option) {
-        closeStatusListbox();
-        throw new Error(`Status „${targetStatus.label}“ nicht gefunden`);
-      }
-      option.scrollIntoView({ behavior: "auto", block: "nearest" });
-      clickLikeUser(option);
-      await waitFor(() => !visibleListbox(), 3e3, 100);
-      if (targetStatus.value === "out") {
-        if (!outFeedback) throw new Error("Kein Grund für Status „Out“ ausgewählt");
-        await completeOutFeedback(outFeedback);
-      }
-      const updated = await waitFor(() => {
-        row = currentRowByMatchId(matchId) || row;
-        const currentInput = row.querySelector(`${KAM_STATUS_CELL_SELECTOR} input.MuiSelect-nativeInput`);
-        return (currentInput?.value || "") === targetStatus.value;
-      }, 6e3, 100);
-      if (!updated) throw new Error(`Feld zeigt weiterhin „${normalize(combo.textContent)}“`);
-      await sleep(1500);
     }
-    function pressDelete(element) {
-      element.focus();
-      element.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "Delete",
-        code: "Delete",
-        keyCode: 46,
-        which: 46,
-        bubbles: true,
-        cancelable: true
-      }));
-      element.dispatchEvent(new KeyboardEvent("keyup", {
-        key: "Delete",
-        code: "Delete",
-        keyCode: 46,
-        which: 46,
-        bubbles: true,
-        cancelable: true
-      }));
-    }
-    function visibleDateFromCell(cell) {
-      const value = (label) => cell.querySelector(`[role="spinbutton"][aria-label="${label}"]`)?.getAttribute("aria-valuenow") || "";
-      return { day: value("Tag"), month: value("Monat"), year: value("Jahr") };
-    }
-    async function clearWvlForMatch(matchId) {
-      let row = await waitFor(() => currentRowByMatchId(matchId), 5e3, 100);
-      if (!row) throw new Error("Match-Zeile zum Löschen der WVL nicht gefunden");
-      let cell = row.querySelector(WVL_CELL_SELECTOR);
-      if (!cell) throw new Error("KAM-WVL-Feld nicht gefunden");
-      if (dateIsEmpty(visibleDateFromCell(cell))) return;
-      for (let pass = 0; pass < 3; pass += 1) {
-        row = currentRowByMatchId(matchId) || row;
-        cell = row.querySelector(WVL_CELL_SELECTOR) || cell;
-        for (const label of ["Tag", "Monat", "Jahr"]) {
-          const section = cell.querySelector(`[role="spinbutton"][aria-label="${label}"]`);
-          if (section?.hasAttribute("aria-valuenow")) {
-            section.scrollIntoView({ behavior: "auto", block: "nearest" });
-            pressDelete(section);
-            await sleep(120);
-          }
-        }
-        if (dateIsEmpty(visibleDateFromCell(cell))) break;
-      }
-      const lastSection = cell.querySelector('[role="spinbutton"][aria-label="Jahr"]');
-      lastSection?.dispatchEvent(new Event("change", { bubbles: true }));
-      lastSection?.blur();
-      await sleep(900);
-      row = currentRowByMatchId(matchId) || row;
-      cell = row.querySelector(WVL_CELL_SELECTOR) || cell;
-      if (!dateIsEmpty(visibleDateFromCell(cell))) {
-        const actual = visibleDateFromCell(cell);
-        throw new Error(`KAM WVL konnte nicht gelöscht werden (${actual.day || "TT"}.${actual.month || "MM"}.${actual.year || "JJJJ"})`);
+    async function updateMatchKamFollowUpDate(matchId, isoDateOrNull) {
+      const { request } = getKamGraphqlAdapter();
+      const result = await request(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: isoDateOrNull });
+      const match = result?.data;
+      if (match?.id !== matchId || match.kamFollowUpDate !== isoDateOrNull) {
+        throw new Error("KAM WVL wurde nicht bestätigt");
       }
     }
     async function openInterviewIdsForMatch(matchId) {
@@ -992,64 +880,6 @@
       }
       return declined;
     }
-    function openCalendarRoot() {
-      const calendars = [...document.querySelectorAll(".MuiDateCalendar-root")];
-      return calendars.find((calendar) => calendar.offsetParent !== null) || null;
-    }
-    function calendarMonth(calendar) {
-      const label = normalize(calendar.querySelector(".MuiPickersCalendarHeader-label")?.textContent).toLocaleLowerCase("de-DE");
-      const yearMatch = label.match(/\b(\d{4})\b/);
-      const month = Object.entries(MONTHS).find(([name]) => label.includes(name))?.[1];
-      return month && yearMatch ? { month, year: Number(yearMatch[1]) } : null;
-    }
-    function calendarNavButton(calendar, direction) {
-      const candidates = [...calendar.querySelectorAll("button")];
-      const pattern = direction > 0 ? /(next|näch|naech|folgend)/i : /(previous|vorher|zurück|zurueck)/i;
-      return candidates.find((button) => pattern.test(`${button.getAttribute("aria-label") || ""} ${button.title || ""}`)) || calendar.querySelectorAll(".MuiPickersArrowSwitcher-button")[direction > 0 ? 1 : 0] || null;
-    }
-    function calendarDayButton(calendar, date) {
-      const targetTimestamp = new Date(Number(date.year), Number(date.month) - 1, Number(date.day)).getTime();
-      const buttons = [...calendar.querySelectorAll('button.MuiPickersDay-root, [role="gridcell"] button')].filter((button) => !button.disabled && button.getAttribute("aria-disabled") !== "true");
-      return buttons.find((button) => Number(button.dataset.timestamp) === targetTimestamp) || buttons.find((button) => normalize(button.textContent) === String(Number(date.day)) && !button.classList.contains("MuiPickersDay-dayOutsideMonth")) || null;
-    }
-    async function setDateInCell(cell, date) {
-      if (dateMatches(visibleDateFromCell(cell), date)) return;
-      const pickerButton = cell.querySelector('button[aria-label*="Datum"], button[aria-label*="date" i]');
-      if (!pickerButton) throw new Error("Kalender-Schaltfläche nicht gefunden");
-      pickerButton.click();
-      let calendar = await waitFor(openCalendarRoot, 3e3);
-      if (!calendar) throw new Error("Kalender wurde nicht geöffnet");
-      let shown = calendarMonth(calendar);
-      if (!shown) {
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-        throw new Error("Angezeigter Kalendermonat nicht erkannt");
-      }
-      let difference = monthDifference(shown, date);
-      if (Math.abs(difference) > 1200) throw new Error("Zieldatum liegt außerhalb des erlaubten Bereichs");
-      while (difference !== 0) {
-        const direction = Math.sign(difference);
-        const nav = calendarNavButton(calendar, direction);
-        if (!nav || nav.disabled) throw new Error("Kalender-Monat kann nicht gewechselt werden");
-        nav.click();
-        const previousKey = `${shown.year}-${shown.month}`;
-        shown = await waitFor(() => {
-          calendar = openCalendarRoot() || calendar;
-          const current = calendarMonth(calendar);
-          return current && `${current.year}-${current.month}` !== previousKey ? current : null;
-        }, 1500);
-        if (!shown) throw new Error("Kalender reagiert nicht auf Monatswechsel");
-        difference = monthDifference(shown, date);
-      }
-      const dayButton = calendarDayButton(calendar, date);
-      if (!dayButton) throw new Error(`Tag ${Number(date.day)} im Kalender nicht gefunden`);
-      dayButton.click();
-      await waitFor(() => !openCalendarRoot(), 2e3);
-      await sleep(850);
-      const actual = visibleDateFromCell(cell);
-      if (!dateMatches(actual, date)) {
-        throw new Error(`Nach Kalenderwahl zeigt das Feld ${actual.day || "??"}.${actual.month || "??"}.${actual.year || "????"}`);
-      }
-    }
     async function applyStatusFromDialog(dialog) {
       if (running) return;
       const employerId = dialog.querySelector('[name="employer"]').value;
@@ -1078,13 +908,14 @@
       let changed = 0;
       let declinedInterviews = 0;
       const failures = [];
+      const kamFeedback = targetStatus.value === "out" ? resolveOutFeedbackText(outFeedback) : null;
       const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
       for (let index = 0; index < queue.length; index += 1) {
         if (cancelRequested) break;
         setStatus(`Ändere Status ${index + 1} von ${queue.length} …`, "busy");
         try {
-          await setKamStatusInRow(queue[index], targetStatus, outFeedback);
-          if (clearsWvl) await clearWvlForMatch(queue[index]);
+          await updateMatchKamStatus(queue[index], targetStatus, kamFeedback);
+          if (clearsWvl) await updateMatchKamFollowUpDate(queue[index], null);
           if (targetStatus.value === "out") {
             setStatus(`Lehne Terminvorschläge ${index + 1} von ${queue.length} ab …`, "busy");
             declinedInterviews += await declineOpenInterviewsForMatch(queue[index]);
@@ -1095,6 +926,7 @@
         }
       }
       running = false;
+      if (changed > 0) dialog.dataset.needsReload = "true";
       if (cancelRequested) {
         setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Matches blieben unverändert.`, "busy");
       } else if (failures.length) {
@@ -1109,37 +941,41 @@
       if (running) return;
       const employerId = dialog.querySelector('[name="employer"]').value;
       const isoDate = dialog.querySelector('[name="date"]').value;
-      const date = parseIsoDate(isoDate);
+      const clearing = !isoDate;
+      const date = clearing ? null : parseIsoDate(isoDate);
       const choice = employerId === "__all__" ? { id: "__all__", name: "Alle Arbeitgeber", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
       if (!choice || !choice.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
-      if (!date) return setStatus("Bitte ein gültiges Datum auswählen.", "error");
-      const formatted = `${date.day}.${date.month}.${date.year}`;
-      if (!window.confirm(`${choice.rows.length} sichtbare Matches von „${choice.name}“ auf ${formatted} setzen?`)) return;
+      if (!clearing && !date) return setStatus("Bitte ein gültiges Datum auswählen oder das Feld leer lassen.", "error");
+      const formatted = date ? `${date.day}.${date.month}.${date.year}` : "";
+      const confirmText = clearing ? `${choice.rows.length} sichtbare Matches von „${choice.name}“ die KAM WVL entfernen?` : `${choice.rows.length} sichtbare Matches von „${choice.name}“ auf ${formatted} setzen?`;
+      if (!window.confirm(confirmText)) return;
       running = true;
       cancelRequested = false;
       const applyButton = dialog.querySelector('[data-action="apply"]');
       applyButton.dataset.completed = "false";
-      applyButton.textContent = "Datum anwenden";
+      applyButton.textContent = clearing ? "Datum entfernen" : "Datum anwenden";
       setRunningControls(dialog, true);
       let changed = 0;
       const failures = [];
-      for (let index = 0; index < choice.rows.length; index += 1) {
+      const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
+      for (let index = 0; index < queue.length; index += 1) {
         if (cancelRequested) break;
-        setStatus(`Ändere ${index + 1} von ${choice.rows.length} …`, "busy");
+        setStatus(`Ändere ${index + 1} von ${queue.length} …`, "busy");
         try {
-          const cell = choice.rows[index].querySelector(WVL_CELL_SELECTOR);
-          await setDateInCell(cell, date);
+          await updateMatchKamFollowUpDate(queue[index], isoDate || null);
           changed += 1;
-          await sleep(350);
         } catch (error) {
           failures.push(`${index + 1}: ${error.message}`);
         }
       }
       running = false;
+      if (changed > 0) dialog.dataset.needsReload = "true";
       if (cancelRequested) {
         setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Matches blieben unverändert.`, "busy");
       } else if (failures.length) {
         setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else if (clearing) {
+        setStatus(`${changed} KAM-WVL-Daten erfolgreich entfernt.`, "ok");
       } else {
         setStatus(`${changed} KAM-WVL-Daten erfolgreich auf ${formatted} gesetzt.`, "ok");
       }
