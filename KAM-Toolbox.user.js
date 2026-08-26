@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.9
+// @version      1.1.10
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -30,6 +30,7 @@
     const observers = /* @__PURE__ */ new Set();
     const intervals = /* @__PURE__ */ new Set();
     const timeouts = /* @__PURE__ */ new Set();
+    const cleanupTasks = /* @__PURE__ */ new Set();
     const sources = /* @__PURE__ */ new Set();
     let disposed = false;
     const assertActive = () => {
@@ -79,9 +80,21 @@
         window.clearTimeout(handle);
         timeouts.delete(handle);
       },
+      addCleanup(callback) {
+        assertActive();
+        cleanupTasks.add(callback);
+        return () => cleanupTasks.delete(callback);
+      },
       dispose() {
         if (disposed) return;
         disposed = true;
+        cleanupTasks.forEach((callback) => {
+          try {
+            callback();
+          } catch (error) {
+            console.error("[KAM Toolbox] Cleanup fehlgeschlagen.", error);
+          }
+        });
         windowListeners.forEach(({ type, listener, options }) => window.removeEventListener(type, listener, options));
         documentListeners.forEach(({ type, listener, options }) => document.removeEventListener(type, listener, options));
         observers.forEach((observer) => observer.disconnect());
@@ -92,6 +105,7 @@
         observers.clear();
         intervals.clear();
         timeouts.clear();
+        cleanupTasks.clear();
         sources.clear();
       }
     };
@@ -433,7 +447,8 @@
     statusButton: "werkia-kam-status-bulk-button",
     dialog: "werkia-kam-wvl-bulk-dialog",
     style: "werkia-kam-wvl-bulk-style",
-    status: "werkia-kam-wvl-bulk-status"
+    status: "werkia-kam-wvl-bulk-status",
+    feedbackShortcuts: "werkia-kam-out-feedback-shortcuts"
   };
   var ROW_SELECTOR = "tbody tr.RaDataTable-row";
   var WVL_CELL_SELECTOR = "td.column-kamFollowUpDate";
@@ -453,23 +468,27 @@
     { value: "interview_feedback", label: "VT Feedback" }
   ];
   var OUT_FEEDBACK_OPTIONS = [
-    { value: "candidate_not_responsive", label: "BEW nicht responsive" },
-    { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG" },
-    { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW" },
-    { value: "stays_with_current_employer", label: "BEW bleibt beim aktuellen AG" },
-    { value: "found_privately", label: "Privat etwas gefunden" },
-    { value: "hired_by_partner", label: "Hired bei Partner" },
-    { value: "distance_too_far", label: "Entfernung zu weit" },
-    { value: "technical_error", label: "Technischer Fehler" },
-    { value: "candidate_known", label: "BEW bereits bekannt" },
-    { value: "willing_to_travel", label: "Montagebereitschaft" },
-    { value: "conditions", label: "Konditionen" },
-    { value: "experience", label: "Erfahrung" },
-    { value: "applicant_not_responsive", label: "BEW nicht responsive" },
-    { value: "position_filled", label: "Stelle besetzt" },
-    { value: "qualification", label: "Qualifikation" },
-    { value: "others", label: "Anderes (AG nicht responsive)" }
+    { value: "language_skills", label: "Sprachkenntnisse", nativeValue: "others", customFeedback: "Sprachkenntnisse" },
+    { value: "no_drivers_license", label: "Kein Führerschein", nativeValue: "others", customFeedback: "Kein Führerschein" },
+    { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" }
   ];
+  var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
+  var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
+  items: allInterviews(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
+    id
+    status
+  }
+  total: _allInterviewsMeta(filter: $filter, page: $page, perPage: $perPage) {
+    count
+  }
+}`;
+  var UPDATE_INTERVIEW_MUTATION = `mutation updateInterview($id: UUID, $status: String) {
+  data: updateInterview(id: $id, status: $status) {
+    id
+    matchId
+    status
+  }
+}`;
   var MONTHS = {
     januar: 1,
     january: 1,
@@ -506,6 +525,9 @@
   }
   function statusClearsWvl(statusValue) {
     return statusValue === "hired" || statusValue === "out";
+  }
+  function openInterviewIds(items) {
+    return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
   }
   function dateMatches(actual, expected) {
     return Number(actual.year) === Number(expected.year) && Number(actual.month) === Number(expected.month) && Number(actual.day) === Number(expected.day);
@@ -599,6 +621,8 @@
       #${IDS.status}[data-tone="ok"] { color: #18752b; }
       #${IDS.status}[data-tone="error"] { color: #b3261e; }
       #${IDS.status}[data-tone="busy"] { color: #995000; }
+      #${IDS.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
+      #${IDS.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
     `;
       document.head.appendChild(style);
     }
@@ -753,6 +777,9 @@
     function visibleOutFeedbackDialog() {
       return [...document.querySelectorAll('[role="dialog"]')].find((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]')) || null;
     }
+    function visibleOutFeedbackDialogs() {
+      return [...document.querySelectorAll('[role="dialog"]')].filter((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]'));
+    }
     function setControlledInputValue(input, value) {
       const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
@@ -764,21 +791,21 @@
     async function completeOutFeedback(reason) {
       const feedbackDialog = await waitFor(visibleOutFeedbackDialog, 7e3, 100);
       if (!feedbackDialog) throw new Error("Grund-Dialog für Status „Out“ wurde nicht geöffnet");
-      const radio = feedbackDialog.querySelector(`input[name="feedback"][value="${reason.value}"]`);
+      const radio = feedbackDialog.querySelector(`input[name="feedback"][value="${reason.nativeValue}"]`);
       if (!radio) throw new Error(`Grund „${reason.label}“ wurde im Out-Dialog nicht gefunden`);
       clickLikeUser(radio);
       const selected = await waitFor(() => radio.checked, 3e3, 75);
       if (!selected) throw new Error(`Grund „${reason.label}“ konnte nicht ausgewählt werden`);
-      if (reason.value === "others") {
+      if (reason.customFeedback) {
         const customInput = await waitFor(
           () => feedbackDialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]'),
           3e3,
           75
         );
         if (!customInput) throw new Error("Textfeld für „Anderes“ wurde nicht gefunden");
-        setControlledInputValue(customInput, "AG nicht responsive");
-        const textSet = await waitFor(() => normalize(customInput.value) === "AG nicht responsive", 2e3, 75);
-        if (!textSet) throw new Error("Standardtext für „Anderes“ konnte nicht gesetzt werden");
+        setControlledInputValue(customInput, reason.customFeedback);
+        const textSet = await waitFor(() => normalize(customInput.value) === reason.customFeedback, 2e3, 75);
+        if (!textSet) throw new Error(`Text für „${reason.label}“ konnte nicht gesetzt werden`);
       }
       const saveButton = await waitFor(() => [...feedbackDialog.querySelectorAll("button")].find((button) => normalize(button.textContent).toLowerCase() === "speichern" && !button.disabled), 4e3, 75);
       if (!saveButton) throw new Error("Aktiver „Speichern“-Button wurde im Out-Dialog nicht gefunden");
@@ -789,6 +816,43 @@
         100
       );
       if (!closed) throw new Error("Out-Grund wurde nach „Speichern“ nicht übernommen");
+    }
+    async function applyNativeOutFeedback(dialog, reason) {
+      const radio = dialog.querySelector(`input[name="feedback"][value="${reason.nativeValue}"]`);
+      if (!radio) throw new Error("Option „Anderes“ wurde im Out-Dialog nicht gefunden");
+      clickLikeUser(radio);
+      const customInput = await waitFor(
+        () => dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]'),
+        3e3,
+        75
+      );
+      if (!customInput) throw new Error("Textfeld für „Anderes“ wurde nicht gefunden");
+      setControlledInputValue(customInput, reason.customFeedback);
+      customInput.dispatchEvent(new Event("blur", { bubbles: true }));
+    }
+    function installNativeOutFeedbackDropdown(dialog) {
+      if (dialog.querySelector(`#${IDS.feedbackShortcuts}`)) return;
+      const customInput = dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]');
+      const othersRadio = dialog.querySelector('input[name="feedback"][value="others"]');
+      const anchor = customInput?.closest(".MuiFormControl-root") || customInput?.parentElement || othersRadio?.closest("label") || othersRadio?.parentElement;
+      if (!anchor) return;
+      const shortcuts = document.createElement("label");
+      shortcuts.id = IDS.feedbackShortcuts;
+      shortcuts.innerHTML = `KAM-Feedback
+      <select name="werkiaKamOutFeedback">
+        <option value="">Bitte auswählen</option>
+        ${OUT_FEEDBACK_OPTIONS.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
+      </select>`;
+      anchor.insertAdjacentElement("afterend", shortcuts);
+      const select = shortcuts.querySelector("select");
+      select.addEventListener("change", () => {
+        const reason = OUT_FEEDBACK_OPTIONS.find((option) => option.value === select.value);
+        if (!reason) return;
+        applyNativeOutFeedback(dialog, reason).catch((error) => {
+          console.warn("[KAM Out-Feedback] Schnellauswahl konnte nicht übernommen werden:", error);
+          select.value = "";
+        });
+      });
     }
     async function setKamStatusInRow(matchId, targetStatus, outFeedback = null) {
       if (visibleListbox()) {
@@ -890,6 +954,43 @@
         throw new Error(`KAM WVL konnte nicht gelöscht werden (${actual.day || "TT"}.${actual.month || "MM"}.${actual.year || "JJJJ"})`);
       }
     }
+    async function openInterviewIdsForMatch(matchId) {
+      const { request } = getKamGraphqlAdapter();
+      const perPage = 100;
+      const interviewIds = [];
+      let page = 0;
+      let total = Infinity;
+      while (interviewIds.length < total) {
+        const result = await request(ALL_INTERVIEWS_QUERY, {
+          filter: { matchId, statuses: OPEN_INTERVIEW_STATUSES },
+          page,
+          perPage,
+          sortField: "status",
+          sortOrder: "ASC"
+        });
+        const items = result?.items || [];
+        interviewIds.push(...openInterviewIds(items));
+        total = Number(result?.total?.count) || 0;
+        if (!items.length || items.length < perPage) break;
+        page += 1;
+      }
+      return interviewIds;
+    }
+    async function declineOpenInterviewsForMatch(matchId) {
+      const { request } = getKamGraphqlAdapter();
+      const interviewIds = await openInterviewIdsForMatch(matchId);
+      let declined = 0;
+      for (const interviewId of interviewIds) {
+        if (cancelRequested) break;
+        const result = await request(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
+        const interview = result?.data;
+        if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
+          throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
+        }
+        declined += 1;
+      }
+      return declined;
+    }
     function openCalendarRoot() {
       const calendars = [...document.querySelectorAll(".MuiDateCalendar-root")];
       return calendars.find((calendar) => calendar.offsetParent !== null) || null;
@@ -963,16 +1064,18 @@
       }
       const clearsWvl = statusClearsWvl(targetStatus.value);
       const cleanupText = clearsWvl ? " Die KAM WVL dieser Matches wird ebenfalls gelöscht." : "";
+      const interviewText = targetStatus.value === "out" ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
       const employerCount = new Set(choice.rows.map((row) => employerFromRow(row)?.id).filter(Boolean)).size;
       const scopeText = employerId === "__all__" ? `${choice.rows.length} sichtbare Matches von ${employerCount} Arbeitgebern` : `${choice.rows.length} sichtbare Matches von „${choice.name}“`;
       const reasonText = targetStatus.value === "out" ? ` Grund: „${outFeedback.label}“.` : "";
-      if (!window.confirm(`${scopeText} auf KAM Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}`)) return;
+      if (!window.confirm(`${scopeText} auf KAM Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
       running = true;
       cancelRequested = false;
       const applyButton = dialog.querySelector('[data-action="apply"]');
       applyButton.dataset.completed = "false";
       setRunningControls(dialog, true);
       let changed = 0;
+      let declinedInterviews = 0;
       const failures = [];
       const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
       for (let index = 0; index < queue.length; index += 1) {
@@ -981,6 +1084,10 @@
         try {
           await setKamStatusInRow(queue[index], targetStatus, outFeedback);
           if (clearsWvl) await clearWvlForMatch(queue[index]);
+          if (targetStatus.value === "out") {
+            setStatus(`Lehne Terminvorschläge ${index + 1} von ${queue.length} ab …`, "busy");
+            declinedInterviews += await declineOpenInterviewsForMatch(queue[index]);
+          }
           changed += 1;
         } catch (error) {
           failures.push(`${index + 1}: ${error.message}`);
@@ -992,7 +1099,8 @@
       } else if (failures.length) {
         setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
       } else {
-        setStatus(`${changed} KAM-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.`, "ok");
+        const interviewSummary = targetStatus.value === "out" ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : "";
+        setStatus(`${changed} KAM-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${interviewSummary}`, "ok");
       }
       finishDialog(dialog);
     }
@@ -1081,6 +1189,7 @@
           return;
         }
         installHeaderButton();
+        visibleOutFeedbackDialogs().forEach(installNativeOutFeedbackDropdown);
       }, 150);
     };
     runtime.createMutationObserver(scheduleInstall).observe(document.documentElement, { childList: true, subtree: true });
@@ -2984,6 +3093,11 @@
   var TERM_BAR_ID = "werkia-termine-buttons";
   var APPOINTMENT_INPUT_SELECTOR = ".RaArrayInput-root input.MuiPickersInputBase-input";
   var APPOINTMENT_PICKER_SELECTOR = ".MuiPickersInputBase-root";
+  var TERM_SELECT_FIELDS = {
+    status: { names: ["status", "appointmentStatus"], label: "Status", fallbackIndex: 0 },
+    type: { names: ["type", "appointmentType"], label: "Typ", fallbackIndex: 1 },
+    location: { names: ["location", "locationId", "appointmentLocation"], label: "Standort", fallbackIndex: 2 }
+  };
   function getAppointments(root = document) {
     return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el) => el.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
   }
@@ -2998,6 +3112,8 @@
   function normalizeTermTemplate(data) {
     if (!data || typeof data !== "object") return null;
     return {
+      status: typeof data.status === "string" ? data.status : "",
+      type: typeof data.type === "string" ? data.type : "",
       location: typeof data.location === "string" ? data.location : "",
       instructions: typeof data.instructions === "string" ? data.instructions : "",
       notes: typeof data.notes === "string" ? data.notes : "",
@@ -3093,9 +3209,30 @@
         setValue(input, `${values[0]}.${values[1]}.${values[2]} ${values[3]}:${values[4]}`);
       }
     }
+    function selectForField(dialog, { names, label, fallbackIndex }) {
+      for (const name of names) {
+        const input = dialog.querySelector(`input[name="${name}"]`);
+        const select = input?.closest(".MuiInputBase-root")?.querySelector(".MuiSelect-select") || input?.parentElement?.querySelector(".MuiSelect-select");
+        if (select) return select;
+      }
+      const selects = [...dialog.querySelectorAll(".MuiSelect-select")];
+      const fieldLabel = [...dialog.querySelectorAll("label")].find((element) => element.textContent?.trim().replace(/\*/g, "").trim() === label);
+      if (fieldLabel) {
+        const labelledSelect = selects.find((select) => select.getAttribute("aria-labelledby")?.split(/\s+/).includes(fieldLabel.id));
+        if (labelledSelect) return labelledSelect;
+        const formControlSelect = fieldLabel.closest(".MuiFormControl-root")?.querySelector(".MuiSelect-select");
+        if (formControlSelect) return formControlSelect;
+      }
+      return selects[fallbackIndex] || null;
+    }
+    function selectedMuiOptionText(dialog, field) {
+      return selectForField(dialog, field)?.innerText?.trim() || "";
+    }
     function copyTerms(dialog, dashboard) {
       const data = {
-        location: dialog.querySelector(".MuiSelect-select")?.innerText?.trim() || "",
+        status: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.status),
+        type: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.type),
+        location: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.location),
         instructions: dialog.querySelector('input[name="instructions"]')?.value || "",
         notes: dialog.querySelector('textarea[name="notes"]')?.value || "",
         appointments: getAppointments(dialog)
@@ -3105,9 +3242,8 @@
       updateDashboard(dashboard, dialog);
       termToast(`Terminvorschläge kopiert: ${data.appointments.length} Termine`);
     }
-    async function selectMuiOptionByText(dialog, text) {
+    async function selectMuiOptionByText(select, text) {
       if (!text) return;
-      const select = dialog.querySelector(".MuiSelect-select");
       if (!select) return;
       select.click();
       await new Promise((resolve) => runtime.setTimeout(resolve, 300));
@@ -3172,7 +3308,9 @@
           setPicker(pickerRoots[index], value);
         }
       });
-      await selectMuiOptionByText(dialog, data.location);
+      await selectMuiOptionByText(selectForField(dialog, TERM_SELECT_FIELDS.status), data.status);
+      await selectMuiOptionByText(selectForField(dialog, TERM_SELECT_FIELDS.type), data.type);
+      await selectMuiOptionByText(selectForField(dialog, TERM_SELECT_FIELDS.location), data.location);
       updateDashboard(dashboard, dialog);
       termToast(`Terminvorschläge eingefügt: ${data.appointments.length} Termine`);
     }
@@ -3273,6 +3411,8 @@
       const count = template?.appointments.length || 0;
       summary.textContent = template ? `${count} gespeicherte ${count === 1 ? "Terminvorschlag" : "Terminvorschläge"} werden in diesen Dialog übernommen.` : `Noch keine Vorlage gespeichert. Der Dialog enthält ${currentCount} Termin${currentCount === 1 ? "" : "e"}.`;
       details.replaceChildren(
+        dashboardDetail("Status", template?.status),
+        dashboardDetail("Typ", template?.type),
         dashboardDetail("Gespeicherte Termine", template?.appointments.join("\n") || "Keine"),
         dashboardDetail("Ort", template?.location),
         dashboardDetail("Hinweise", template?.instructions),
@@ -3303,6 +3443,259 @@
     scheduleSync();
   }
 
+  // ../../shared/js/om-notes-templates/index.js
+  var OM_NOTE_TEMPLATES = [
+    { group: "Unterlagen", label: "CV", value: "[CV]" },
+    { group: "Unterlagen", label: "detailed WCV", value: "[detailed WCV]" },
+    { group: "Unterlagen", label: "CV, GB, AZ", value: "[CV,GB,AZ]" },
+    { group: "Matching", label: "RVM 100%", value: "[RVM:100%]" },
+    { group: "Matching", label: "Nur offen", value: "[NUR OFFEN]" },
+    { group: "Matching", label: "OM 100%", value: "[OM 100%]" },
+    { group: "Muss-Kriterien", label: "BE", value: "[Muss: BE]" },
+    { group: "Muss-Kriterien", label: "Distanz", value: "[Muss: Distanz]" },
+    { group: "Muss-Kriterien", label: "Sprache", value: "[Muss: Sprachkenntnisse]" },
+    { group: "Muss-Kriterien", label: "Gehalt", value: "[Muss: Gehalt]" },
+    { group: "Muss-Kriterien", label: "Fachbereich", value: "[Muss: Fachbereich]" },
+    { group: "Muss-Kriterien", label: "MB", value: "[Muss: MB]" },
+    { group: "Muss-Kriterien", label: "Führerschein", value: "[Muss: Führerschein]" },
+    { group: "Muss-Kriterien", label: "Auto", value: "[Muss: Auto]" },
+    { group: "Muss-Kriterien", label: "Schichtdienst", value: "[Muss: Schichtdienst]" },
+    { group: "Weitere", label: "Plus Gehalt", value: "[Plus: Gehalt]" },
+    { group: "Weitere", label: "Keine Akademiker", value: "[Keine: Akademiker]" }
+  ];
+  var OM_NOTE_GROUPS = ["Unterlagen", "Matching", "Muss-Kriterien", "Weitere"];
+  var CUSTOM_OM_NOTE_OPTIONS = [
+    { label: "Muss: Fachbereich", prefix: "Muss: Fachbereich" },
+    { label: "Plus: Fachbereich", prefix: "Plus: Fachbereich" },
+    { label: "Muss: Qualifikation", prefix: "Muss: Qualifikation" },
+    { label: "Freitext", prefix: "" }
+  ];
+  var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
+  var STYLE_ID2 = "werkia-om-notes-template-style";
+  var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
+  var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
+  function appendOmNote(currentValue, addition) {
+    const current = String(currentValue || "").trim();
+    const next = String(addition || "").trim();
+    if (!next) return current;
+    if (!current) return next;
+    return `${current}
+${next}`;
+  }
+  function hasOmNote(currentValue, note) {
+    const escaped = String(note || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|\\n)\\s*${escaped}\\s*(?=\\n|$)`, "i").test(String(currentValue || ""));
+  }
+  function toggleOmNote(currentValue, note) {
+    const current = String(currentValue || "");
+    const value = String(note || "").trim();
+    if (!value) return current.trim();
+    if (!hasOmNote(current, value)) return appendOmNote(current, value);
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return current.split(/\r?\n/).filter((line) => !new RegExp(`^\\s*${escaped}\\s*$`, "i").test(line)).map((line) => line.trim()).filter(Boolean).join("\n");
+  }
+  function buildOmNoteValue(prefix, customValue) {
+    const value = String(customValue || "").trim();
+    return value ? `[${prefix}: ${value}]` : "";
+  }
+  function setNativeValue(field, value) {
+    const prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    setter?.call(field, value);
+    const ViewEvent = field.ownerDocument.defaultView?.Event || Event;
+    field.dispatchEvent(new ViewEvent("input", { bubbles: true }));
+    field.dispatchEvent(new ViewEvent("change", { bubbles: true }));
+  }
+  function createObserver(runtime, callback) {
+    if (runtime?.createMutationObserver) return runtime.createMutationObserver(callback);
+    if (runtime?.MutationObserver) return new runtime.MutationObserver(callback);
+    return new MutationObserver(callback);
+  }
+  function addWindowListener(runtime, type, listener) {
+    if (runtime?.addWindowListener) runtime.addWindowListener(type, listener);
+    else window.addEventListener(type, listener);
+  }
+  function addCleanup(runtime, callback) {
+    if (runtime?.addCleanup) runtime.addCleanup(callback);
+  }
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID2)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID2;
+    style.textContent = `
+    #${TOOLBAR_ID} { display:block !important; width:500px !important; max-width:calc(100vw - 40px); margin:8px 0 14px auto !important; padding:10px 11px; border:1px solid #9fb2d5; border-radius:8px; background:#f7f9fc; box-sizing:border-box; }
+    #${TOOLBAR_ID} .werkia-om-notes-head { display:flex; align-items:center; gap:9px; margin-bottom:7px; }
+    #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#243b64; font:700 14px/1.2 Arial,sans-serif; white-space:nowrap; }
+    #${TOOLBAR_ID} .werkia-om-notes-help { margin:0; color:#52627b; font:12px/1.2 Arial,sans-serif; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #${TOOLBAR_ID} .werkia-om-notes-groups { display:flex; flex-wrap:wrap; gap:6px; }
+    #${TOOLBAR_ID} .werkia-om-notes-group { position:relative; }
+    #${TOOLBAR_ID} .werkia-om-notes-group summary { list-style:none; min-height:29px; padding:5px 9px; border:1px solid #7284a6; border-radius:15px; background:#fff; color:#243b64; cursor:pointer; font:700 12px/1 Arial,sans-serif; user-select:none; }
+    #${TOOLBAR_ID} .werkia-om-notes-group summary::-webkit-details-marker { display:none; }
+    #${TOOLBAR_ID} .werkia-om-notes-group[open] summary { border-color:#354f84; background:#e8eefb; }
+    #${TOOLBAR_ID} .werkia-om-notes-chips { position:absolute; right:0; z-index:10000000; display:flex; flex-wrap:wrap; gap:6px; width:max-content; max-width:min(500px, 80vw); margin-top:5px; padding:9px; border:1px solid #7284a6; border-radius:8px; background:#fff; box-shadow:0 4px 12px rgba(36,59,100,.22); }
+    #${TOOLBAR_ID} .werkia-om-notes-chip { min-height:28px; padding:4px 9px; border:1px solid #7284a6; border-radius:14px; background:#fff; color:#243b64; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-chip:hover { background: #e8eefb; }
+    #${TOOLBAR_ID} .werkia-om-notes-chip.is-active { border-color: #354f84; background: #354f84; color: #fff; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom { display:grid; grid-template-columns:minmax(140px, 1fr) minmax(150px, auto) auto; gap:5px; margin-top:7px; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom input, #${TOOLBAR_ID} .werkia-om-notes-custom select { min-width:0; height:32px; padding:5px 7px; border:1px solid #9ba9c1; border-radius:5px; background:#fff; font:12px Arial,sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom button { padding:5px 9px; border:1px solid #7284a6; border-radius:5px; background:#fff; color:#243b64; cursor:pointer; font:700 12px Arial,sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom button:hover { background: #e8eefb; }
+    @media (max-width:720px) { #${TOOLBAR_ID} { width:100% !important; max-width:none; } #${TOOLBAR_ID} .werkia-om-notes-help { display:none; } }
+  `;
+    document.head.appendChild(style);
+  }
+  function toolbarAnchor(field) {
+    return field.closest(".ra-input-omNotes, .MuiFormControl-root, .MuiGrid-item") || field.parentElement;
+  }
+  function removeToolbar() {
+    document.getElementById(TOOLBAR_ID)?.remove();
+  }
+  function executeOmNotesTemplates(runtime) {
+    runtime?.registerSource?.("shared/js/om-notes-templates/index.js");
+    let refreshTimer = null;
+    let currentField = null;
+    function syncToolbarState(field = currentField) {
+      const toolbar = document.getElementById(TOOLBAR_ID);
+      if (!field || !toolbar) return;
+      toolbar.querySelectorAll(".werkia-om-notes-chip").forEach((button) => {
+        button.classList.toggle("is-active", hasOmNote(field.value, button.title));
+      });
+      toolbar.querySelectorAll(".werkia-om-notes-group").forEach((group) => {
+        const label = group.dataset.groupLabel || "Flags";
+        const active = group.querySelectorAll(".werkia-om-notes-chip.is-active").length;
+        group.querySelector("summary").textContent = active ? `${label} (${active})` : label;
+      });
+    }
+    function write(nextValue) {
+      if (!currentField) return;
+      setNativeValue(currentField, nextValue);
+      renderToolbar(true);
+    }
+    function renderToolbar(force = false) {
+      if (!EMPLOYER_ROUTE.test(window.location.hash || "")) {
+        removeToolbar();
+        currentField = null;
+        return;
+      }
+      const field = document.querySelector(TARGET_SELECTOR);
+      if (!field || field.disabled || field.readOnly) {
+        removeToolbar();
+        currentField = null;
+        return;
+      }
+      currentField = field;
+      ensureStyles();
+      const anchor = toolbarAnchor(field);
+      if (!anchor) return;
+      let toolbar = document.getElementById(TOOLBAR_ID);
+      if (!force && toolbar?.previousElementSibling === anchor) {
+        syncToolbarState(field);
+        return;
+      }
+      if (!toolbar) {
+        toolbar = document.createElement("section");
+        toolbar.id = TOOLBAR_ID;
+        anchor.insertAdjacentElement("afterend", toolbar);
+      } else if (toolbar.previousElementSibling !== anchor) {
+        anchor.insertAdjacentElement("afterend", toolbar);
+      }
+      toolbar.replaceChildren();
+      const head = document.createElement("div");
+      head.className = "werkia-om-notes-head";
+      const title = document.createElement("p");
+      title.className = "werkia-om-notes-title";
+      title.textContent = "OM-Flags";
+      head.appendChild(title);
+      const help = document.createElement("p");
+      help.className = "werkia-om-notes-help";
+      help.textContent = "Kategorie öffnen, Flag wählen, dann normal speichern.";
+      head.appendChild(help);
+      toolbar.appendChild(head);
+      const groups = document.createElement("div");
+      groups.className = "werkia-om-notes-groups";
+      OM_NOTE_GROUPS.forEach((groupName) => {
+        const group = document.createElement("details");
+        group.className = "werkia-om-notes-group";
+        group.dataset.groupLabel = groupName;
+        const label = document.createElement("summary");
+        label.textContent = groupName;
+        group.appendChild(label);
+        const chips = document.createElement("div");
+        chips.className = "werkia-om-notes-chips";
+        OM_NOTE_TEMPLATES.filter((template) => template.group === groupName).forEach((template) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "werkia-om-notes-chip";
+          button.textContent = template.label;
+          button.title = template.value;
+          button.classList.toggle("is-active", hasOmNote(field.value, template.value));
+          button.addEventListener("click", () => write(toggleOmNote(field.value, template.value)));
+          chips.appendChild(button);
+        });
+        group.appendChild(chips);
+        groups.appendChild(group);
+      });
+      toolbar.appendChild(groups);
+      syncToolbarState(field);
+      const custom = document.createElement("div");
+      custom.className = "werkia-om-notes-custom";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "z. B. Sicherheitstechnik, Kälteschein";
+      input.setAttribute("aria-label", "Eigener OM-Flag-Wert");
+      custom.appendChild(input);
+      const type = document.createElement("select");
+      type.setAttribute("aria-label", "Art des eigenen OM-Flags");
+      CUSTOM_OM_NOTE_OPTIONS.forEach((optionConfig) => {
+        const option = document.createElement("option");
+        option.value = optionConfig.prefix;
+        option.textContent = optionConfig.label;
+        type.appendChild(option);
+      });
+      custom.appendChild(type);
+      const addButton = document.createElement("button");
+      addButton.type = "button";
+      addButton.textContent = "Hinzufügen";
+      addButton.addEventListener("click", () => {
+        const value = String(input.value || "").trim();
+        if (!value) {
+          input.focus();
+          return;
+        }
+        const note = type.value ? buildOmNoteValue(type.value, value) : value;
+        write(appendOmNote(field.value, note));
+        input.value = "";
+      });
+      custom.appendChild(addButton);
+      toolbar.appendChild(custom);
+      if (!field.dataset.werkiaOmNotesTemplatesBound) {
+        field.dataset.werkiaOmNotesTemplatesBound = "true";
+        field.addEventListener("input", () => syncToolbarState(field));
+      }
+    }
+    function scheduleRender() {
+      if (refreshTimer !== null) return;
+      const schedule = runtime?.setTimeout ? runtime.setTimeout.bind(runtime) : window.setTimeout.bind(window);
+      refreshTimer = schedule(() => {
+        refreshTimer = null;
+        renderToolbar();
+      }, 80);
+    }
+    const observer = createObserver(runtime, scheduleRender);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    addWindowListener(runtime, "hashchange", scheduleRender);
+    addCleanup(runtime, () => {
+      if (refreshTimer !== null) {
+        const clear = runtime?.clearTimeout ? runtime.clearTimeout.bind(runtime) : window.clearTimeout.bind(window);
+        clear(refreshTimer);
+      }
+      observer.disconnect();
+      removeToolbar();
+      document.getElementById(STYLE_ID2)?.remove();
+    });
+    renderToolbar();
+  }
+
   // kam-legacy-userscript:shared/userscripts/dringende_vakanzen_highlight.user.js
   function executeLegacyModule(runtime) {
     runtime.registerSource("shared/userscripts/dringende_vakanzen_highlight.user.js");
@@ -3318,7 +3711,7 @@
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID2 = "werkia-urgent-vacancy-style";
+      const STYLE_ID3 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
@@ -3455,10 +3848,10 @@
         });
         return rowsByJobId;
       }
-      function ensureStyles() {
-        if (document.getElementById(STYLE_ID2)) return;
+      function ensureStyles2() {
+        if (document.getElementById(STYLE_ID3)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID2;
+        style.id = STYLE_ID3;
         style.textContent = `
       .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
@@ -3488,7 +3881,7 @@
         target.appendChild(badge);
       }
       function render(rowsByJobId) {
-        ensureStyles();
+        ensureStyles2();
         rowsByJobId.forEach((rows, jobId) => rows.forEach((row) => applyHighlight(row, urgentIndex.get(jobId) === true)));
       }
       async function loadUrgentFlags(jobIds, { force = false } = {}) {
@@ -3555,6 +3948,7 @@
     { id: "kam-suite-chat-status-banner", execute: executeChatStatusBanner },
     { id: "kam-suite-chat-icon-redirect", execute: executeChatIconRedirect },
     { id: "kam-suite-appointment-copy-paste", execute: executeAppointmentCopyPaste },
+    { id: "om-notes-templates", execute: executeOmNotesTemplates },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);
 })();

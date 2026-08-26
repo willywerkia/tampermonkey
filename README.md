@@ -10,7 +10,7 @@ Installation: die gewuenschte `.user.js`-Datei unten anklicken - Tampermonkey er
 
 Enthaltene Funktionen:
 
-- Setzt Wiedervorlagedatum und KAM-Status fuer mehrere Zeilen in der Matches-Liste gleichzeitig.
+- Setzt Wiedervorlagedatum und KAM-Status fuer mehrere Zeilen in der Matches-Liste gleichzeitig. Bei Out werden offene Terminvorschlaege abgelehnt.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Kontakthaeufigkeit (z. B. "Direkter Kontakt", "Kein Kontakt").
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich Kandidat/Vakanz des offenen Fragebogens fuer andere Funktionen.
 - Blendet neben dem OM-Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein ("Zustaendigkeiten", "Dein Profil").
@@ -21,6 +21,7 @@ Enthaltene Funktionen:
 - Zeigt im Chat ein farbiges Banner mit dem aktuellen CEM/KAM-Status des zugehoerigen Matches.
 - Korrigiert den Chat-Button in "Meine Matches", damit er direkt die richtige Unterhaltung oeffnet.
 - Kopiert Terminvorschlaege (Ort, Hinweise, Datum/Uhrzeit) per Knopfdruck von einem Dialog in einen anderen.
+- Fuegt im Arbeitgeberprofil OM-Flag-Vorlagen direkt am Feld OM Notes ein.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 
 ## CEM Toolbox
