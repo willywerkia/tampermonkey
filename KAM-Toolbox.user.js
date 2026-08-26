@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.8
+// @version      1.1.9
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3183,10 +3183,10 @@
       bar.id = TERM_BAR_ID;
       bar.style.cssText = `
       position: absolute;
-      top: 72px;
-      left: 50%;
+      top: 140px;
+      left: 56%;
       z-index: 2;
-      width: min(620px, calc(100% - 72px));
+      width: min(620px, calc(100% - 144px));
       box-sizing: border-box;
       transform: translateX(-50%);
       display: grid;
