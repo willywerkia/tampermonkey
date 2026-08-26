@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.14
+// @version      1.1.15
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3310,6 +3310,7 @@
   var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
   var STYLE_ID2 = "werkia-om-notes-template-style";
   var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
+  var CEM_TARGET_SELECTOR = 'textarea[name="cemNotes"], input[name="cemNotes"]';
   var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
   var LAYOUT_ROOT_ATTR = "data-werkia-om-notes-layout-root";
   var OM_ANCHOR_ATTR = "data-werkia-om-notes-anchor";
@@ -3363,10 +3364,11 @@ ${next}`;
     const style = document.createElement("style");
     style.id = STYLE_ID2;
     style.textContent = `
-    [${LAYOUT_ROOT_ATTR}="side"] { position:relative !important; }
-    [${LAYOUT_ROOT_ATTR}="side"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="side"] [${CEM_ANCHOR_ATTR}] { width:64% !important; max-width:64% !important; flex:0 0 64% !important; }
+    [${LAYOUT_ROOT_ATTR}="left"] { position:relative !important; }
+    [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:64% !important; max-width:64% !important; margin-left:36% !important; flex:0 0 64% !important; }
     #${TOOLBAR_ID} { --om-surface:#fff; --om-surface-muted:var(--apt-color-surface-muted,#f1eef7); --om-border:var(--apt-color-border,#e2e0e8); --om-text:var(--apt-color-text,#1c1a22); --om-text-muted:var(--apt-color-text-muted,#6b6775); --om-primary:var(--apt-color-primary,#6d4aff); --om-primary-tint:var(--apt-color-primary-tint,#f1edff); --om-focus:var(--apt-color-focus,#b6a4ff); display:block; box-sizing:border-box; overflow:hidden; border:1px solid var(--om-border); border-radius:16px; background:var(--om-surface); color:var(--om-text); box-shadow:0 10px 24px rgba(28,26,34,.16); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
-    #${TOOLBAR_ID} { width:min(720px, 100%); margin:0 0 10px; }
+    #${TOOLBAR_ID}[data-layout="left"] { position:absolute; left:0; z-index:10; width:33%; min-width:440px; max-width:540px; margin:0; }
+    #${TOOLBAR_ID}[data-layout="above"] { width:min(720px, 100%); margin:0 0 10px; }
     #${TOOLBAR_ID} .werkia-om-notes-head { padding:10px 12px; background:var(--apt-color-header-bg,#3a3548); color:#fff; }
     #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#fff; font:650 16px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:-.01em; }
     #${TOOLBAR_ID} .werkia-om-notes-help { margin:3px 0 0; color:#e7e4ee; font:500 11px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif; }
@@ -3382,12 +3384,29 @@ ${next}`;
     #${TOOLBAR_ID} .werkia-om-notes-custom input, #${TOOLBAR_ID} .werkia-om-notes-custom select { min-width:0; height:34px; padding:5px 8px; border:1px solid var(--om-border); border-radius:10px; background:var(--om-surface); color:var(--om-text); font:400 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; }
     #${TOOLBAR_ID} .werkia-om-notes-custom button { min-height:34px; padding:5px 10px; border:1px solid var(--om-primary); border-radius:10px; background:var(--om-primary); color:#fff; cursor:pointer; font:600 12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
     #${TOOLBAR_ID} .werkia-om-notes-custom button:hover { background:var(--apt-color-primary-hover,#5535d6); }
+    @media (max-width:1180px) { [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:100% !important; max-width:100% !important; margin-left:0 !important; flex-basis:100% !important; } #${TOOLBAR_ID}[data-layout="left"] { position:relative; width:min(720px, 100%); min-width:0; max-width:none; margin:0 0 10px; } }
     @media (max-width:520px) { #${TOOLBAR_ID} .werkia-om-notes-groups { grid-template-columns:1fr; } #${TOOLBAR_ID} .werkia-om-notes-custom { grid-template-columns:1fr; } }
   `;
     document.head.appendChild(style);
   }
   function toolbarAnchor(field) {
     return field.closest(".ra-input-omNotes, .MuiFormControl-root, .MuiGrid-item") || field.parentElement;
+  }
+  function sharedLayoutRoot(first, second) {
+    let parent = first.parentElement;
+    while (parent && parent !== document.body) {
+      if (parent.contains(second)) return parent;
+      parent = parent.parentElement;
+    }
+    return null;
+  }
+  function positionLeftToolbar(toolbar, anchor, fallbackRoot) {
+    const ElementClass = toolbar.ownerDocument.defaultView?.HTMLElement;
+    const positioningRoot = ElementClass && toolbar.offsetParent instanceof ElementClass ? toolbar.offsetParent : fallbackRoot;
+    if (!positioningRoot) return;
+    const rootRect = positioningRoot.getBoundingClientRect();
+    const omRect = anchor.getBoundingClientRect();
+    toolbar.style.top = `${Math.max(0, Math.round(omRect.top - rootRect.top + positioningRoot.scrollTop))}px`;
   }
   function removeToolbar() {
     document.querySelectorAll(`[${LAYOUT_ROOT_ATTR}]`).forEach((root) => root.removeAttribute(LAYOUT_ROOT_ATTR));
@@ -3427,8 +3446,13 @@ ${next}`;
       ensureStyles();
       const anchor = toolbarAnchor(field);
       if (!anchor) return;
+      const cemField = document.querySelector(CEM_TARGET_SELECTOR);
+      const cemAnchor = cemField ? toolbarAnchor(cemField) : null;
+      const layoutRoot = cemAnchor ? sharedLayoutRoot(anchor, cemAnchor) : null;
+      const layout = layoutRoot ? "left" : "above";
       let toolbar = document.getElementById(TOOLBAR_ID);
-      if (!force && toolbar?.isConnected && toolbar.nextElementSibling === anchor && currentField === field) {
+      if (!force && toolbar?.isConnected && toolbar.dataset.layout === layout && currentField === field) {
+        if (layoutRoot) positionLeftToolbar(toolbar, anchor, layoutRoot);
         syncToolbarState(field);
         return;
       }
@@ -3439,9 +3463,17 @@ ${next}`;
       document.querySelectorAll(`[${LAYOUT_ROOT_ATTR}]`).forEach((root) => root.removeAttribute(LAYOUT_ROOT_ATTR));
       document.querySelectorAll(`[${OM_ANCHOR_ATTR}]`).forEach((item) => item.removeAttribute(OM_ANCHOR_ATTR));
       document.querySelectorAll(`[${CEM_ANCHOR_ATTR}]`).forEach((item) => item.removeAttribute(CEM_ANCHOR_ATTR));
+      toolbar.dataset.layout = layout;
       toolbar.style.removeProperty("top");
       toolbar.style.removeProperty("height");
-      anchor.insertAdjacentElement("beforebegin", toolbar);
+      if (layoutRoot) {
+        layoutRoot.setAttribute(LAYOUT_ROOT_ATTR, "left");
+        anchor.setAttribute(OM_ANCHOR_ATTR, "true");
+        cemAnchor.setAttribute(CEM_ANCHOR_ATTR, "true");
+        layoutRoot.appendChild(toolbar);
+      } else {
+        anchor.insertAdjacentElement("beforebegin", toolbar);
+      }
       toolbar.replaceChildren();
       const head = document.createElement("div");
       head.className = "werkia-om-notes-head";
@@ -3511,6 +3543,7 @@ ${next}`;
       });
       custom.appendChild(addButton);
       toolbar.appendChild(custom);
+      if (layoutRoot) positionLeftToolbar(toolbar, anchor, layoutRoot);
       if (!field.dataset.werkiaOmNotesTemplatesBound) {
         field.dataset.werkiaOmNotesTemplatesBound = "true";
         field.addEventListener("input", () => syncToolbarState(field));
