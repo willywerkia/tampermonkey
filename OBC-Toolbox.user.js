@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.22
+// @version      1.2.23
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -30,6 +30,7 @@
     const intervals = /* @__PURE__ */ new Set();
     const timeouts = /* @__PURE__ */ new Set();
     const sources = /* @__PURE__ */ new Set();
+    const cleanups = /* @__PURE__ */ new Set();
     let disposed = false;
     const assertActive = () => {
       if (disposed) throw new Error("OBC Toolbox Runtime wurde bereits beendet.");
@@ -37,6 +38,10 @@
     return {
       registerSource(sourcePath) {
         sources.add(sourcePath);
+      },
+      addCleanup(callback) {
+        assertActive();
+        cleanups.add(callback);
       },
       addWindowListener(type, listener, options) {
         assertActive();
@@ -86,12 +91,14 @@
         observers.forEach((observer) => observer.disconnect());
         intervals.forEach((handle) => window.clearInterval(handle));
         timeouts.forEach((handle) => window.clearTimeout(handle));
+        cleanups.forEach((callback) => callback());
         windowListeners.length = 0;
         documentListeners.length = 0;
         observers.clear();
         intervals.clear();
         timeouts.clear();
         sources.clear();
+        cleanups.clear();
       }
     };
   }
@@ -2191,6 +2198,267 @@
     scheduleRun();
   }
 
+  // ../../shared/js/offline-match-bulk/index.js
+  var CREATE_OFFLINE_MATCH_ROUTE = /^#\/CreateOfflineMatch(?:[/?]|$)/i;
+  var MATCH_LINK_SELECTOR = 'a[aria-label="Offline Match erstellen"], a[href*="CreateOfflineMatch"]';
+  var BULK_CHECKBOX_CLASS = "werkia-bulk-ofm-checkbox";
+  var CANDIDATE_STATUS_ID = "werkia-bulk-ofm-candidate-status";
+  var FORM_CONTROLS_ID = "werkia-bulk-ofm-form-controls";
+  var FORM_STATUS_ID = "werkia-bulk-ofm-form-status";
+  var STYLE_ID = "werkia-bulk-ofm-style";
+  var DATE_REMOVE_SELECTOR = 'button.button-remove[class*="button-remove-employers."][class*=".interview.dates-"][aria-label="Entfernen"]';
+  var OFFLINE_MATCH_FORM_SELECTOR = '[data-testid="create-offline-match-form"]';
+  function isCreateOfflineMatchRoute(hash = window.location.hash) {
+    return CREATE_OFFLINE_MATCH_ROUTE.test(hash || "");
+  }
+  function sourceParams(href) {
+    const url = new URL(href, globalThis.location?.href || "https://admin.werkia.de/");
+    const query = url.hash.split("?")[1] || "";
+    return { url, params: new URLSearchParams(query) };
+  }
+  function parseOfflineMatchSource(href) {
+    try {
+      const { params } = sourceParams(href);
+      const source = JSON.parse(params.get("source") || "");
+      if (!source || typeof source !== "object" || !source.candidateId || !Array.isArray(source.employers)) return null;
+      const employers = source.employers.filter((employer) => employer && employer.id && Array.isArray(employer.existingJobPositions)).map((employer) => ({
+        id: String(employer.id),
+        existingJobPositions: employer.existingJobPositions.filter((job) => job?.id).map((job) => ({ id: String(job.id) }))
+      })).filter((employer) => employer.existingJobPositions.length);
+      return employers.length ? { candidateId: String(source.candidateId), employers } : null;
+    } catch {
+      return null;
+    }
+  }
+  function flattenOfflineMatchSource(source) {
+    if (!source) return [];
+    return source.employers.flatMap((employer) => employer.existingJobPositions.map((job) => ({
+      candidateId: source.candidateId,
+      employerId: employer.id,
+      jobPositionId: job.id
+    })));
+  }
+  function matchSelectionKey(match) {
+    return `${match.candidateId}:${match.employerId}:${match.jobPositionId}`;
+  }
+  function buildBulkOfflineMatchSource(matches) {
+    const validMatches = matches.filter((match) => match?.candidateId && match?.employerId && match?.jobPositionId);
+    if (!validMatches.length) throw new Error("Keine gültige Match-Auswahl gefunden.");
+    const candidateId = validMatches[0].candidateId;
+    if (validMatches.some((match) => match.candidateId !== candidateId)) {
+      throw new Error("Die Auswahl enthält Matches verschiedener Kandidaten.");
+    }
+    const employers = /* @__PURE__ */ new Map();
+    validMatches.forEach((match) => {
+      if (!employers.has(match.employerId)) employers.set(match.employerId, /* @__PURE__ */ new Set());
+      employers.get(match.employerId).add(match.jobPositionId);
+    });
+    return {
+      candidateId,
+      employers: [...employers].map(([id, jobPositionIds]) => ({
+        id,
+        existingJobPositions: [...jobPositionIds].map((jobPositionId) => ({ id: jobPositionId }))
+      }))
+    };
+  }
+  function buildBulkOfflineMatchHref(href, matches) {
+    const { url, params } = sourceParams(href);
+    params.set("source", JSON.stringify(buildBulkOfflineMatchSource(matches)));
+    const route = url.hash.split("?")[0];
+    url.hash = `${route}?${params.toString()}`;
+    return url.href;
+  }
+  function expectedOfflineMatchCount(source) {
+    return flattenOfflineMatchSource(source).length;
+  }
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+    .${BULK_CHECKBOX_CLASS} { display:inline-flex; align-items:center; margin-right:var(--apt-space-2,8px); color:var(--apt-color-text-muted,#6b6775); font:600 12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; cursor:pointer; }
+    .${BULK_CHECKBOX_CLASS} input { width:18px; height:18px; accent-color:var(--apt-color-primary,#6d4aff); cursor:pointer; }
+    .${BULK_CHECKBOX_CLASS} input:focus-visible, #${FORM_CONTROLS_ID} button:focus-visible { outline:2px solid var(--apt-color-focus,#b6a4ff); outline-offset:2px; }
+    #${CANDIDATE_STATUS_ID}, #${FORM_STATUS_ID} { box-sizing:border-box; margin:var(--apt-space-3,12px) 0; padding:var(--apt-space-3,12px); border:1px solid var(--apt-color-danger,#c23f3f); border-radius:var(--apt-radius-md,16px); background:var(--apt-color-danger-tint,#fbe6e6); color:var(--apt-color-danger,#c23f3f); font:500 13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${FORM_CONTROLS_ID} { display:flex; flex-wrap:wrap; gap:var(--apt-space-2,8px); margin:var(--apt-space-3,12px) 0; }
+    #${FORM_CONTROLS_ID} button { min-height:36px; padding:6px 12px; border:1px solid var(--apt-color-danger,#c23f3f); border-radius:var(--apt-radius-md,16px); background:var(--apt-color-danger-tint,#fbe6e6); color:var(--apt-color-danger,#c23f3f); cursor:pointer; font:600 13px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${FORM_CONTROLS_ID} button:hover { filter:brightness(.96); }
+    #${FORM_CONTROLS_ID} button:disabled { opacity:.5; cursor:not-allowed; }
+  `;
+    document.head.appendChild(style);
+  }
+  function removeInjectedUi() {
+    document.querySelectorAll(`.${BULK_CHECKBOX_CLASS}`).forEach((element) => element.remove());
+    document.getElementById(CANDIDATE_STATUS_ID)?.remove();
+    document.getElementById(FORM_CONTROLS_ID)?.remove();
+    document.getElementById(FORM_STATUS_ID)?.remove();
+    document.getElementById(STYLE_ID)?.remove();
+  }
+  function showStatus(id, message, anchor) {
+    let status = document.getElementById(id);
+    if (!status) {
+      status = document.createElement("div");
+      status.id = id;
+      status.setAttribute("role", "alert");
+      (anchor || document.querySelector("main") || document.body).prepend(status);
+    }
+    status.textContent = message;
+    return status;
+  }
+  function selectedMatchFromLink(link) {
+    const source = parseOfflineMatchSource(link.href);
+    const matches = flattenOfflineMatchSource(source);
+    return matches.length === 1 ? matches[0] : null;
+  }
+  function resolveOfflineMatchForm(root = document) {
+    const surface = root.querySelector(OFFLINE_MATCH_FORM_SELECTOR);
+    const form = surface?.closest("form");
+    return surface && form ? { form, surface } : null;
+  }
+  function addCandidateCheckboxes(selectedMatches) {
+    document.querySelectorAll(MATCH_LINK_SELECTOR).forEach((link) => {
+      const match = selectedMatchFromLink(link);
+      if (!match) return;
+      const key = matchSelectionKey(match);
+      const parent = link.parentElement;
+      if (!parent || parent.querySelector(`.${BULK_CHECKBOX_CLASS}[data-match-key="${key}"]`)) return;
+      const label = document.createElement("label");
+      label.className = BULK_CHECKBOX_CLASS;
+      label.dataset.matchKey = key;
+      label.title = "Für gemeinsames Offline Match auswählen";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selectedMatches.has(key);
+      checkbox.setAttribute("aria-label", "Match für Offline Match auswählen");
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selectedMatches.set(key, match);
+        else selectedMatches.delete(key);
+      });
+      label.appendChild(checkbox);
+      parent.insertBefore(label, link);
+    });
+  }
+  function formValueCount(form, pattern) {
+    return [...form.querySelectorAll("input[name]")].filter((input) => pattern.test(input.name) && String(input.value || "").trim()).length;
+  }
+  function isBulkFormComplete(form, source) {
+    const expectedMatches = expectedOfflineMatchCount(source);
+    if (expectedMatches < 2) return true;
+    const expectedEmployers = source.employers.length;
+    const employerCount = formValueCount(form, /^employers\.\d+\.id$/);
+    const jobCount = formValueCount(form, /^employers\.\d+\.existingJobPositions\.\d+\.id$/);
+    return employerCount >= expectedEmployers && jobCount >= expectedMatches;
+  }
+  function updateBulkFormStatus(form, source) {
+    if (isBulkFormComplete(form, source)) {
+      document.getElementById(FORM_STATUS_ID)?.remove();
+      return true;
+    }
+    showStatus(
+      FORM_STATUS_ID,
+      "Die ausgewählten Offline-Match-Blöcke wurden vom Adminpanel nicht vollständig erkannt. Es wird nichts gespeichert, bis alle Arbeitgeber und vorhandenen Jobs sichtbar geladen sind.",
+      form
+    );
+    return false;
+  }
+  function removeAllAppointmentSuggestions(form, runtime, button) {
+    if (!window.confirm("Alle Terminvorschläge in sämtlichen Offline-Match-Blöcken löschen?")) return;
+    button.disabled = true;
+    const removeNext = () => {
+      const next = form.querySelector(DATE_REMOVE_SELECTOR);
+      if (!next) {
+        button.disabled = false;
+        return;
+      }
+      next.click();
+      runtime.setTimeout(removeNext, 40);
+    };
+    removeNext();
+  }
+  function ensureFormControls(form, surface, source, runtime) {
+    ensureStyles();
+    let controls = document.getElementById(FORM_CONTROLS_ID);
+    if (!controls) {
+      controls = document.createElement("div");
+      controls.id = FORM_CONTROLS_ID;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Alle Terminvorschläge löschen";
+      button.addEventListener("click", () => removeAllAppointmentSuggestions(form, runtime, button));
+      controls.appendChild(button);
+      surface.prepend(controls);
+    }
+    if (form.dataset.werkiaBulkOfmSubmitGuard !== "true") {
+      form.dataset.werkiaBulkOfmSubmitGuard = "true";
+      form.addEventListener("submit", (event) => {
+        if (!updateBulkFormStatus(form, source)) event.preventDefault();
+      }, true);
+    }
+    updateBulkFormStatus(form, source);
+  }
+  function executeBulkOfflineMatches(runtime, sourcePath) {
+    runtime.registerSource(sourcePath);
+    const selectedMatches = /* @__PURE__ */ new Map();
+    let scheduled = false;
+    const refresh = () => {
+      scheduled = false;
+      if (document.querySelector(MATCH_LINK_SELECTOR)) {
+        ensureStyles();
+        addCandidateCheckboxes(selectedMatches);
+        return;
+      }
+      const offlineMatchForm = resolveOfflineMatchForm();
+      if (offlineMatchForm) {
+        const source = isCreateOfflineMatchRoute() ? parseOfflineMatchSource(window.location.href) : null;
+        ensureFormControls(offlineMatchForm.form, offlineMatchForm.surface, source, runtime);
+        return;
+      }
+      removeInjectedUi();
+    };
+    const scheduleRefresh = () => {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(refresh, 100);
+    };
+    runtime.addDocumentListener("click", (event) => {
+      const link = event.target.closest?.(MATCH_LINK_SELECTOR);
+      if (!link) return;
+      const clickedMatch = selectedMatchFromLink(link);
+      if (!clickedMatch) {
+        event.preventDefault();
+        showStatus(CANDIDATE_STATUS_ID, "Dieses Match konnte nicht eindeutig gelesen werden. Es wurde kein Offline Match geöffnet.", link.closest("table")?.parentElement);
+        return;
+      }
+      const clickedKey = matchSelectionKey(clickedMatch);
+      if (!selectedMatches.has(clickedKey)) {
+        if (selectedMatches.size) {
+          event.preventDefault();
+          showStatus(CANDIDATE_STATUS_ID, "Bitte den Pfeil eines markierten Matches verwenden. Die Auswahl bleibt erhalten.", link.closest("table")?.parentElement);
+        }
+        return;
+      }
+      if (selectedMatches.size < 2) return;
+      try {
+        const href = buildBulkOfflineMatchHref(link.href, [...selectedMatches.values()]);
+        event.preventDefault();
+        const opened = window.open(href, "_blank");
+        if (!opened) showStatus(CANDIDATE_STATUS_ID, "Das Offline-Match-Formular wurde vom Browser blockiert. Bitte Pop-ups für das Adminpanel erlauben.", link.closest("table")?.parentElement);
+      } catch (error) {
+        event.preventDefault();
+        showStatus(CANDIDATE_STATUS_ID, `${error.message} Es wurde kein Offline Match geöffnet.`, link.closest("table")?.parentElement);
+      }
+    }, true);
+    runtime.createMutationObserver(scheduleRefresh).observe(document.body, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleRefresh);
+    runtime.addCleanup?.(removeInjectedUi);
+    scheduleRefresh();
+  }
+
+  // src/features/offline-match-bulk.js
+  function executeOfflineMatchBulk(runtime) {
+    executeBulkOfflineMatches(runtime, "obc/toolbox/src/features/offline-match-bulk.js");
+  }
+
   // obc-legacy-userscript:shared/userscripts/dringende_vakanzen_highlight.user.js
   function executeLegacyModule(runtime) {
     runtime.registerSource("shared/userscripts/dringende_vakanzen_highlight.user.js");
@@ -2206,7 +2474,7 @@
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID = "werkia-urgent-vacancy-style";
+      const STYLE_ID2 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
@@ -2343,10 +2611,10 @@
         });
         return rowsByJobId;
       }
-      function ensureStyles() {
-        if (document.getElementById(STYLE_ID)) return;
+      function ensureStyles2() {
+        if (document.getElementById(STYLE_ID2)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID;
+        style.id = STYLE_ID2;
         style.textContent = `
       .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
@@ -2376,7 +2644,7 @@
         target.appendChild(badge);
       }
       function render(rowsByJobId) {
-        ensureStyles();
+        ensureStyles2();
         rowsByJobId.forEach((rows, jobId) => rows.forEach((row) => applyHighlight(row, urgentIndex.get(jobId) === true)));
       }
       async function loadUrgentFlags(jobIds, { force = false } = {}) {
@@ -2442,6 +2710,7 @@
     // positions its box relative to #werkia-om-notes-box.
     { id: "obc-fragebogen-om-notes-box", execute: executeOmNotesBox },
     { id: "obc-fragebogen-route-calculation", execute: executeRouteCalculation },
+    { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);
 })();
