@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.11
+// @version      1.1.12
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3474,7 +3474,11 @@
   var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
   var STYLE_ID2 = "werkia-om-notes-template-style";
   var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
+  var CEM_TARGET_SELECTOR = 'textarea[name="cemNotes"], input[name="cemNotes"]';
   var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
+  var LAYOUT_ROOT_ATTR = "data-werkia-om-notes-layout-root";
+  var OM_ANCHOR_ATTR = "data-werkia-om-notes-anchor";
+  var CEM_ANCHOR_ATTR = "data-werkia-cem-notes-anchor";
   function appendOmNote(currentValue, addition) {
     const current = String(currentValue || "").trim();
     const next = String(addition || "").trim();
@@ -3524,31 +3528,58 @@ ${next}`;
     const style = document.createElement("style");
     style.id = STYLE_ID2;
     style.textContent = `
-    #${TOOLBAR_ID} { display:block !important; width:500px !important; max-width:calc(100vw - 40px); margin:8px 0 14px auto !important; padding:10px 11px; border:1px solid #9fb2d5; border-radius:8px; background:#f7f9fc; box-sizing:border-box; }
-    #${TOOLBAR_ID} .werkia-om-notes-head { display:flex; align-items:center; gap:9px; margin-bottom:7px; }
-    #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#243b64; font:700 14px/1.2 Arial,sans-serif; white-space:nowrap; }
-    #${TOOLBAR_ID} .werkia-om-notes-help { margin:0; color:#52627b; font:12px/1.2 Arial,sans-serif; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    #${TOOLBAR_ID} .werkia-om-notes-groups { display:flex; flex-wrap:wrap; gap:6px; }
-    #${TOOLBAR_ID} .werkia-om-notes-group { position:relative; }
-    #${TOOLBAR_ID} .werkia-om-notes-group summary { list-style:none; min-height:29px; padding:5px 9px; border:1px solid #7284a6; border-radius:15px; background:#fff; color:#243b64; cursor:pointer; font:700 12px/1 Arial,sans-serif; user-select:none; }
-    #${TOOLBAR_ID} .werkia-om-notes-group summary::-webkit-details-marker { display:none; }
-    #${TOOLBAR_ID} .werkia-om-notes-group[open] summary { border-color:#354f84; background:#e8eefb; }
-    #${TOOLBAR_ID} .werkia-om-notes-chips { position:absolute; right:0; z-index:10000000; display:flex; flex-wrap:wrap; gap:6px; width:max-content; max-width:min(500px, 80vw); margin-top:5px; padding:9px; border:1px solid #7284a6; border-radius:8px; background:#fff; box-shadow:0 4px 12px rgba(36,59,100,.22); }
-    #${TOOLBAR_ID} .werkia-om-notes-chip { min-height:28px; padding:4px 9px; border:1px solid #7284a6; border-radius:14px; background:#fff; color:#243b64; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
-    #${TOOLBAR_ID} .werkia-om-notes-chip:hover { background: #e8eefb; }
-    #${TOOLBAR_ID} .werkia-om-notes-chip.is-active { border-color: #354f84; background: #354f84; color: #fff; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom { display:grid; grid-template-columns:minmax(140px, 1fr) minmax(150px, auto) auto; gap:5px; margin-top:7px; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom input, #${TOOLBAR_ID} .werkia-om-notes-custom select { min-width:0; height:32px; padding:5px 7px; border:1px solid #9ba9c1; border-radius:5px; background:#fff; font:12px Arial,sans-serif; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom button { padding:5px 9px; border:1px solid #7284a6; border-radius:5px; background:#fff; color:#243b64; cursor:pointer; font:700 12px Arial,sans-serif; }
-    #${TOOLBAR_ID} .werkia-om-notes-custom button:hover { background: #e8eefb; }
-    @media (max-width:720px) { #${TOOLBAR_ID} { width:100% !important; max-width:none; } #${TOOLBAR_ID} .werkia-om-notes-help { display:none; } }
+    [${LAYOUT_ROOT_ATTR}="side"] { position:relative !important; }
+    [${LAYOUT_ROOT_ATTR}="side"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="side"] [${CEM_ANCHOR_ATTR}] { width:64% !important; max-width:64% !important; flex:0 0 64% !important; }
+    #${TOOLBAR_ID} { --om-surface:#fff; --om-surface-muted:var(--apt-color-surface-muted,#f1eef7); --om-border:var(--apt-color-border,#e2e0e8); --om-text:var(--apt-color-text,#1c1a22); --om-text-muted:var(--apt-color-text-muted,#6b6775); --om-primary:var(--apt-color-primary,#6d4aff); --om-primary-tint:var(--apt-color-primary-tint,#f1edff); --om-focus:var(--apt-color-focus,#b6a4ff); display:block; box-sizing:border-box; overflow:hidden; border:1px solid var(--om-border); border-radius:16px; background:var(--om-surface); color:var(--om-text); box-shadow:0 10px 24px rgba(28,26,34,.16); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID}[data-layout="side"] { position:absolute; right:0; z-index:10; width:33%; min-width:380px; max-width:500px; margin:0; }
+    #${TOOLBAR_ID}[data-layout="above"] { width:min(640px, 100%); margin:0 0 10px; }
+    #${TOOLBAR_ID} .werkia-om-notes-head { padding:10px 12px; background:var(--apt-color-header-bg,#3a3548); color:#fff; }
+    #${TOOLBAR_ID} .werkia-om-notes-title { margin:0; color:#fff; font:650 16px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:-.01em; }
+    #${TOOLBAR_ID} .werkia-om-notes-help { margin:3px 0 0; color:#e7e4ee; font:500 11px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-groups { display:grid; grid-template-columns:1fr 1fr; gap:9px 12px; padding:10px 12px 0; }
+    #${TOOLBAR_ID} .werkia-om-notes-group { min-width:0; }
+    #${TOOLBAR_ID} .werkia-om-notes-group-label { display:block; margin-bottom:5px; color:var(--om-text-muted); font:650 11px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-chips { display:flex; flex-wrap:wrap; gap:5px; }
+    #${TOOLBAR_ID} .werkia-om-notes-chip { min-height:29px; padding:4px 9px; border:1px solid var(--om-border); border-radius:999px; background:var(--om-surface-muted); color:var(--om-text-muted); cursor:pointer; font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif; transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease; }
+    #${TOOLBAR_ID} .werkia-om-notes-chip:hover { border-color:var(--om-primary); background:var(--om-primary-tint); color:var(--om-primary); }
+    #${TOOLBAR_ID} .werkia-om-notes-chip.is-active { border-color:var(--om-primary); background:var(--om-primary-tint); color:var(--om-primary); }
+    #${TOOLBAR_ID} .werkia-om-notes-chip:focus-visible, #${TOOLBAR_ID} .werkia-om-notes-custom input:focus-visible, #${TOOLBAR_ID} .werkia-om-notes-custom select:focus-visible, #${TOOLBAR_ID} .werkia-om-notes-custom button:focus-visible { outline:2px solid var(--om-focus); outline-offset:2px; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom { display:grid; grid-template-columns:minmax(120px, 1fr) minmax(150px, auto) auto; gap:5px; margin:10px 12px 12px; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom input, #${TOOLBAR_ID} .werkia-om-notes-custom select { min-width:0; height:34px; padding:5px 8px; border:1px solid var(--om-border); border-radius:10px; background:var(--om-surface); color:var(--om-text); font:400 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom button { min-height:34px; padding:5px 10px; border:1px solid var(--om-primary); border-radius:10px; background:var(--om-primary); color:#fff; cursor:pointer; font:600 12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #${TOOLBAR_ID} .werkia-om-notes-custom button:hover { background:var(--apt-color-primary-hover,#5535d6); }
+    @media (max-width:1050px) { [${LAYOUT_ROOT_ATTR}="side"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="side"] [${CEM_ANCHOR_ATTR}] { width:100% !important; max-width:100% !important; flex-basis:100% !important; } #${TOOLBAR_ID}[data-layout="side"] { position:relative; width:100%; min-width:0; max-width:none; margin:0 0 10px; } }
+    @media (max-width:520px) { #${TOOLBAR_ID} .werkia-om-notes-groups { grid-template-columns:1fr; } #${TOOLBAR_ID} .werkia-om-notes-custom { grid-template-columns:1fr; } }
   `;
     document.head.appendChild(style);
   }
   function toolbarAnchor(field) {
     return field.closest(".ra-input-omNotes, .MuiFormControl-root, .MuiGrid-item") || field.parentElement;
   }
+  function sharedLayoutRoot(first, second) {
+    let parent = first.parentElement;
+    while (parent && parent !== document.body) {
+      if (parent.contains(second)) return parent;
+      parent = parent.parentElement;
+    }
+    return null;
+  }
+  function positionSideToolbar(toolbar, anchor, fallbackRoot) {
+    const ElementClass = toolbar.ownerDocument.defaultView?.HTMLElement;
+    const positioningRoot = ElementClass && toolbar.offsetParent instanceof ElementClass ? toolbar.offsetParent : fallbackRoot;
+    if (!positioningRoot) return;
+    const viewportHeight = toolbar.ownerDocument.defaultView?.innerHeight || 0;
+    const rootRect = positioningRoot.getBoundingClientRect();
+    const omRect = anchor.getBoundingClientRect();
+    const toolbarHeight = toolbar.getBoundingClientRect().height;
+    const bottomLimit = viewportHeight ? viewportHeight - 58 - toolbarHeight : omRect.top;
+    const viewportTop = Math.max(8, Math.min(omRect.top, bottomLimit));
+    toolbar.style.top = `${Math.max(0, Math.round(viewportTop - rootRect.top + positioningRoot.scrollTop))}px`;
+  }
   function removeToolbar() {
+    document.querySelectorAll(`[${LAYOUT_ROOT_ATTR}]`).forEach((root) => root.removeAttribute(LAYOUT_ROOT_ATTR));
+    document.querySelectorAll(`[${OM_ANCHOR_ATTR}]`).forEach((anchor) => anchor.removeAttribute(OM_ANCHOR_ATTR));
+    document.querySelectorAll(`[${CEM_ANCHOR_ATTR}]`).forEach((anchor) => anchor.removeAttribute(CEM_ANCHOR_ATTR));
     document.getElementById(TOOLBAR_ID)?.remove();
   }
   function executeOmNotesTemplates(runtime) {
@@ -3560,11 +3591,6 @@ ${next}`;
       if (!field || !toolbar) return;
       toolbar.querySelectorAll(".werkia-om-notes-chip").forEach((button) => {
         button.classList.toggle("is-active", hasOmNote(field.value, button.title));
-      });
-      toolbar.querySelectorAll(".werkia-om-notes-group").forEach((group) => {
-        const label = group.dataset.groupLabel || "Flags";
-        const active = group.querySelectorAll(".werkia-om-notes-chip.is-active").length;
-        group.querySelector("summary").textContent = active ? `${label} (${active})` : label;
       });
     }
     function write(nextValue) {
@@ -3588,17 +3614,33 @@ ${next}`;
       ensureStyles();
       const anchor = toolbarAnchor(field);
       if (!anchor) return;
+      const cemField = document.querySelector(CEM_TARGET_SELECTOR);
+      const cemAnchor = cemField ? toolbarAnchor(cemField) : null;
+      const layoutRoot = cemAnchor ? sharedLayoutRoot(anchor, cemAnchor) : null;
+      const layout = layoutRoot ? "side" : "above";
       let toolbar = document.getElementById(TOOLBAR_ID);
-      if (!force && toolbar?.previousElementSibling === anchor) {
+      if (!force && toolbar?.isConnected && toolbar.dataset.layout === layout && currentField === field) {
+        if (layoutRoot && cemAnchor) positionSideToolbar(toolbar, anchor, layoutRoot);
         syncToolbarState(field);
         return;
       }
       if (!toolbar) {
         toolbar = document.createElement("section");
         toolbar.id = TOOLBAR_ID;
-        anchor.insertAdjacentElement("afterend", toolbar);
-      } else if (toolbar.previousElementSibling !== anchor) {
-        anchor.insertAdjacentElement("afterend", toolbar);
+      }
+      document.querySelectorAll(`[${LAYOUT_ROOT_ATTR}]`).forEach((root) => root.removeAttribute(LAYOUT_ROOT_ATTR));
+      document.querySelectorAll(`[${OM_ANCHOR_ATTR}]`).forEach((item) => item.removeAttribute(OM_ANCHOR_ATTR));
+      document.querySelectorAll(`[${CEM_ANCHOR_ATTR}]`).forEach((item) => item.removeAttribute(CEM_ANCHOR_ATTR));
+      toolbar.dataset.layout = layout;
+      toolbar.style.removeProperty("top");
+      toolbar.style.removeProperty("height");
+      if (layoutRoot) {
+        layoutRoot.setAttribute(LAYOUT_ROOT_ATTR, "side");
+        anchor.setAttribute(OM_ANCHOR_ATTR, "true");
+        cemAnchor.setAttribute(CEM_ANCHOR_ATTR, "true");
+        layoutRoot.appendChild(toolbar);
+      } else {
+        anchor.insertAdjacentElement("beforebegin", toolbar);
       }
       toolbar.replaceChildren();
       const head = document.createElement("div");
@@ -3609,16 +3651,16 @@ ${next}`;
       head.appendChild(title);
       const help = document.createElement("p");
       help.className = "werkia-om-notes-help";
-      help.textContent = "Kategorie öffnen, Flag wählen, dann normal speichern.";
+      help.textContent = "Klickbare OM-Flags für dieses Arbeitgeberprofil.";
       head.appendChild(help);
       toolbar.appendChild(head);
       const groups = document.createElement("div");
       groups.className = "werkia-om-notes-groups";
       OM_NOTE_GROUPS.forEach((groupName) => {
-        const group = document.createElement("details");
+        const group = document.createElement("div");
         group.className = "werkia-om-notes-group";
-        group.dataset.groupLabel = groupName;
-        const label = document.createElement("summary");
+        const label = document.createElement("span");
+        label.className = "werkia-om-notes-group-label";
         label.textContent = groupName;
         group.appendChild(label);
         const chips = document.createElement("div");
@@ -3669,6 +3711,7 @@ ${next}`;
       });
       custom.appendChild(addButton);
       toolbar.appendChild(custom);
+      if (layoutRoot && cemAnchor) positionSideToolbar(toolbar, anchor, layoutRoot);
       if (!field.dataset.werkiaOmNotesTemplatesBound) {
         field.dataset.werkiaOmNotesTemplatesBound = "true";
         field.addEventListener("input", () => syncToolbarState(field));
@@ -3685,6 +3728,7 @@ ${next}`;
     const observer = createObserver(runtime, scheduleRender);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     addWindowListener(runtime, "hashchange", scheduleRender);
+    addWindowListener(runtime, "resize", scheduleRender);
     addCleanup(runtime, () => {
       if (refreshTimer !== null) {
         const clear = runtime?.clearTimeout ? runtime.clearTimeout.bind(runtime) : window.clearTimeout.bind(window);
