@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.19
+// @version      1.1.20
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3280,6 +3280,182 @@
     scheduleSync();
   }
 
+  // ../../shared/js/slack-exports/index.js
+  var ROW_SELECTOR5 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
+  var EXPORTS_SELECTOR = ".werkia-slack-exports";
+  var STYLE_ID2 = "werkia-slack-exports-style";
+  var APPOINTMENT_DATE_RE = /\b\d{1,2}\.\s*(?:jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|apr(?:il)?|mai|jun(?:i)?|jul(?:i)?|aug(?:ust)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\.?\s+\d{4}\s+\d{1,2}:\d{2}\b/i;
+  var MATCH_EXPORT_QUERY = `query Match($id: UUID!) {
+  data: Match(id: $id) {
+    id
+    candidate { id firstName lastName cemEmployeeId __typename }
+    jobPosition {
+      id
+      mainTitle
+      subTitle
+      employer { id name kamEmployeeId __typename }
+      __typename
+    }
+    __typename
+  }
+  employees: allEmployees(filter: {}) { id firstName lastName __typename }
+}`;
+  function isTargetPage5(hash = location.hash, role) {
+    return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
+  }
+  function matchIdFromHref(href) {
+    return String(href || "").match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
+  }
+  function hasAppointmentDate(text) {
+    return APPOINTMENT_DATE_RE.test(String(text || ""));
+  }
+  function employeeMention(employee) {
+    const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(" ");
+    return name ? `@${name}` : "";
+  }
+  function buildSlackText(type, { candidateName, employerName, jobTitle, kam, cem }, taggedRole) {
+    const tag = employeeMention(taggedRole === "kam" ? kam : cem);
+    if (type === "VTA") return [candidateName, employerName, tag].join("\n");
+    return [candidateName, employerName, jobTitle, "", "", tag].join("\n");
+  }
+  function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath }) {
+    runtime.registerSource(sourcePath);
+    const matchDataCache = /* @__PURE__ */ new Map();
+    const taggedRole = role === "kam" ? "cem" : "kam";
+    let syncTimer = null;
+    function ensureStyle() {
+      if (document.getElementById(STYLE_ID2)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID2;
+      style.textContent = `
+      .werkia-slack-exports { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+      .werkia-slack-export { min-height:24px; padding:3px 8px; border:0; border-radius:5px; background:#4956df; color:#fff; cursor:pointer; font:700 11px/1 Arial,sans-serif; white-space:nowrap; }
+      .werkia-slack-export:hover { background:#3643c7; }
+      .werkia-slack-export:disabled { cursor:wait; opacity:.72; }
+    `;
+      document.head.appendChild(style);
+    }
+    function appointmentCell(row) {
+      return [...row.querySelectorAll("td")].find((cell) => hasAppointmentDate(cell.innerText));
+    }
+    function matchIdFromRow(row) {
+      return matchIdFromHref(row.querySelector(MATCH_LINK_SELECTOR2)?.href);
+    }
+    async function loadMatchData(matchId) {
+      if (matchDataCache.has(matchId)) return matchDataCache.get(matchId);
+      const promise = (async () => {
+        const { request } = getGraphqlAdapter();
+        const result = await request(MATCH_EXPORT_QUERY, { id: matchId });
+        const match = result?.data;
+        const candidate = match?.candidate;
+        const jobPosition = match?.jobPosition;
+        const employer = jobPosition?.employer;
+        if (!candidate?.id || !jobPosition?.id || !employer?.id) throw new Error("Matchdaten konnten nicht vollständig geladen werden.");
+        const employees = new Map((result?.employees || []).filter((employee) => employee?.id).map((employee) => [employee.id, employee]));
+        return {
+          candidateName: [candidate.firstName, candidate.lastName].filter(Boolean).join(" ") || "Unbekannter Kandidat",
+          employerName: employer.name || "Unbekannter Arbeitgeber",
+          jobTitle: [jobPosition.mainTitle, jobPosition.subTitle].filter(Boolean).join(" ") || "Unbekannte Vakanz",
+          kam: employees.get(employer.kamEmployeeId),
+          cem: employees.get(candidate.cemEmployeeId)
+        };
+      })();
+      matchDataCache.set(matchId, promise);
+      try {
+        return await promise;
+      } catch (error) {
+        matchDataCache.delete(matchId);
+        throw error;
+      }
+    }
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+    }
+    async function copyExport(button, type) {
+      const row = button.closest("tr");
+      const matchId = row && matchIdFromRow(row);
+      if (!matchId) return;
+      const originalLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = "Lädt …";
+      try {
+        await copyText(buildSlackText(type, await loadMatchData(matchId), taggedRole));
+        button.textContent = "Kopiert";
+      } catch (error) {
+        console.warn("[Slack-Export] Kopieren fehlgeschlagen.", error);
+        button.textContent = "Fehler";
+      } finally {
+        runtime.setTimeout(() => {
+          if (!button.isConnected) return;
+          button.disabled = false;
+          button.textContent = originalLabel;
+        }, 1200);
+      }
+    }
+    function addExports(row) {
+      const cell = appointmentCell(row);
+      const matchId = matchIdFromRow(row);
+      if (!cell || !matchId || cell.querySelector(EXPORTS_SELECTOR)) return;
+      const exports = document.createElement("div");
+      exports.className = EXPORTS_SELECTOR.slice(1);
+      ["VTA", "VTV"].forEach((type) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "werkia-slack-export";
+        button.textContent = `${type} Exportieren`;
+        button.title = `${type}-Text für Slack kopieren`;
+        button.addEventListener("click", () => copyExport(button, type));
+        exports.appendChild(button);
+      });
+      cell.appendChild(exports);
+    }
+    function removeExports() {
+      document.querySelectorAll(EXPORTS_SELECTOR).forEach((element) => element.remove());
+    }
+    function syncExports() {
+      if (!isTargetPage5(location.hash, role)) {
+        removeExports();
+        return;
+      }
+      ensureStyle();
+      document.querySelectorAll(ROW_SELECTOR5).forEach(addExports);
+    }
+    function scheduleSync() {
+      if (syncTimer !== null) return;
+      syncTimer = runtime.setTimeout(() => {
+        syncTimer = null;
+        syncExports();
+      }, 120);
+    }
+    runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleSync);
+    runtime.addCleanup?.(() => {
+      if (syncTimer !== null) runtime.clearTimeout(syncTimer);
+      removeExports();
+      document.getElementById(STYLE_ID2)?.remove();
+    });
+    scheduleSync();
+  }
+
+  // src/features/kam-suite/slack-exports.js
+  function executeSlackExports2(runtime) {
+    executeSlackExports(runtime, {
+      role: "KAM",
+      getGraphqlAdapter: getKamGraphqlAdapter,
+      sourcePath: "kam/toolbox/src/features/kam-suite/slack-exports.js"
+    });
+  }
+
   // ../../shared/js/om-notes-templates/index.js
   var OM_NOTE_TEMPLATES = [
     { group: "Unterlagen", label: "CV", value: "[CV]" },
@@ -3308,7 +3484,7 @@
     { label: "Freitext", prefix: "" }
   ];
   var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
-  var STYLE_ID2 = "werkia-om-notes-template-style";
+  var STYLE_ID3 = "werkia-om-notes-template-style";
   var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
   var CEM_TARGET_SELECTOR = 'textarea[name="cemNotes"], input[name="cemNotes"]';
   var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
@@ -3360,9 +3536,9 @@ ${next}`;
     if (runtime?.addCleanup) runtime.addCleanup(callback);
   }
   function ensureStyles() {
-    if (document.getElementById(STYLE_ID2)) return;
+    if (document.getElementById(STYLE_ID3)) return;
     const style = document.createElement("style");
-    style.id = STYLE_ID2;
+    style.id = STYLE_ID3;
     style.textContent = `
     [${LAYOUT_ROOT_ATTR}="left"] { --om-flags-panel-width:min(620px, max(500px, 35%)); --om-flags-gap:16px; position:relative !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; max-width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; margin-left:calc(var(--om-flags-panel-width) + var(--om-flags-gap)) !important; flex:0 0 calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; }
@@ -3578,7 +3754,7 @@ ${next}`;
       }
       observer.disconnect();
       removeToolbar();
-      document.getElementById(STYLE_ID2)?.remove();
+      document.getElementById(STYLE_ID3)?.remove();
     });
     renderToolbar();
   }
@@ -3598,7 +3774,7 @@ ${next}`;
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID3 = "werkia-urgent-vacancy-style";
+      const STYLE_ID4 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
@@ -3736,9 +3912,9 @@ ${next}`;
         return rowsByJobId;
       }
       function ensureStyles2() {
-        if (document.getElementById(STYLE_ID3)) return;
+        if (document.getElementById(STYLE_ID4)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID3;
+        style.id = STYLE_ID4;
         style.textContent = `
       .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
@@ -3835,6 +4011,7 @@ ${next}`;
     { id: "kam-suite-chat-status-banner", execute: executeChatStatusBanner },
     { id: "kam-suite-chat-icon-redirect", execute: executeChatIconRedirect },
     { id: "kam-suite-appointment-copy-paste", execute: executeAppointmentCopyPaste },
+    { id: "kam-suite-slack-exports", execute: executeSlackExports2 },
     { id: "om-notes-templates", execute: executeOmNotesTemplates },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);

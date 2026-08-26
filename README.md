@@ -21,6 +21,7 @@ Enthaltene Funktionen:
 - Zeigt im Chat ein farbiges Banner mit dem aktuellen CEM/KAM-Status des zugehoerigen Matches.
 - Korrigiert den Chat-Button in "Meine Matches", damit er direkt die richtige Unterhaltung oeffnet.
 - Kopiert Terminvorschlaege (Ort, Hinweise, Datum/Uhrzeit) per Knopfdruck von einem Dialog in einen anderen.
+- Zeigt unter jedem Termin VTA- und VTV-Buttons, die den passenden Slack-Text des Matches kopieren.
 - Fuegt im Arbeitgeberprofil OM-Flag-Vorlagen direkt am Feld OM Notes ein.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 
@@ -39,6 +40,7 @@ Enthaltene Funktionen:
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Empfehlung an.
 - Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
 - Ergaenzt die Kandidatenliste einer Vakanz um Zusatzinfos je Kandidat (Reisebereitschaft, Status, Registrierungsdatum, Telefonnummer) und eine Anruf-Empfehlung.
+- Zeigt unter jedem Termin VTA- und VTV-Buttons, die den passenden Slack-Text des Matches kopieren.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 
 ## OBC Toolbox
