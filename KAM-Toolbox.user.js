@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.23
+// @version      1.1.24
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -471,6 +471,7 @@
     { value: "no_drivers_license", label: "Kein Führerschein", nativeValue: "others", customFeedback: "Kein Führerschein" },
     { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" },
     { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" },
+    { value: "job_change_frequency", label: "Wechselhäufigkeit", nativeValue: "others", customFeedback: "Wechselhäufigkeit" },
     { value: "candidate_not_responsive", label: "BEW nicht responsive", nativeValue: "candidate_not_responsive", customFeedback: null },
     { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG", nativeValue: "candidate_not_interested_in_employer", customFeedback: null },
     { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW", nativeValue: "employer_not_interested_in_candidate", customFeedback: null },
@@ -487,6 +488,7 @@
     { value: "position_filled", label: "Stelle besetzt", nativeValue: "position_filled", customFeedback: null },
     { value: "qualification", label: "Qualifikation", nativeValue: "qualification", customFeedback: null }
   ];
+  var OUT_FEEDBACK_TEMPLATE_OPTIONS = OUT_FEEDBACK_OPTIONS.filter((option) => option.nativeValue === "others");
   var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
   var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
   items: allInterviews(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
@@ -812,12 +814,12 @@
       shortcuts.innerHTML = `KAM-Feedback
       <select name="werkiaKamOutFeedback">
         <option value="">Bitte auswählen</option>
-        ${OUT_FEEDBACK_OPTIONS.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
+        ${OUT_FEEDBACK_TEMPLATE_OPTIONS.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
       </select>`;
       anchor.insertAdjacentElement("afterend", shortcuts);
       const select = shortcuts.querySelector("select");
       select.addEventListener("change", () => {
-        const reason = OUT_FEEDBACK_OPTIONS.find((option) => option.value === select.value);
+        const reason = OUT_FEEDBACK_TEMPLATE_OPTIONS.find((option) => option.value === select.value);
         if (!reason) return;
         applyNativeOutFeedback(dialog, reason).catch((error) => {
           console.warn("[KAM Out-Feedback] Schnellauswahl konnte nicht übernommen werden:", error);
