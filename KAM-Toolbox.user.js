@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.21
+// @version      1.1.22
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3299,7 +3299,7 @@
     }
     __typename
   }
-  employees: allEmployees(filter: {}) { id firstName lastName slackId __typename }
+  employees: allEmployees(filter: {}) { id firstName lastName __typename }
 }`;
   function isTargetPage5(hash = location.hash, role) {
     return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
@@ -3310,15 +3310,15 @@
   function hasAppointmentDate(text) {
     return APPOINTMENT_DATE_RE.test(String(text || ""));
   }
-  function employeeMention(employee) {
-    const slackId = String(employee?.slackId || "").trim();
-    if (slackId) return `<@${slackId}>`;
+  function employeeMention(employee, firstNameIsUnique = false) {
+    const firstName = String(employee?.firstName || "").trim();
+    if (firstName && firstNameIsUnique) return `@${firstName}`;
     const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(" ");
     return name ? `@${name}` : "";
   }
-  function buildSlackText(type, { candidateName, employerName, jobTitle, kam, cem }, taggedRole) {
+  function buildSlackText(type, { candidateName, employerName, jobTitle, kam, cem, kamFirstNameIsUnique, cemFirstNameIsUnique }, taggedRole) {
     const employee = taggedRole === "kam" ? kam : cem;
-    const tag = employeeMention(employee);
+    const tag = employeeMention(employee, taggedRole === "kam" ? kamFirstNameIsUnique : cemFirstNameIsUnique);
     if (type === "VTA") return [candidateName, employerName, tag].join("\n");
     return [candidateName, employerName, jobTitle, "", "", tag].join("\n");
   }
@@ -3355,13 +3355,27 @@
         const jobPosition = match?.jobPosition;
         const employer = jobPosition?.employer;
         if (!candidate?.id || !jobPosition?.id || !employer?.id) throw new Error("Matchdaten konnten nicht vollständig geladen werden.");
-        const employees = new Map((result?.employees || []).filter((employee) => employee?.id).map((employee) => [employee.id, employee]));
+        const employees = (result?.employees || []).filter((employee) => employee?.id);
+        const employeesById = new Map(employees.map((employee) => [employee.id, employee]));
+        const firstNameCounts = /* @__PURE__ */ new Map();
+        employees.forEach((employee) => {
+          const firstName = String(employee.firstName || "").trim().toLocaleLowerCase("de-DE");
+          if (firstName) firstNameCounts.set(firstName, (firstNameCounts.get(firstName) || 0) + 1);
+        });
+        const hasUniqueFirstName = (employee) => {
+          const firstName = String(employee?.firstName || "").trim().toLocaleLowerCase("de-DE");
+          return Boolean(firstName) && firstNameCounts.get(firstName) === 1;
+        };
+        const kam = employeesById.get(employer.kamEmployeeId);
+        const cem = employeesById.get(candidate.cemEmployeeId);
         return {
           candidateName: [candidate.firstName, candidate.lastName].filter(Boolean).join(" ") || "Unbekannter Kandidat",
           employerName: employer.name || "Unbekannter Arbeitgeber",
           jobTitle: [jobPosition.mainTitle, jobPosition.subTitle].filter(Boolean).join(" ") || "Unbekannte Vakanz",
-          kam: employees.get(employer.kamEmployeeId),
-          cem: employees.get(candidate.cemEmployeeId)
+          kam,
+          cem,
+          kamFirstNameIsUnique: hasUniqueFirstName(kam),
+          cemFirstNameIsUnique: hasUniqueFirstName(cem)
         };
       })();
       matchDataCache.set(matchId, promise);
