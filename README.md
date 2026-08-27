@@ -21,7 +21,7 @@ Enthaltene Funktionen:
 - Zeigt im Chat ein farbiges Banner mit dem aktuellen CEM/KAM-Status des zugehoerigen Matches.
 - Korrigiert den Chat-Button in "Meine Matches", damit er direkt die richtige Unterhaltung oeffnet.
 - Kopiert Terminvorschlaege (Ort, Hinweise, Datum/Uhrzeit) per Knopfdruck von einem Dialog in einen anderen.
-- Zeigt unter jedem Termin VTA- und VTV-Buttons, die den passenden Slack-Text des Matches kopieren.
+- Sendet VTA und VTV direkt aus dem Match über Zapier nach Slack. VTV enthält Kandidat, Arbeitgeber, Termin und CEM-Erwähnung.
 - Fuegt im Arbeitgeberprofil OM-Flag-Vorlagen direkt am Feld OM Notes ein.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 
