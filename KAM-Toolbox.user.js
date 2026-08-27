@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.32
+// @version      1.1.33
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -271,6 +271,13 @@
     jobPositionId
     cemStatus
     kamStatus
+    jobPosition {
+      employer {
+        id
+        __typename
+      }
+      __typename
+    }
     __typename
   }
 }`;
@@ -297,6 +304,7 @@
   }
   function createMatchProvider({ request }) {
     const reverseLookupsInFlight = /* @__PURE__ */ new Map();
+    const sentEmployerLookupsInFlight = /* @__PURE__ */ new Map();
     return {
       async loadMatch(matchId) {
         const result = await request(MATCH_QUERY, { id: matchId });
@@ -338,6 +346,47 @@
           return await promise;
         } finally {
           reverseLookupsInFlight.delete(key);
+        }
+      },
+      // Reads the candidate's complete sent-match history once, then maps every
+      // JobPosition back to its employer. Consumers can mark all current
+      // suggestions for an employer, including a vacancy that has not received
+      // a match itself yet.
+      async loadSentMatchEmployers(candidateId) {
+        const existing = sentEmployerLookupsInFlight.get(candidateId);
+        if (existing) return existing;
+        const promise = (async () => {
+          const employerIds = /* @__PURE__ */ new Set();
+          const employerIdByJobPositionId = /* @__PURE__ */ new Map();
+          const perPage = 100;
+          let page = 0;
+          let total = Infinity;
+          while (page * perPage < total) {
+            const result = await request(REVERSE_MATCH_QUERY, {
+              filter: { candidateIds: [candidateId], matched: true },
+              page,
+              perPage,
+              sortField: "createdAt",
+              sortOrder: "DESC"
+            });
+            const items = result?.items || [];
+            for (const item of items) {
+              const employerId = item?.jobPosition?.employer?.id;
+              if (!item?.jobPositionId || !employerId) continue;
+              employerIds.add(employerId);
+              employerIdByJobPositionId.set(item.jobPositionId, employerId);
+            }
+            total = Number(result?.total?.count);
+            if (!Number.isFinite(total) || !items.length) break;
+            page++;
+          }
+          return { employerIds, employerIdByJobPositionId };
+        })();
+        sentEmployerLookupsInFlight.set(candidateId, promise);
+        try {
+          return await promise;
+        } finally {
+          sentEmployerLookupsInFlight.delete(candidateId);
         }
       }
     };
@@ -3825,6 +3874,7 @@ ${next}`;
       const STYLE_ID4 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
+      const MATCH_PRESENT_ROW_CLASS = "werkia-cem-match-present-row";
       const POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
       const BEARER_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_bearer_v1";
       const FINGERPRINT_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_fingerprint_v1";
@@ -3977,6 +4027,10 @@ ${next}`;
       }
       function applyHighlight(row, urgent) {
         const existingBadge = row.querySelector(`.${BADGE_CLASS}`);
+        if (row.classList.contains(MATCH_PRESENT_ROW_CLASS)) {
+          if (row.classList.contains(ROW_CLASS) || existingBadge) removeHighlight(row);
+          return;
+        }
         if (!urgent) {
           if (row.classList.contains(ROW_CLASS) || existingBadge) removeHighlight(row);
           return;

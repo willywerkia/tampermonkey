@@ -32,7 +32,7 @@ Enthaltene Funktionen:
 Enthaltene Funktionen:
 
 - Zeigt bei jedem Arbeitgeber ein Badge zur Rueckmeldegeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
-- Zeigt bei Reverse-Match-Vorschlaegen zusaetzlich den passenden KAM-Status als Tag an.
+- Umrandet Reverse-Match-Vorschlaege mit "Match vorhanden", wenn der Kandidat beim Arbeitgeber bereits einen gesendeten Match hat. Der Hinweis ersetzt dort den Dringlichkeitsrand und zeigt bei derselben Vakanz den KAM-Status an.
 - Markiert Zeilen von Arbeitgebern mit besonderer Absprache (GA-TEC) farblich mit Hinweistext "[Absprache vor OFM]".
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich den Kontext des offenen Fragebogens fuer andere Funktionen.
 - Blendet neben dem Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein.
@@ -40,7 +40,7 @@ Enthaltene Funktionen:
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Empfehlung an.
 - Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
 - Ergaenzt die Kandidatenliste einer Vakanz um Zusatzinfos je Kandidat (Reisebereitschaft, Status, Registrierungsdatum, Telefonnummer) und eine Anruf-Empfehlung.
-- Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular; Terminvorschläge lassen sich dort gesammelt löschen.
+- Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 
 ## OBC Toolbox
@@ -51,11 +51,11 @@ Enthaltene Funktionen:
 
 - Zeigt bei jedem Arbeitgeber ein Badge zur Antwortgeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
 - Markiert Zeilen von Arbeitgebern mit besonderer Absprache (GA-TEC) farblich mit Hinweistext "[Absprache vor OFM]".
-- Zeigt bei Reverse-Match-Vorschlaegen zusaetzlich den zugehoerigen KAM-Status als Tag an.
+- Umrandet Vorschlaege mit "Match vorhanden", wenn der Kandidat beim Arbeitgeber bereits einen gesendeten Match hat. Der Hinweis ersetzt dort den Dringlichkeitsrand und zeigt bei Reverse Matches den KAM-Status an.
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich Kandidat/Vakanz des offenen Fragebogens.
 - Blendet neben dem Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein.
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Entscheidungs-Empfehlung.
 - Zeigt eine hervorgehobene Box mit den OM-Notizen zum Fragebogen direkt im Dialog.
 - Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
-- Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular; Terminvorschläge lassen sich dort gesammelt löschen.
+- Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.

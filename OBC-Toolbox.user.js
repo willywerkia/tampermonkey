@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.32
+// @version      1.2.33
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -262,6 +262,13 @@
     jobPositionId
     cemStatus
     kamStatus
+    jobPosition {
+      employer {
+        id
+        __typename
+      }
+      __typename
+    }
     __typename
   }
 }`;
@@ -288,6 +295,7 @@
   }
   function createMatchProvider({ request }) {
     const reverseLookupsInFlight = /* @__PURE__ */ new Map();
+    const sentEmployerLookupsInFlight = /* @__PURE__ */ new Map();
     return {
       async loadMatch(matchId) {
         const result = await request(MATCH_QUERY, { id: matchId });
@@ -329,6 +337,47 @@
           return await promise;
         } finally {
           reverseLookupsInFlight.delete(key);
+        }
+      },
+      // Reads the candidate's complete sent-match history once, then maps every
+      // JobPosition back to its employer. Consumers can mark all current
+      // suggestions for an employer, including a vacancy that has not received
+      // a match itself yet.
+      async loadSentMatchEmployers(candidateId) {
+        const existing = sentEmployerLookupsInFlight.get(candidateId);
+        if (existing) return existing;
+        const promise = (async () => {
+          const employerIds = /* @__PURE__ */ new Set();
+          const employerIdByJobPositionId = /* @__PURE__ */ new Map();
+          const perPage = 100;
+          let page = 0;
+          let total = Infinity;
+          while (page * perPage < total) {
+            const result = await request(REVERSE_MATCH_QUERY, {
+              filter: { candidateIds: [candidateId], matched: true },
+              page,
+              perPage,
+              sortField: "createdAt",
+              sortOrder: "DESC"
+            });
+            const items = result?.items || [];
+            for (const item of items) {
+              const employerId = item?.jobPosition?.employer?.id;
+              if (!item?.jobPositionId || !employerId) continue;
+              employerIds.add(employerId);
+              employerIdByJobPositionId.set(item.jobPositionId, employerId);
+            }
+            total = Number(result?.total?.count);
+            if (!Number.isFinite(total) || !items.length) break;
+            page++;
+          }
+          return { employerIds, employerIdByJobPositionId };
+        })();
+        sentEmployerLookupsInFlight.set(candidateId, promise);
+        try {
+          return await promise;
+        } finally {
+          sentEmployerLookupsInFlight.delete(candidateId);
         }
       }
     };
@@ -730,6 +779,9 @@
 
   // src/features/obc-fragebogen/kam-status-lookup.js
   var KAM_STATUS_TAG_CLASS = "werkia-obc-kam-status-tag";
+  var MATCH_PRESENT_TAG_CLASS = "werkia-obc-match-present-tag";
+  var MATCH_PRESENT_ROW_CLASS = "werkia-cem-match-present-row";
+  var MATCH_PRESENT_STYLE_ID = "werkia-obc-match-present-style";
   var KAM_CACHE_TTL_MS = 30 * 60 * 1e3;
   var CANDIDATE_POTENTIAL_MATCHES_RE2 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
   function isCandidatePotentialMatchesPage2(hash = location.hash) {
@@ -742,12 +794,28 @@
   function getCandidateIdFromRoute(hash = location.hash) {
     return String(hash || "").match(/^#\/Candidate\/([a-f0-9-]{36})\/show\/7/i)?.[1] || "";
   }
+  function hasSentMatchForEmployer(statuses) {
+    return statuses instanceof Map && statuses.size > 0;
+  }
   function executeKamStatusLookup(runtime) {
     runtime.registerSource("obc/toolbox/src/features/obc-fragebogen/kam-status-lookup.js");
     const kamStatusCache = /* @__PURE__ */ new Map();
+    const sentEmployerCache = /* @__PURE__ */ new Map();
+    const sentEmployerLoads = /* @__PURE__ */ new Map();
     const kamLookupTasks = /* @__PURE__ */ new Map();
     const kamLookupQueue = [];
     let kamLookupRunning = false;
+    function ensureMatchPresentStyles() {
+      if (document.getElementById(MATCH_PRESENT_STYLE_ID)) return;
+      const style = document.createElement("style");
+      style.id = MATCH_PRESENT_STYLE_ID;
+      style.textContent = `
+      .${MATCH_PRESENT_ROW_CLASS} { outline:3px solid #c23f3f !important; outline-offset:-3px; box-shadow:inset 7px 0 0 #a83232 !important; }
+      .${MATCH_PRESENT_ROW_CLASS} > td, .${MATCH_PRESENT_ROW_CLASS} > th { background:#fbe6e6 !important; }
+      .${MATCH_PRESENT_ROW_CLASS}:hover > td, .${MATCH_PRESENT_ROW_CLASS}:hover > th { background:#f5cccc !important; }
+    `;
+      document.head.appendChild(style);
+    }
     function getReverseMatchChip(row) {
       return [...row?.querySelectorAll(".MuiChip-root") || []].find((chip) => {
         const label = chip.querySelector(".MuiChip-label")?.textContent || chip.textContent || "";
@@ -787,7 +855,11 @@
       return tag;
     }
     function removeKamStatusTags() {
-      document.querySelectorAll(`.${KAM_STATUS_TAG_CLASS}`).forEach((tag) => tag.remove());
+      document.querySelectorAll(`.${KAM_STATUS_TAG_CLASS}, .${MATCH_PRESENT_TAG_CLASS}`).forEach((tag) => tag.remove());
+      document.querySelectorAll(`.${MATCH_PRESENT_ROW_CLASS}`).forEach((row) => {
+        row.classList.remove(MATCH_PRESENT_ROW_CLASS);
+        delete row.dataset.werkiaMatchPresent;
+      });
       kamLookupQueue.length = 0;
       kamLookupTasks.clear();
     }
@@ -807,6 +879,29 @@
       if (chip) chip.insertAdjacentElement("afterend", tag);
       else row.querySelector("td.column-connection, td.column-reverse")?.appendChild(tag);
     }
+    function setMatchPresentTag(row, hasSentMatch, chip = getReverseMatchChip(row)) {
+      const existing = row.querySelector(`.${MATCH_PRESENT_TAG_CLASS}`);
+      if (!hasSentMatch) {
+        row.classList.remove(MATCH_PRESENT_ROW_CLASS);
+        delete row.dataset.werkiaMatchPresent;
+        existing?.remove();
+        return;
+      }
+      ensureMatchPresentStyles();
+      row.classList.add(MATCH_PRESENT_ROW_CLASS);
+      row.dataset.werkiaMatchPresent = "true";
+      row.classList.remove("werkia-urgent-vacancy-row");
+      row.querySelectorAll(".werkia-urgent-vacancy-badge").forEach((badge) => badge.remove());
+      const tag = existing || document.createElement("span");
+      tag.className = MATCH_PRESENT_TAG_CLASS;
+      tag.textContent = "Match vorhanden";
+      tag.title = "Für diesen Arbeitgeber gibt es bereits einen gesendeten Match. Diesen Vorschlag ignorieren.";
+      tag.style.cssText = "display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid #8f2e2e;border-radius:999px;background:#a83232;color:#fff;font:800 12px/1.2 Arial,sans-serif;letter-spacing:.15px;vertical-align:middle;white-space:nowrap;";
+      if (!existing) {
+        const target = chip || row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row;
+        target.appendChild(tag);
+      }
+    }
     function getCachedKamStatus(cacheKey) {
       const cached = kamStatusCache.get(cacheKey);
       if (!cached) return void 0;
@@ -818,6 +913,26 @@
     }
     function cacheKamStatus(cacheKey, status, ttl = KAM_CACHE_TTL_MS) {
       kamStatusCache.set(cacheKey, { status, expiresAt: Date.now() + ttl });
+    }
+    function getCachedSentEmployers(candidateId) {
+      const cached = sentEmployerCache.get(candidateId);
+      if (!cached) return void 0;
+      if (cached.expiresAt <= Date.now()) {
+        sentEmployerCache.delete(candidateId);
+        return void 0;
+      }
+      return cached.value;
+    }
+    function loadSentEmployers(candidateId) {
+      const existing = sentEmployerLoads.get(candidateId);
+      if (existing) return existing;
+      const load = getObcGraphqlAdapter().matchProvider.loadSentMatchEmployers(candidateId).then((value) => {
+        sentEmployerCache.set(candidateId, { value, expiresAt: Date.now() + KAM_CACHE_TTL_MS });
+        if (isCandidatePotentialMatchesPage2() && getCandidateIdFromRoute() === candidateId) flagReverseMatchKamStatusRows();
+        return value;
+      }).catch((error) => console.warn("[OBC Match] Gesendete Matches konnten nicht geladen werden:", error)).finally(() => sentEmployerLoads.delete(candidateId));
+      sentEmployerLoads.set(candidateId, load);
+      return load;
     }
     async function lookupKamStatuses(candidateId, employerId) {
       return getObcGraphqlAdapter().matchProvider.loadReverseMatchKamStatuses(candidateId, employerId);
@@ -850,10 +965,7 @@
           } catch (error) {
             console.warn("[OBC KAM-Status] KAM-Status konnte nicht geladen werden:", error);
           }
-          task.jobIds.forEach((jobId) => {
-            const status = statusesByJob?.get(jobId) || (statusesByJob ? { value: "not-found", label: "nicht gefunden" } : { value: "lookup-error", label: "Ladefehler" });
-            cacheKamStatus(`${task.candidateId}|${jobId}`, status, statusesByJob ? KAM_CACHE_TTL_MS : 15 * 1e3);
-          });
+          cacheKamStatus(task.groupKey, statusesByJob || null, statusesByJob ? KAM_CACHE_TTL_MS : 15 * 1e3);
           kamLookupTasks.delete(task.groupKey);
           if (isCandidatePotentialMatchesPage2()) flagReverseMatchKamStatusRows();
         }
@@ -865,22 +977,22 @@
       if (!isCandidatePotentialMatchesPage2()) return;
       const candidateId = getCandidateIdFromRoute();
       if (!candidateId) return;
+      const sentEmployers = getCachedSentEmployers(candidateId);
+      if (sentEmployers === void 0) loadSentEmployers(candidateId);
       document.querySelectorAll("tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root").forEach((row) => {
-        const reverseChip = getReverseMatchChip(row);
-        if (!reverseChip) {
-          setKamStatusTag(row, null);
-          return;
-        }
         const jobId = getResourceIdFromRow(row, "JobPosition");
-        const employerId = getResourceIdFromRow(row, "Employer");
+        const employerId = getResourceIdFromRow(row, "Employer") || sentEmployers?.employerIdByJobPositionId.get(jobId);
         if (!jobId || !employerId) return;
-        const cacheKey = `${candidateId}|${jobId}`;
-        const status = getCachedKamStatus(cacheKey);
-        if (status !== void 0) {
-          setKamStatusTag(row, status);
+        const reverseChip = getReverseMatchChip(row);
+        if (sentEmployers !== void 0) setMatchPresentTag(row, sentEmployers.employerIds.has(employerId), reverseChip);
+        const statusesByJob = getCachedKamStatus(`${candidateId}|${employerId}`);
+        if (statusesByJob !== void 0) {
+          setMatchPresentTag(row, hasSentMatchForEmployer(statusesByJob), reverseChip);
+          setKamStatusTag(row, reverseChip ? statusesByJob?.get(jobId) || null : null);
           return;
         }
-        setKamStatusTag(row, { value: "loading", label: "lädt…" });
+        if (sentEmployers === void 0) setMatchPresentTag(row, false, reverseChip);
+        setKamStatusTag(row, reverseChip ? { value: "loading", label: "lädt…" } : null);
         enqueueKamLookup(candidateId, employerId, jobId);
       });
     }
@@ -2208,6 +2320,7 @@
   var STYLE_ID = "werkia-bulk-ofm-style";
   var DATE_REMOVE_SELECTOR = 'button.button-remove[class*="button-remove-employers."][class*=".interview.dates-"][aria-label="Entfernen"]';
   var OFFLINE_MATCH_FORM_SELECTOR = '[data-testid="create-offline-match-form"]';
+  var MATCH_PRESENT_ROW_CLASS2 = "werkia-cem-match-present-row";
   function isCreateOfflineMatchRoute(hash = window.location.hash) {
     return CREATE_OFFLINE_MATCH_ROUTE.test(hash || "");
   }
@@ -2271,6 +2384,9 @@
   function expectedOfflineMatchCount(source) {
     return flattenOfflineMatchSource(source).length;
   }
+  function existingMatchEmployerIds(matches) {
+    return [...new Set(matches.filter((match) => match?.hasExistingSentMatch).map((match) => match.employerId))];
+  }
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
@@ -2308,7 +2424,11 @@
   function selectedMatchFromLink(link) {
     const source = parseOfflineMatchSource(link.href);
     const matches = flattenOfflineMatchSource(source);
-    return matches.length === 1 ? matches[0] : null;
+    if (matches.length !== 1) return null;
+    return {
+      ...matches[0],
+      hasExistingSentMatch: Boolean(link.closest("tr")?.classList.contains(MATCH_PRESENT_ROW_CLASS2))
+    };
   }
   function resolveOfflineMatchForm(root = document) {
     const surface = root.querySelector(OFFLINE_MATCH_FORM_SELECTOR);
@@ -2435,11 +2555,21 @@
           event.preventDefault();
           showStatus(CANDIDATE_STATUS_ID, "Bitte den Pfeil eines markierten Matches verwenden. Die Auswahl bleibt erhalten.", link.closest("table")?.parentElement);
         }
-        return;
+        if (selectedMatches.size) return;
+      }
+      const matchesToCreate = selectedMatches.size ? [...selectedMatches.values()] : [clickedMatch];
+      const existingEmployers = existingMatchEmployerIds(matchesToCreate);
+      if (existingEmployers.length) {
+        const count = existingEmployers.length;
+        const message = count === 1 ? "Für diesen Arbeitgeber gibt es bereits einen gesendeten Match. OFM trotzdem erstellen?" : `Für ${count} ausgewählte Arbeitgeber gibt es bereits einen gesendeten Match. OFMs trotzdem erstellen?`;
+        if (!window.confirm(message)) {
+          event.preventDefault();
+          return;
+        }
       }
       if (selectedMatches.size < 2) return;
       try {
-        const href = buildBulkOfflineMatchHref(link.href, [...selectedMatches.values()]);
+        const href = buildBulkOfflineMatchHref(link.href, matchesToCreate);
         event.preventDefault();
         const opened = window.open(href, "_blank");
         if (!opened) showStatus(CANDIDATE_STATUS_ID, "Das Offline-Match-Formular wurde vom Browser blockiert. Bitte Pop-ups für das Adminpanel erlauben.", link.closest("table")?.parentElement);
@@ -2477,6 +2607,7 @@
       const STYLE_ID2 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
+      const MATCH_PRESENT_ROW_CLASS3 = "werkia-cem-match-present-row";
       const POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
       const BEARER_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_bearer_v1";
       const FINGERPRINT_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_fingerprint_v1";
@@ -2629,6 +2760,10 @@
       }
       function applyHighlight(row, urgent) {
         const existingBadge = row.querySelector(`.${BADGE_CLASS}`);
+        if (row.classList.contains(MATCH_PRESENT_ROW_CLASS3)) {
+          if (row.classList.contains(ROW_CLASS) || existingBadge) removeHighlight(row);
+          return;
+        }
         if (!urgent) {
           if (row.classList.contains(ROW_CLASS) || existingBadge) removeHighlight(row);
           return;
