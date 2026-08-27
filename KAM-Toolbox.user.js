@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.34
+// @version      1.1.35
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3421,13 +3421,14 @@
     return [candidateName, employerName, appointmentAt, tag].join("\n");
   }
   function buildSlackApiText(type, data, taggedRole, appointmentAt = "") {
-    const employee = taggedRole === "kam" ? data.kam : data.cem;
-    const slackId = String(employee?.slackId || "").trim();
-    if (!slackId) throw new Error("Für die Slack-Erwähnung fehlt die Mitarbeiter-ID.");
-    const tag = `<@${slackId}>`;
-    if (type === "VTA") return [data.candidateName, data.employerName, tag].join("\n");
+    const primaryEmployee = taggedRole === "kam" ? data.kam : data.cem;
+    const primarySlackId = String(primaryEmployee?.slackId || "").trim();
+    const kamSlackId = String(data.kam?.slackId || "").trim();
+    if (!primarySlackId || !kamSlackId) throw new Error("Für die Slack-Erwähnung fehlt eine Mitarbeiter-ID.");
+    const tags = [`<@${primarySlackId}>`, `<@${kamSlackId}>`];
+    if (type === "VTA") return [data.candidateName, data.employerName, ...tags].join("\n");
     if (!appointmentAt) throw new Error("Für VTV fehlt Datum und Uhrzeit des Termins.");
-    return [data.candidateName, data.employerName, appointmentAt, tag].join("\n");
+    return [data.candidateName, data.employerName, appointmentAt, ...tags].join("\n");
   }
   function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl: webhookUrl2 = "" }) {
     runtime.registerSource(sourcePath);
