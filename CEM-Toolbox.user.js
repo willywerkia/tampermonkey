@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.26
+// @version      1.3.27
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -1100,7 +1100,7 @@
       const text = dialog.innerText || dialog.textContent || "";
       if (/Matchkommentare|Kandidat Dateien/i.test(text)) return false;
       const labels = new Set([...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((element) => (element.innerText || "").trim()));
-      return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS.filter((label) => labels.has(label)).length >= 3;
+      return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS.filter((label2) => labels.has(label2)).length >= 3;
     }) || null;
     function removePanel() {
       document.getElementById(PANEL_ID)?.remove();
@@ -1404,6 +1404,7 @@
   var EQUIV_GROUPS = [["anlagenmechaniker shk", "zentralheizungs- und lüftungsbauer", "gas- und wasserinstallateur"], ["mechatroniker für kältetechnik", "kälteanlagebauer"], ["elektroniker für energie- und gebäudetechnik", "elektroinstallateur"], ["elektroniker für betriebstechnik", "energieanlagenelektroniker"], ["elektroniker für geräte und systeme", "industrieelektriker", "elektroniker für maschinen- und antriebstechnik"], ["industriemechaniker", "werkzeugmechaniker", "anlagenmechaniker"], ["meister shk", "staatlich geprüfter techniker"], ["meister elektrotechnik", "meister energie- und gebäudetechnik", "staatlich geprüfter techniker"]];
   var RELATED_GROUPS = [["elektroniker für betriebstechnik", "elektroniker für energie- und gebäudetechnik"], ["elektroniker für betriebstechnik", "elektroinstallateur"]];
   var clean = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  var label = (value) => clean(value).replace(/:$/, "");
   var empty = (value) => !clean(value) || clean(value) === "-" || clean(value) === "–" || clean(value) === "nicht angegeben";
   var status = (value, detail) => detail ? { status: value, detail } : { status: value };
   var rankIndex = (value, pairs) => pairs.findIndex((pair) => clean(value).includes(pair));
@@ -1429,19 +1430,22 @@
       const style = window.getComputedStyle(dialog);
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     };
-    const fields = (dialog, label) => [...dialog.querySelectorAll("span.ra-field")].filter((field) => field.querySelector("p span")?.innerText?.trim() === label);
-    const value = (dialog, label, last = false) => {
-      const found = fields(dialog, label);
+    const fieldLabel = (field) => label(field.querySelector("p span, p")?.innerText || field.querySelector("p span, p")?.textContent);
+    const fields = (dialog, fieldName) => [...dialog.querySelectorAll("span.ra-field, div.ra-field")].filter((field) => fieldLabel(field) === label(fieldName));
+    const value = (dialog, fieldName, last = false) => {
+      const found = fields(dialog, fieldName);
       const field = found[last ? found.length - 1 : 0];
       return field ? [...field.querySelectorAll("span.MuiTypography-body2")].find((element) => element.innerText?.trim()) || null : null;
     };
-    const anyValue = (dialog, labels, last = false) => labels.map((label) => value(dialog, label, last)).find(Boolean) || null;
-    const allowEmpty = (dialog, label) => fields(dialog, label)[0]?.querySelector("span.MuiTypography-body2") || fields(dialog, label)[0] || null;
-    const positionValues = (dialog, label) => fields(dialog, label)[0] ? [...fields(dialog, label)[0].querySelectorAll("span.MuiTypography-body2")].filter((element) => element.innerText?.trim() && clean(element.innerText) !== "berufsausbildung") : [];
+    const anyValue = (dialog, labels, last = false) => labels.map((fieldName) => value(dialog, fieldName, last)).find(Boolean) || null;
+    const allowEmpty = (dialog, fieldName) => fields(dialog, fieldName)[0]?.querySelector("span.MuiTypography-body2") || fields(dialog, fieldName)[0] || null;
+    const positionValues = (dialog, fieldName) => fields(dialog, fieldName)[0] ? [...fields(dialog, fieldName)[0].querySelectorAll("span.MuiTypography-body2")].filter((element) => element.innerText?.trim() && clean(element.innerText) !== "berufsausbildung") : [];
     const dialogIsQuestionnaire = (dialog) => {
       if (!dialog || /Matchkommentare|Kandidat Dateien/i.test(dialog.innerText || dialog.textContent || "")) return false;
-      const labels = new Set([...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((element) => (element.innerText || "").trim()));
-      return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS2.filter((label) => labels.has(label)).length >= 3;
+      const labels = new Set([...dialog.querySelectorAll("span.ra-field p span, span.ra-field p, div.ra-field p span, div.ra-field p, div.MuiStack-root p span, div.MuiStack-root p")].map((element) => label(element.innerText || element.textContent)));
+      const hasCandidateHeader = [...labels].some((value2) => value2 === "kandidat" || value2.startsWith("kandidat "));
+      const hasJobHeader = [...labels].some((value2) => value2 === "job" || value2.startsWith("job "));
+      return hasCandidateHeader && hasJobHeader && QUESTIONNAIRE_LABELS2.filter((fieldName) => labels.has(label(fieldName))).length >= 3;
     };
     const questionnaireDialog = () => [...document.querySelectorAll('.MuiDialog-paper, div[role="dialog"]')].find((dialog) => visible(dialog) && dialogIsQuestionnaire(dialog)) || null;
     const mark = (element, color, title = "") => {
@@ -1682,7 +1686,7 @@
       const text = dialog?.innerText || dialog?.textContent || "";
       if (/Matchkommentare|Kandidat Dateien/i.test(text)) return false;
       const labels = new Set([...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((element) => (element.innerText || "").trim()));
-      return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS3.filter((label) => labels.has(label)).length >= 3;
+      return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS3.filter((label2) => labels.has(label2)).length >= 3;
     };
     const questionnaireDialog = () => [...document.querySelectorAll('.MuiDialog-paper, div[role="dialog"]')].find((dialog) => visible(dialog) && isQuestionnaireDialog(dialog)) || null;
     function loadJson(key, fallback = {}) {
@@ -2816,10 +2820,10 @@
       const key = matchSelectionKey(match);
       const parent = link.parentElement;
       if (!parent || parent.querySelector(`.${BULK_CHECKBOX_CLASS}[data-match-key="${key}"]`)) return;
-      const label = document.createElement("label");
-      label.className = BULK_CHECKBOX_CLASS;
-      label.dataset.matchKey = key;
-      label.title = "Für gemeinsames Offline Match auswählen";
+      const label2 = document.createElement("label");
+      label2.className = BULK_CHECKBOX_CLASS;
+      label2.dataset.matchKey = key;
+      label2.title = "Für gemeinsames Offline Match auswählen";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = selectedMatches.has(key);
@@ -2828,8 +2832,8 @@
         if (checkbox.checked) selectedMatches.set(key, match);
         else selectedMatches.delete(key);
       });
-      label.appendChild(checkbox);
-      parent.insertBefore(label, link);
+      label2.appendChild(checkbox);
+      parent.insertBefore(label2, link);
     });
   }
   function formValueCount(form, pattern) {
