@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.27
+// @version      1.3.28
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -2525,19 +2525,20 @@
     const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(" ");
     return name ? `@${name}` : "";
   }
-  function buildSlackText(type, { candidateName, employerName, jobTitle, kam, cem, kamFirstNameIsUnique, cemFirstNameIsUnique }, taggedRole) {
+  function buildSlackText(type, { candidateName, employerName, appointmentAt, kam, cem, kamFirstNameIsUnique, cemFirstNameIsUnique }, taggedRole) {
     const employee = taggedRole === "kam" ? kam : cem;
     const tag = employeeMention(employee, taggedRole === "kam" ? kamFirstNameIsUnique : cemFirstNameIsUnique);
     if (type === "VTA") return [candidateName, employerName, tag].join("\n");
-    return [candidateName, employerName, jobTitle, "", "", tag].join("\n");
+    return [candidateName, employerName, appointmentAt, tag].join("\n");
   }
-  function buildSlackApiText(type, data, taggedRole) {
+  function buildSlackApiText(type, data, taggedRole, appointmentAt = "") {
     const employee = taggedRole === "kam" ? data.kam : data.cem;
     const slackId = String(employee?.slackId || "").trim();
     if (!slackId) throw new Error("Für die Slack-Erwähnung fehlt die Mitarbeiter-ID.");
     const tag = `<@${slackId}>`;
     if (type === "VTA") return [data.candidateName, data.employerName, tag].join("\n");
-    return [data.candidateName, data.employerName, data.jobTitle, "", "", tag].join("\n");
+    if (!appointmentAt) throw new Error("Für VTV fehlt Datum und Uhrzeit des Termins.");
+    return [data.candidateName, data.employerName, appointmentAt, tag].join("\n");
   }
   function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl = "" }) {
     runtime.registerSource(sourcePath);
@@ -2624,11 +2625,12 @@
       button.textContent = "Lädt …";
       try {
         const data = await loadMatchData(matchId);
+        const appointmentAt = appointmentCell(row)?.innerText.match(APPOINTMENT_DATE_RE)?.[0] || "";
         if (webhookUrl) {
-          await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
+          await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
           button.textContent = "Gesendet";
         } else {
-          await copyText(buildSlackText(type, data, taggedRole));
+          await copyText(buildSlackText(type, { ...data, appointmentAt }, taggedRole));
           button.textContent = "Kopiert";
         }
       } catch (error) {
