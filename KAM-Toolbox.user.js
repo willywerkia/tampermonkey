@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.33
+// @version      1.1.34
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3348,6 +3348,32 @@
   var EXPORTS_SELECTOR = ".werkia-slack-exports";
   var STYLE_ID2 = "werkia-slack-exports-style";
   var APPOINTMENT_DATE_RE = /\b\d{1,2}\.\s*(?:jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|apr(?:il)?|mai|jun(?:i)?|jul(?:i)?|aug(?:ust)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\.?\s+\d{4}\s+\d{1,2}:\d{2}\b/i;
+  var APPOINTMENT_DATE_ALL_RE = new RegExp(APPOINTMENT_DATE_RE.source, "gi");
+  var GERMAN_MONTHS = {
+    jan: 0,
+    januar: 0,
+    feb: 1,
+    februar: 1,
+    mär: 2,
+    märz: 2,
+    apr: 3,
+    april: 3,
+    mai: 4,
+    jun: 5,
+    juni: 5,
+    jul: 6,
+    juli: 6,
+    aug: 7,
+    august: 7,
+    sep: 8,
+    september: 8,
+    okt: 9,
+    oktober: 9,
+    nov: 10,
+    november: 10,
+    dez: 11,
+    dezember: 11
+  };
   var MATCH_EXPORT_QUERY = `query Match($id: UUID!) {
   data: Match(id: $id) {
     id
@@ -3371,6 +3397,16 @@
   }
   function hasAppointmentDate(text) {
     return APPOINTMENT_DATE_RE.test(String(text || ""));
+  }
+  function latestAppointmentDate(text) {
+    const matches = String(text || "").match(APPOINTMENT_DATE_ALL_RE) || [];
+    const candidates = matches.map((value) => {
+      const parts = value.match(/(\d{1,2})\.\s*([a-zä]+)\.?\s+(\d{4})\s+(\d{1,2}):(\d{2})/i);
+      const month = GERMAN_MONTHS[String(parts?.[2] || "").toLocaleLowerCase("de-DE")];
+      const timestamp = parts && month !== void 0 ? new Date(Number(parts[3]), month, Number(parts[1]), Number(parts[4]), Number(parts[5])).getTime() : Number.NaN;
+      return { value, timestamp };
+    }).filter((candidate) => Number.isFinite(candidate.timestamp));
+    return candidates.sort((a, b) => b.timestamp - a.timestamp)[0]?.value || "";
   }
   function employeeMention(employee, firstNameIsUnique = false) {
     const firstName = String(employee?.firstName || "").trim();
@@ -3478,7 +3514,7 @@
       button.textContent = "Lädt …";
       try {
         const data = await loadMatchData(matchId);
-        const appointmentAt = appointmentCell(row)?.innerText.match(APPOINTMENT_DATE_RE)?.[0] || "";
+        const appointmentAt = latestAppointmentDate(appointmentCell(row)?.innerText);
         if (webhookUrl2) {
           await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl2, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
           button.textContent = "Gesendet";
