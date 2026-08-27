@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.24
+// @version      1.1.25
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -441,6 +441,15 @@
     return adapter;
   }
 
+  // ../../shared/js/admin-panel-reload.js
+  var ADMIN_PANEL_RELOAD_SELECTOR = 'header button[aria-label="Neu laden"]';
+  function reloadAdminPanel(documentRef = document) {
+    const button = documentRef.querySelector(ADMIN_PANEL_RELOAD_SELECTOR);
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  }
+
   // src/features/kam-suite/bulk-match-actions.js
   var IDS = {
     button: "werkia-kam-wvl-bulk-button",
@@ -673,7 +682,8 @@
     }
     function handleDialogClose(dialog) {
       if (dialog.dataset.needsReload === "true") {
-        location.reload();
+        dialog.remove();
+        if (!reloadAdminPanel()) window.alert('Änderung geprüft. Der interne Adminpanel-Button "Neu laden" wurde nicht gefunden.');
         return;
       }
       if (!running) dialog.remove();
