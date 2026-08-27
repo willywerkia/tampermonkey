@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.28
+// @version      1.3.29
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -447,7 +447,7 @@
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID4 = "werkia-urgent-vacancy-style";
+      const STYLE_ID3 = "werkia-urgent-vacancy-style";
       const ROW_CLASS2 = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
@@ -585,9 +585,9 @@
         return rowsByJobId;
       }
       function ensureStyles2() {
-        if (document.getElementById(STYLE_ID4)) return;
+        if (document.getElementById(STYLE_ID3)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID4;
+        style.id = STYLE_ID3;
         style.textContent = `
       .${ROW_CLASS2} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS2} > td, .${ROW_CLASS2} > th { background: #fff3cd !important; }
@@ -2094,14 +2094,14 @@
     if (Number.isNaN(date.getTime())) return String(value);
     return date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
   }
-  function createCandidateUi({ document: document2, isTargetPage: isTargetPage2, table, getState, refreshVisibleCandidates, stopLoading, clearAllCache }) {
+  function createCandidateUi({ document: document2, isTargetPage, table, getState, refreshVisibleCandidates, stopLoading, clearAllCache }) {
     const SCRIPT_ID = "werkia-vakanz-kandidateninfos";
-    const STYLE_ID4 = `${SCRIPT_ID}-style`;
+    const STYLE_ID3 = `${SCRIPT_ID}-style`;
     const PANEL_ID2 = `${SCRIPT_ID}-panel`;
     function addStyles() {
-      if (document2.getElementById(STYLE_ID4)) return;
+      if (document2.getElementById(STYLE_ID3)) return;
       const style = document2.createElement("style");
-      style.id = STYLE_ID4;
+      style.id = STYLE_ID3;
       style.textContent = `
       [data-werkia-candidate-info-header] { min-width:235px; width:235px; }
       [data-werkia-candidate-info-cell] { min-width:235px; width:235px; vertical-align:top; }
@@ -2136,7 +2136,7 @@
       document2.head.appendChild(style);
     }
     function createPanel() {
-      if (!isTargetPage2()) return null;
+      if (!isTargetPage()) return null;
       let panel = document2.getElementById(PANEL_ID2);
       if (panel) return panel;
       panel = document2.createElement("div");
@@ -2292,7 +2292,7 @@
     let generation = 0;
     let scanTimer = null;
     let targetActive = false;
-    const isTargetPage2 = () => /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i.test(location.hash);
+    const isTargetPage = () => /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i.test(location.hash);
     const table = createCandidateTableIntegration({
       document,
       headerAttribute: HEADER_ATTRIBUTE,
@@ -2302,7 +2302,7 @@
     const getState = () => ({ cache, queue, processing, activeCandidateId });
     const ui = createCandidateUi({
       document,
-      isTargetPage: isTargetPage2,
+      isTargetPage,
       table,
       getState,
       refreshVisibleCandidates,
@@ -2348,7 +2348,7 @@
       queuedIds.add(candidateId);
     }
     function scanTable() {
-      if (!isTargetPage2()) return;
+      if (!isTargetPage()) return;
       ui.addStyles();
       ui.createPanel();
       table.ensureHeader();
@@ -2379,12 +2379,12 @@
       ui.updatePanelStatus();
     }
     async function processQueue() {
-      if (processing || stopRequested || !isTargetPage2()) return;
+      if (processing || stopRequested || !isTargetPage()) return;
       processing = true;
       const currentGeneration = generation;
       processingGeneration = currentGeneration;
       try {
-        while (queue.length && !stopRequested && isTargetPage2() && currentGeneration === generation) {
+        while (queue.length && !stopRequested && isTargetPage() && currentGeneration === generation) {
           const item = queue.shift();
           queuedIds.delete(item.id);
           activeCandidateId = item.id;
@@ -2413,12 +2413,12 @@
           processing = false;
           processingGeneration = null;
           ui.updatePanelStatus(stopRequested ? "Laden gestoppt" : "Fertig");
-          if (queue.length && !stopRequested && isTargetPage2()) runtime.setTimeout(processQueue, 0);
+          if (queue.length && !stopRequested && isTargetPage()) runtime.setTimeout(processQueue, 0);
         }
       }
     }
     function refreshVisibleCandidates() {
-      if (!isTargetPage2()) return;
+      if (!isTargetPage()) return;
       generation++;
       stopRequested = false;
       activeCandidateId = null;
@@ -2465,7 +2465,7 @@
     function scheduleScan() {
       runtime.clearTimeout(scanTimer);
       scanTimer = runtime.setTimeout(() => {
-        if (isTargetPage2()) {
+        if (isTargetPage()) {
           if (!targetActive) {
             targetActive = true;
             stopRequested = false;
@@ -2478,234 +2478,25 @@
       }, 150);
     }
     const observer = runtime.createMutationObserver(() => {
-      if (isTargetPage2()) scheduleScan();
+      if (isTargetPage()) scheduleScan();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleScan);
     runtime.addWindowListener("popstate", scheduleScan);
     runtime.setInterval(() => {
-      if (isTargetPage2()) scanTable();
+      if (isTargetPage()) scanTable();
     }, 1500);
     scheduleScan();
   }
 
-  // ../../shared/js/slack-exports/index.js
-  var ROW_SELECTOR = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
-  var MATCH_LINK_SELECTOR = 'a[href*="#/Match/"]';
-  var EXPORTS_SELECTOR = ".werkia-slack-exports";
-  var STYLE_ID2 = "werkia-slack-exports-style";
-  var APPOINTMENT_DATE_RE = /\b\d{1,2}\.\s*(?:jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|apr(?:il)?|mai|jun(?:i)?|jul(?:i)?|aug(?:ust)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\.?\s+\d{4}\s+\d{1,2}:\d{2}\b/i;
-  var MATCH_EXPORT_QUERY = `query Match($id: UUID!) {
-  data: Match(id: $id) {
-    id
-    candidate { id firstName lastName cemEmployeeId __typename }
-    jobPosition {
-      id
-      mainTitle
-      subTitle
-      employer { id name kamEmployeeId __typename }
-      __typename
-    }
-    __typename
-  }
-  employees: allEmployees(filter: {}) { id firstName lastName slackId __typename }
-}`;
-  function isTargetPage(hash = location.hash, role) {
-    return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
-  }
-  function matchIdFromHref(href) {
-    return String(href || "").match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
-  }
-  function hasAppointmentDate(text) {
-    return APPOINTMENT_DATE_RE.test(String(text || ""));
-  }
-  function employeeMention(employee, firstNameIsUnique = false) {
-    const firstName = String(employee?.firstName || "").trim();
-    if (firstName && firstNameIsUnique) return `@${firstName}`;
-    const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(" ");
-    return name ? `@${name}` : "";
-  }
-  function buildSlackText(type, { candidateName, employerName, appointmentAt, kam, cem, kamFirstNameIsUnique, cemFirstNameIsUnique }, taggedRole) {
-    const employee = taggedRole === "kam" ? kam : cem;
-    const tag = employeeMention(employee, taggedRole === "kam" ? kamFirstNameIsUnique : cemFirstNameIsUnique);
-    if (type === "VTA") return [candidateName, employerName, tag].join("\n");
-    return [candidateName, employerName, appointmentAt, tag].join("\n");
-  }
-  function buildSlackApiText(type, data, taggedRole, appointmentAt = "") {
-    const employee = taggedRole === "kam" ? data.kam : data.cem;
-    const slackId = String(employee?.slackId || "").trim();
-    if (!slackId) throw new Error("Für die Slack-Erwähnung fehlt die Mitarbeiter-ID.");
-    const tag = `<@${slackId}>`;
-    if (type === "VTA") return [data.candidateName, data.employerName, tag].join("\n");
-    if (!appointmentAt) throw new Error("Für VTV fehlt Datum und Uhrzeit des Termins.");
-    return [data.candidateName, data.employerName, appointmentAt, tag].join("\n");
-  }
-  function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl = "" }) {
-    runtime.registerSource(sourcePath);
-    const matchDataCache = /* @__PURE__ */ new Map();
-    const taggedRole = String(role).toLowerCase() === "kam" ? "cem" : "kam";
-    let syncTimer = null;
-    function ensureStyle() {
-      if (document.getElementById(STYLE_ID2)) return;
-      const style = document.createElement("style");
-      style.id = STYLE_ID2;
-      style.textContent = `
-      .werkia-slack-exports { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
-      .werkia-slack-export { min-height:24px; padding:3px 8px; border:0; border-radius:5px; background:#4956df; color:#fff; cursor:pointer; font:700 11px/1 Arial,sans-serif; white-space:nowrap; }
-      .werkia-slack-export:hover { background:#3643c7; }
-      .werkia-slack-export:disabled { cursor:wait; opacity:.72; }
-    `;
-      document.head.appendChild(style);
-    }
-    function appointmentCell(row) {
-      return [...row.querySelectorAll("td")].find((cell) => hasAppointmentDate(cell.innerText));
-    }
-    function matchIdFromRow(row) {
-      return matchIdFromHref(row.querySelector(MATCH_LINK_SELECTOR)?.href);
-    }
-    async function loadMatchData(matchId) {
-      if (matchDataCache.has(matchId)) return matchDataCache.get(matchId);
-      const promise = (async () => {
-        const { request } = getGraphqlAdapter();
-        const result = await request(MATCH_EXPORT_QUERY, { id: matchId });
-        const match = result?.data;
-        const candidate = match?.candidate;
-        const jobPosition = match?.jobPosition;
-        const employer = jobPosition?.employer;
-        if (!candidate?.id || !jobPosition?.id || !employer?.id) throw new Error("Matchdaten konnten nicht vollständig geladen werden.");
-        const employees = (result?.employees || []).filter((employee) => employee?.id);
-        const employeesById = new Map(employees.map((employee) => [employee.id, employee]));
-        const firstNameCounts = /* @__PURE__ */ new Map();
-        employees.forEach((employee) => {
-          const firstName = String(employee.firstName || "").trim().toLocaleLowerCase("de-DE");
-          if (firstName) firstNameCounts.set(firstName, (firstNameCounts.get(firstName) || 0) + 1);
-        });
-        const hasUniqueFirstName = (employee) => {
-          const firstName = String(employee?.firstName || "").trim().toLocaleLowerCase("de-DE");
-          return Boolean(firstName) && firstNameCounts.get(firstName) === 1;
-        };
-        const kam = employeesById.get(employer.kamEmployeeId);
-        const cem = employeesById.get(candidate.cemEmployeeId);
-        return {
-          candidateName: [candidate.firstName, candidate.lastName].filter(Boolean).join(" ") || "Unbekannter Kandidat",
-          employerName: employer.name || "Unbekannter Arbeitgeber",
-          jobTitle: [jobPosition.mainTitle, jobPosition.subTitle].filter(Boolean).join(" ") || "Unbekannte Vakanz",
-          kam,
-          cem,
-          kamFirstNameIsUnique: hasUniqueFirstName(kam),
-          cemFirstNameIsUnique: hasUniqueFirstName(cem)
-        };
-      })();
-      matchDataCache.set(matchId, promise);
-      try {
-        return await promise;
-      } catch (error) {
-        matchDataCache.delete(matchId);
-        throw error;
-      }
-    }
-    async function copyText(text) {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        textarea.remove();
-      }
-    }
-    async function copyExport(button, type) {
-      const row = button.closest("tr");
-      const matchId = row && matchIdFromRow(row);
-      if (!matchId) return;
-      const originalLabel = button.textContent;
-      button.disabled = true;
-      button.textContent = "Lädt …";
-      try {
-        const data = await loadMatchData(matchId);
-        const appointmentAt = appointmentCell(row)?.innerText.match(APPOINTMENT_DATE_RE)?.[0] || "";
-        if (webhookUrl) {
-          await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
-          button.textContent = "Gesendet";
-        } else {
-          await copyText(buildSlackText(type, { ...data, appointmentAt }, taggedRole));
-          button.textContent = "Kopiert";
-        }
-      } catch (error) {
-        console.warn("[Slack-Export] Kopieren fehlgeschlagen.", error);
-        button.textContent = "Fehler";
-      } finally {
-        runtime.setTimeout(() => {
-          if (!button.isConnected) return;
-          button.disabled = false;
-          button.textContent = originalLabel;
-        }, 1200);
-      }
-    }
-    function addExports(row) {
-      const cell = appointmentCell(row);
-      const matchId = matchIdFromRow(row);
-      if (!cell || !matchId || cell.querySelector(EXPORTS_SELECTOR)) return;
-      const exports = document.createElement("div");
-      exports.className = EXPORTS_SELECTOR.slice(1);
-      ["VTA", "VTV"].forEach((type) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "werkia-slack-export";
-        button.textContent = `${type} Exportieren`;
-        button.title = webhookUrl ? `${type} direkt nach Slack senden` : `${type}-Text für Slack kopieren`;
-        button.addEventListener("click", () => copyExport(button, type));
-        exports.appendChild(button);
-      });
-      cell.appendChild(exports);
-    }
-    function removeExports() {
-      document.querySelectorAll(EXPORTS_SELECTOR).forEach((element) => element.remove());
-    }
-    function syncExports() {
-      if (!isTargetPage(location.hash, role)) {
-        removeExports();
-        return;
-      }
-      ensureStyle();
-      document.querySelectorAll(ROW_SELECTOR).forEach(addExports);
-    }
-    function scheduleSync() {
-      if (syncTimer !== null) return;
-      syncTimer = runtime.setTimeout(() => {
-        syncTimer = null;
-        syncExports();
-      }, 120);
-    }
-    runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
-    runtime.addWindowListener("hashchange", scheduleSync);
-    runtime.addCleanup?.(() => {
-      if (syncTimer !== null) runtime.clearTimeout(syncTimer);
-      removeExports();
-      document.getElementById(STYLE_ID2)?.remove();
-    });
-    scheduleSync();
-  }
-
-  // src/features/cem-ofm/slack-exports.js
-  function executeSlackExports2(runtime) {
-    executeSlackExports(runtime, {
-      role: "CEM",
-      getGraphqlAdapter: getCemGraphqlAdapter,
-      sourcePath: "cem/toolbox/src/features/cem-ofm/slack-exports.js"
-    });
-  }
-
   // ../../shared/js/offline-match-bulk/index.js
   var CREATE_OFFLINE_MATCH_ROUTE = /^#\/CreateOfflineMatch(?:[/?]|$)/i;
-  var MATCH_LINK_SELECTOR2 = 'a[aria-label="Offline Match erstellen"], a[href*="CreateOfflineMatch"]';
+  var MATCH_LINK_SELECTOR = 'a[aria-label="Offline Match erstellen"], a[href*="CreateOfflineMatch"]';
   var BULK_CHECKBOX_CLASS = "werkia-bulk-ofm-checkbox";
   var CANDIDATE_STATUS_ID = "werkia-bulk-ofm-candidate-status";
   var FORM_CONTROLS_ID = "werkia-bulk-ofm-form-controls";
   var FORM_STATUS_ID = "werkia-bulk-ofm-form-status";
-  var STYLE_ID3 = "werkia-bulk-ofm-style";
+  var STYLE_ID2 = "werkia-bulk-ofm-style";
   var DATE_REMOVE_SELECTOR = 'button.button-remove[class*="button-remove-employers."][class*=".interview.dates-"][aria-label="Entfernen"]';
   var OFFLINE_MATCH_FORM_SELECTOR = '[data-testid="create-offline-match-form"]';
   function isCreateOfflineMatchRoute(hash = window.location.hash) {
@@ -2772,9 +2563,9 @@
     return flattenOfflineMatchSource(source).length;
   }
   function ensureStyles() {
-    if (document.getElementById(STYLE_ID3)) return;
+    if (document.getElementById(STYLE_ID2)) return;
     const style = document.createElement("style");
-    style.id = STYLE_ID3;
+    style.id = STYLE_ID2;
     style.textContent = `
     .${BULK_CHECKBOX_CLASS} { display:inline-flex; align-items:center; margin-right:var(--apt-space-2,8px); color:var(--apt-color-text-muted,#6b6775); font:600 12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; cursor:pointer; }
     .${BULK_CHECKBOX_CLASS} input { width:18px; height:18px; accent-color:var(--apt-color-primary,#6d4aff); cursor:pointer; }
@@ -2792,7 +2583,7 @@
     document.getElementById(CANDIDATE_STATUS_ID)?.remove();
     document.getElementById(FORM_CONTROLS_ID)?.remove();
     document.getElementById(FORM_STATUS_ID)?.remove();
-    document.getElementById(STYLE_ID3)?.remove();
+    document.getElementById(STYLE_ID2)?.remove();
   }
   function showStatus(id, message, anchor) {
     let status2 = document.getElementById(id);
@@ -2816,7 +2607,7 @@
     return surface && form ? { form, surface } : null;
   }
   function addCandidateCheckboxes(selectedMatches) {
-    document.querySelectorAll(MATCH_LINK_SELECTOR2).forEach((link) => {
+    document.querySelectorAll(MATCH_LINK_SELECTOR).forEach((link) => {
       const match = selectedMatchFromLink(link);
       if (!match) return;
       const key = matchSelectionKey(match);
@@ -2902,7 +2693,7 @@
     let scheduled = false;
     const refresh = () => {
       scheduled = false;
-      if (document.querySelector(MATCH_LINK_SELECTOR2)) {
+      if (document.querySelector(MATCH_LINK_SELECTOR)) {
         ensureStyles();
         addCandidateCheckboxes(selectedMatches);
         return;
@@ -2921,7 +2712,7 @@
       runtime.setTimeout(refresh, 100);
     };
     runtime.addDocumentListener("click", (event) => {
-      const link = event.target.closest?.(MATCH_LINK_SELECTOR2);
+      const link = event.target.closest?.(MATCH_LINK_SELECTOR);
       if (!link) return;
       const clickedMatch = selectedMatchFromLink(link);
       if (!clickedMatch) {
@@ -2970,7 +2761,6 @@
     { id: "cem-ofm-questionnaire-evaluation", execute: executeQuestionnaireEvaluation },
     { id: "cem-ofm-route-calculation", execute: executeRouteCalculation },
     { id: "vacancy-candidate-info", execute: executeVacancyCandidateInfo },
-    { id: "cem-ofm-slack-exports", execute: executeSlackExports2 },
     { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);
