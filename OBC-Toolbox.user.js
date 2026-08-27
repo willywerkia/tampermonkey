@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.25
+// @version      1.2.26
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*

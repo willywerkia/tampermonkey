@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.25
+// @version      1.1.26
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3311,7 +3311,7 @@
     }
     __typename
   }
-  employees: allEmployees(filter: {}) { id firstName lastName __typename }
+  employees: allEmployees(filter: {}) { id firstName lastName slackId __typename }
 }`;
   function isTargetPage5(hash = location.hash, role) {
     return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
@@ -3334,7 +3334,15 @@
     if (type === "VTA") return [candidateName, employerName, tag].join("\n");
     return [candidateName, employerName, jobTitle, "", "", tag].join("\n");
   }
-  function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath }) {
+  function buildSlackApiText(type, data, taggedRole) {
+    const employee = taggedRole === "kam" ? data.kam : data.cem;
+    const slackId = String(employee?.slackId || "").trim();
+    if (!slackId) throw new Error("Für die Slack-Erwähnung fehlt die Mitarbeiter-ID.");
+    const tag = `<@${slackId}>`;
+    if (type === "VTA") return [data.candidateName, data.employerName, tag].join("\n");
+    return [data.candidateName, data.employerName, data.jobTitle, "", "", tag].join("\n");
+  }
+  function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl: webhookUrl2 = "" }) {
     runtime.registerSource(sourcePath);
     const matchDataCache = /* @__PURE__ */ new Map();
     const taggedRole = String(role).toLowerCase() === "kam" ? "cem" : "kam";
@@ -3418,8 +3426,14 @@
       button.disabled = true;
       button.textContent = "Lädt …";
       try {
-        await copyText(buildSlackText(type, await loadMatchData(matchId), taggedRole));
-        button.textContent = "Kopiert";
+        const data = await loadMatchData(matchId);
+        if (webhookUrl2) {
+          await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl2, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
+          button.textContent = "Gesendet";
+        } else {
+          await copyText(buildSlackText(type, data, taggedRole));
+          button.textContent = "Kopiert";
+        }
       } catch (error) {
         console.warn("[Slack-Export] Kopieren fehlgeschlagen.", error);
         button.textContent = "Fehler";
@@ -3442,7 +3456,7 @@
         button.type = "button";
         button.className = "werkia-slack-export";
         button.textContent = `${type} Exportieren`;
-        button.title = `${type}-Text für Slack kopieren`;
+        button.title = webhookUrl2 ? `${type} direkt nach Slack senden` : `${type}-Text für Slack kopieren`;
         button.addEventListener("click", () => copyExport(button, type));
         exports.appendChild(button);
       });
@@ -3477,10 +3491,12 @@
   }
 
   // src/features/kam-suite/slack-exports.js
+  var webhookUrl = true ? "" : "";
   function executeSlackExports2(runtime) {
     executeSlackExports(runtime, {
       role: "KAM",
       getGraphqlAdapter: getKamGraphqlAdapter,
+      webhookUrl,
       sourcePath: "kam/toolbox/src/features/kam-suite/slack-exports.js"
     });
   }
