@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.38
+// @version      1.3.39
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -2774,6 +2774,38 @@
   function formValueCount(form, pattern) {
     return [...form.querySelectorAll("input[name]")].filter((input) => pattern.test(input.name) && String(input.value || "").trim()).length;
   }
+  function sourceAfterRemovedFormSelections(source, form) {
+    if (!source?.employers?.length) return source;
+    const employerIdsByIndex = /* @__PURE__ */ new Map();
+    const jobIdsByEmployerIndex = /* @__PURE__ */ new Map();
+    for (const input of form.querySelectorAll("input[name]")) {
+      const value = String(input.value || "").trim();
+      if (!value) continue;
+      const employerMatch = input.name.match(/^employers\.(\d+)\.id$/);
+      if (employerMatch) {
+        employerIdsByIndex.set(employerMatch[1], value);
+        continue;
+      }
+      const jobMatch = input.name.match(/^employers\.(\d+)\.existingJobPositions\.\d+\.id$/);
+      if (jobMatch) {
+        if (!jobIdsByEmployerIndex.has(jobMatch[1])) jobIdsByEmployerIndex.set(jobMatch[1], /* @__PURE__ */ new Set());
+        jobIdsByEmployerIndex.get(jobMatch[1]).add(value);
+      }
+    }
+    if (!employerIdsByIndex.size || !jobIdsByEmployerIndex.size) return source;
+    const visibleJobIdsByEmployer = /* @__PURE__ */ new Map();
+    for (const [index, employerId] of employerIdsByIndex) {
+      const jobIds = jobIdsByEmployerIndex.get(index);
+      if (jobIds?.size) visibleJobIdsByEmployer.set(employerId, jobIds);
+    }
+    return {
+      candidateId: source.candidateId,
+      employers: source.employers.map((employer) => ({
+        id: employer.id,
+        existingJobPositions: employer.existingJobPositions.filter((job) => visibleJobIdsByEmployer.get(employer.id)?.has(job.id))
+      })).filter((employer) => employer.existingJobPositions.length)
+    };
+  }
   function isBulkFormComplete(form, source) {
     const expectedMatches = expectedOfflineMatchCount(source);
     if (expectedMatches < 2) return true;
@@ -2783,6 +2815,14 @@
     return employerCount >= expectedEmployers && jobCount >= expectedMatches;
   }
   function updateBulkFormStatus(form, source) {
+    if (form.dataset.werkiaBulkOfmReconcileAfterRemoval === "true") {
+      const reducedSource = sourceAfterRemovedFormSelections(source, form);
+      if (expectedOfflineMatchCount(reducedSource) < expectedOfflineMatchCount(source)) {
+        form.werkiaBulkOfmSource = reducedSource;
+        form.dataset.werkiaBulkOfmReconcileAfterRemoval = "false";
+        source = reducedSource;
+      }
+    }
     if (isBulkFormComplete(form, source)) {
       document.getElementById(FORM_STATUS_ID)?.remove();
       return true;
@@ -2810,6 +2850,7 @@
   }
   function ensureFormControls(form, surface, source, runtime) {
     ensureStyles();
+    if (!form.werkiaBulkOfmSource) form.werkiaBulkOfmSource = source;
     let controls = document.getElementById(FORM_CONTROLS_ID);
     if (!controls) {
       controls = document.createElement("div");
@@ -2824,10 +2865,18 @@
     if (form.dataset.werkiaBulkOfmSubmitGuard !== "true") {
       form.dataset.werkiaBulkOfmSubmitGuard = "true";
       form.addEventListener("submit", (event) => {
-        if (!updateBulkFormStatus(form, source)) event.preventDefault();
+        if (!updateBulkFormStatus(form, form.werkiaBulkOfmSource)) event.preventDefault();
+      }, true);
+      form.addEventListener("click", (event) => {
+        const removeButton = event.target.closest?.('button[aria-label="Entfernen"]');
+        if (!event.isTrusted || !removeButton || !form.contains(removeButton)) return;
+        form.dataset.werkiaBulkOfmReconcileAfterRemoval = "true";
+        runtime.setTimeout(() => {
+          updateBulkFormStatus(form, form.werkiaBulkOfmSource);
+        }, 0);
       }, true);
     }
-    updateBulkFormStatus(form, source);
+    updateBulkFormStatus(form, form.werkiaBulkOfmSource);
   }
   function executeBulkOfflineMatches(runtime, sourcePath) {
     runtime.registerSource(sourcePath);
