@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.37
+// @version      1.3.38
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -1547,6 +1547,7 @@
   function executeQuestionnaireEvaluation(runtime) {
     runtime.registerSource("cem/toolbox/src/features/cem-ofm/questionnaire-evaluation.js");
     let timer = null;
+    let rendering = false;
     const visible = (dialog) => {
       const rect = dialog.getBoundingClientRect();
       const style = window.getComputedStyle(dialog);
@@ -1727,22 +1728,33 @@
       document.body.appendChild(box);
     }
     function run() {
+      rendering = true;
       const dialog = questionnaireDialog();
       if (!dialog) {
         clear();
         document.getElementById(BANNER_ID)?.remove();
         document.getElementById(NOTES_ID)?.remove();
-        return;
+      } else {
+        clear();
+        renderBanner(dialog, evaluate(dialog));
+        renderNotes(dialog);
       }
-      clear();
-      renderBanner(dialog, evaluate(dialog));
-      renderNotes(dialog);
+      runtime.setTimeout(() => {
+        rendering = false;
+      }, 0);
     }
     const schedule = () => {
       runtime.clearTimeout(timer);
       timer = runtime.setTimeout(run, 200);
     };
-    runtime.createMutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    runtime.createMutationObserver((mutations) => {
+      if (rendering) return;
+      const questionnaireChanged = mutations.some((mutation) => {
+        const target = mutation.target.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target.parentElement;
+        return target?.closest?.('.MuiDialog-paper, div[role="dialog"]') || [...mutation.addedNodes, ...mutation.removedNodes].some((node) => node.nodeType === Node.ELEMENT_NODE && (node.matches?.('.MuiDialog-paper, div[role="dialog"]') || node.querySelector?.('.MuiDialog-paper, div[role="dialog"]')));
+      });
+      if (questionnaireChanged) schedule();
+    }).observe(document.body, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", schedule);
     schedule();
   }
