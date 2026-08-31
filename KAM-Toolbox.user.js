@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.39
+// @version      1.1.40
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -271,6 +271,7 @@
     jobPositionId
     cemStatus
     kamStatus
+    onlineMatchStatus
     jobPosition {
       employer {
         id
@@ -287,10 +288,25 @@
     jobPositionId
     cemStatus
     kamStatus
+    onlineMatchStatus
+    jobPosition {
+      employer {
+        id
+        __typename
+      }
+      __typename
+    }
     __typename
   }
   total: _allMatchesMeta(page: $page, perPage: $perPage, filter: $filter) {
     count
+    __typename
+  }
+}`;
+  var MATCH_REVISIONS_QUERY = `query allRevisions($sortField: String, $sortOrder: String, $page: Int, $perPage: Int, $filter: RevisionFilter) {
+  items: allRevisions(sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage, filter: $filter) {
+    date
+    description
     __typename
   }
 }`;
@@ -302,9 +318,30 @@
     if (!rawValue) return null;
     return { value: rawValue, label: CEM_STATUS_LABELS[rawValue] || rawValue };
   }
+  function sentAtFromRevisions(revisions) {
+    return (revisions || []).filter((revision) => /(?:^|\n)\s*-?\s*onlineMatchStatus:\s*(?:<unknown>|"[^"]+")\s*->\s*"process"/i.test(revision?.description || "")).map((revision) => revision.date).filter(Boolean).sort().at(0) || "";
+  }
   function createMatchProvider({ request }) {
     const reverseLookupsInFlight = /* @__PURE__ */ new Map();
     const sentEmployerLookupsInFlight = /* @__PURE__ */ new Map();
+    const matchSentAtLookupsInFlight = /* @__PURE__ */ new Map();
+    async function loadMatchSentAt(matchId) {
+      const existing = matchSentAtLookupsInFlight.get(matchId);
+      if (existing) return existing;
+      const promise = request(MATCH_REVISIONS_QUERY, {
+        filter: { resource: "Match", recordId: matchId },
+        page: 0,
+        perPage: 100,
+        sortField: "date",
+        sortOrder: "ASC"
+      }).then((result) => sentAtFromRevisions(result?.items));
+      matchSentAtLookupsInFlight.set(matchId, promise);
+      try {
+        return await promise;
+      } finally {
+        matchSentAtLookupsInFlight.delete(matchId);
+      }
+    }
     return {
       async loadMatch(matchId) {
         const result = await request(MATCH_QUERY, { id: matchId });
@@ -337,7 +374,9 @@
           const statuses = /* @__PURE__ */ new Map();
           for (const item of result?.items || []) {
             if (!item?.jobPositionId) continue;
-            statuses.set(item.jobPositionId, mapKamStatus(item.kamStatus) || { value: "not-found", label: "nicht gefunden" });
+            statuses.set(item.jobPositionId, {
+              ...mapKamStatus(item.kamStatus) || { value: "not-found", label: "nicht gefunden" }
+            });
           }
           return statuses;
         })();
@@ -348,39 +387,56 @@
           reverseLookupsInFlight.delete(key);
         }
       },
-      // Reads the candidate's complete sent-match history once, then maps every
-      // JobPosition back to its employer. Consumers can mark all current
-      // suggestions for an employer, including a vacancy that has not received
-      // a match itself yet.
+      // Reads the candidate's complete match history and keeps only matches for
+      // whose current onlineMatchStatus is "process", the technical value
+      // behind the Match status "Senden". The version history provides the
+      // timestamp of the transition to that status.
       async loadSentMatchEmployers(candidateId) {
         const existing = sentEmployerLookupsInFlight.get(candidateId);
         if (existing) return existing;
         const promise = (async () => {
           const employerIds = /* @__PURE__ */ new Set();
           const employerIdByJobPositionId = /* @__PURE__ */ new Map();
+          const sentAtByEmployerId = /* @__PURE__ */ new Map();
           const perPage = 100;
           let page = 0;
           let total = Infinity;
           while (page * perPage < total) {
             const result = await request(REVERSE_MATCH_QUERY, {
-              filter: { candidateIds: [candidateId], matched: true },
+              filter: { candidateIds: [candidateId] },
               page,
               perPage,
               sortField: "createdAt",
               sortOrder: "DESC"
             });
             const items = result?.items || [];
+            const sentAtByMatchId = /* @__PURE__ */ new Map();
+            const matches = [];
             for (const item of items) {
+              if (item?.onlineMatchStatus !== "process" || !item?.id || !item?.jobPositionId || !item?.jobPosition?.employer?.id) continue;
+              matches.push(item);
+            }
+            for (let index = 0; index < matches.length; index += 5) {
+              const batch = matches.slice(index, index + 5);
+              const sentDates = await Promise.all(batch.map((match) => loadMatchSentAt(match.id)));
+              batch.forEach((match, batchIndex) => sentAtByMatchId.set(match.id, sentDates[batchIndex]));
+            }
+            for (const item of matches) {
               const employerId = item?.jobPosition?.employer?.id;
-              if (!item?.jobPositionId || !employerId) continue;
+              const sentAt = sentAtByMatchId.get(item.id);
+              if (!item?.jobPositionId || !employerId || !sentAt) continue;
               employerIds.add(employerId);
               employerIdByJobPositionId.set(item.jobPositionId, employerId);
+              const previousSentAt = sentAtByEmployerId.get(employerId);
+              if (!previousSentAt || Date.parse(sentAt) > Date.parse(previousSentAt)) {
+                sentAtByEmployerId.set(employerId, sentAt);
+              }
             }
             total = Number(result?.total?.count);
             if (!Number.isFinite(total) || !items.length) break;
             page++;
           }
-          return { employerIds, employerIdByJobPositionId };
+          return { employerIds, employerIdByJobPositionId, sentAtByEmployerId };
         })();
         sentEmployerLookupsInFlight.set(candidateId, promise);
         try {

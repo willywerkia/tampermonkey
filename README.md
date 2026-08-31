@@ -32,7 +32,7 @@ Enthaltene Funktionen:
 Enthaltene Funktionen:
 
 - Zeigt bei jedem Arbeitgeber ein Badge zur Rueckmeldegeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
-- Umrandet Reverse-Match-Vorschlaege mit "Match vorhanden", wenn der Kandidat beim Arbeitgeber bereits einen gesendeten Match hat. Der Hinweis ersetzt dort den Dringlichkeitsrand und zeigt bei derselben Vakanz den KAM-Status an.
+- Markiert Vorschlaege, wenn beim Arbeitgeber bereits ein Match auf den Status "Senden" gestellt wurde. Bis 90 Tage bleibt die Zeile rot gefuellt, danach nur rot umrandet. Der Hinweis zeigt den Zeitpunkt der Statusaenderung und bei derselben Vakanz den KAM-Status.
 - Markiert Zeilen von Arbeitgebern mit besonderer Absprache (GA-TEC) farblich mit Hinweistext "[Absprache vor OFM]".
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich den Kontext des offenen Fragebogens fuer andere Funktionen.
 - Blendet neben dem Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein.
@@ -51,7 +51,7 @@ Enthaltene Funktionen:
 
 - Zeigt bei jedem Arbeitgeber ein Badge zur Antwortgeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
 - Markiert Zeilen von Arbeitgebern mit besonderer Absprache (GA-TEC) farblich mit Hinweistext "[Absprache vor OFM]".
-- Umrandet Vorschlaege mit "Match vorhanden", wenn der Kandidat beim Arbeitgeber bereits einen gesendeten Match hat. Der Hinweis ersetzt dort den Dringlichkeitsrand und zeigt bei Reverse Matches den KAM-Status an.
+- Markiert Vorschlaege, wenn beim Arbeitgeber bereits ein Match auf den Status "Senden" gestellt wurde. Bis 90 Tage bleibt die Zeile rot gefuellt, danach nur rot umrandet. Der Hinweis zeigt den Zeitpunkt der Statusaenderung und bei Reverse Matches den KAM-Status.
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich Kandidat/Vakanz des offenen Fragebogens.
 - Blendet neben dem Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein.
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Entscheidungs-Empfehlung.
