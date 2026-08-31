@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.40
+// @version      1.2.41
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -310,7 +310,7 @@
     return { value: rawValue, label: CEM_STATUS_LABELS[rawValue] || rawValue };
   }
   function sentAtFromRevisions(revisions) {
-    return (revisions || []).filter((revision) => /(?:^|\n)\s*-?\s*onlineMatchStatus:\s*(?:<unknown>|"[^"]+")\s*->\s*"process"/i.test(revision?.description || "")).map((revision) => revision.date).filter(Boolean).sort().at(0) || "";
+    return (revisions || []).filter((revision) => /(?:^|\n)\s*-?\s*onlineMatchStatus:\s*(?:null|<unknown>|"[^"]+")\s*->\s*"process"/i.test(revision?.description || "")).map((revision) => revision.date).filter(Boolean).sort().at(0) || "";
   }
   function createMatchProvider({ request }) {
     const reverseLookupsInFlight = /* @__PURE__ */ new Map();
@@ -409,8 +409,15 @@
             }
             for (let index = 0; index < matches.length; index += 5) {
               const batch = matches.slice(index, index + 5);
-              const sentDates = await Promise.all(batch.map((match) => loadMatchSentAt(match.id)));
-              batch.forEach((match, batchIndex) => sentAtByMatchId.set(match.id, sentDates[batchIndex]));
+              const sentDateResults = await Promise.allSettled(batch.map((match) => loadMatchSentAt(match.id)));
+              batch.forEach((match, batchIndex) => {
+                const result2 = sentDateResults[batchIndex];
+                if (result2.status === "fulfilled") {
+                  sentAtByMatchId.set(match.id, result2.value);
+                  return;
+                }
+                console.warn(`[Werkia GraphQL] Sendezeit fuer Match ${match.id} konnte nicht geladen werden:`, result2.reason);
+              });
             }
             for (const item of matches) {
               const employerId = item?.jobPosition?.employer?.id;
