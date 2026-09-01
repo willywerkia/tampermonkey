@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.44
+// @version      1.2.45
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1078,7 +1078,7 @@
         const statusesByJob = getCachedKamStatus(`${candidateId}|${employerId}`);
         if (statusesByJob !== void 0) {
           setMatchPresentTag(row, sentAt, reverseChip);
-          setKamStatusTag(row, reverseChip ? statusesByJob?.get(jobId) || null : null);
+          setKamStatusTag(row, reverseChip ? statusesByJob?.get(jobId) || { value: "not-found", label: "nicht gefunden" } : null);
           return;
         }
         if (sentEmployers === void 0) setMatchPresentTag(row, "", reverseChip);

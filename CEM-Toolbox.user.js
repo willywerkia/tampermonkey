@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.44
+// @version      1.3.45
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -1151,7 +1151,7 @@
         const statuses = cachedStatus(`${candidateId}|${employerId}`);
         if (statuses !== void 0) {
           setSentMatchTag(row, sentAt, chip);
-          setTag(row, statuses?.get(jobId) || null, chip);
+          setTag(row, statuses?.get(jobId) || { value: "not-found", label: "nicht gefunden" }, chip);
           return;
         }
         if (sentEmployers === void 0) setSentMatchTag(row, "", chip);
