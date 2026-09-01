@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.49
+// @version      1.1.50
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -298,6 +298,7 @@
     jobPositionId
     cemStatus
     kamStatus
+    kamFeedback
     onlineMatchStatus
     __typename
   }
@@ -390,7 +391,8 @@
           for (const item of result?.items || []) {
             if (!item?.jobPositionId) continue;
             statuses.set(item.jobPositionId, {
-              ...mapKamStatus(item.kamStatus) || { value: "not-found", label: "nicht gefunden" }
+              ...mapKamStatus(item.kamStatus) || { value: "not-found", label: "nicht gefunden" },
+              feedback: item.kamFeedback || ""
             });
           }
           return statuses;
@@ -654,6 +656,7 @@
     { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" },
     { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" },
     { value: "job_change_frequency", label: "Wechselhäufigkeit", nativeValue: "others", customFeedback: "Wechselhäufigkeit" },
+    { value: "salary", label: "Gehalt", nativeValue: "others", customFeedback: "Gehalt" },
     { value: "candidate_not_responsive", label: "BEW nicht responsive", nativeValue: "candidate_not_responsive", customFeedback: null },
     { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG", nativeValue: "candidate_not_interested_in_employer", customFeedback: null },
     { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW", nativeValue: "employer_not_interested_in_candidate", customFeedback: null },

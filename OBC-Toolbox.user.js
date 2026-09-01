@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.49
+// @version      1.2.50
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -289,6 +289,7 @@
     jobPositionId
     cemStatus
     kamStatus
+    kamFeedback
     onlineMatchStatus
     __typename
   }
@@ -381,7 +382,8 @@
           for (const item of result?.items || []) {
             if (!item?.jobPositionId) continue;
             statuses.set(item.jobPositionId, {
-              ...mapKamStatus(item.kamStatus) || { value: "not-found", label: "nicht gefunden" }
+              ...mapKamStatus(item.kamStatus) || { value: "not-found", label: "nicht gefunden" },
+              feedback: item.kamFeedback || ""
             });
           }
           return statuses;
@@ -960,9 +962,10 @@
     function updateKamStatusTag(tag, status) {
       const isOut = status?.value === "out";
       const isLoading = status?.value === "loading";
+      const feedback = isOut ? status?.feedback : "";
       tag.dataset.kamStatus = status?.value || "";
-      tag.textContent = `KAM Status: ${status.label}`;
-      tag.title = isLoading ? "KAM Status des Reverse Match wird im Hintergrund geladen" : `KAM Status des bereits gesendeten Reverse Match: ${status.label}`;
+      tag.textContent = feedback ? `KAM Status: ${status.label} (${feedback})` : `KAM Status: ${status.label}`;
+      tag.title = isLoading ? "KAM Status des Reverse Match wird im Hintergrund geladen" : `KAM Status des bereits gesendeten Reverse Match: ${status.label}${feedback ? ` – Grund: ${feedback}` : ""}`;
       tag.style.cssText = `
       display:inline-flex;
       align-items:center;
