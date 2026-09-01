@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.47
+// @version      1.3.48
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -272,21 +272,23 @@
     __typename
   }
 }`;
+  var JOB_POSITION_EMPLOYERS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    employer {
+      id
+      __typename
+    }
+    __typename
+  }
+}`;
   var REVERSE_MATCH_QUERY = `query allMatches($sortField: String, $sortOrder: String, $page: Int, $perPage: Int, $filter: MatchFilter) {
   items: allMatches(sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage, filter: $filter) {
     id
     jobPositionId
-    createdAt
     cemStatus
     kamStatus
     onlineMatchStatus
-    jobPosition {
-      employer {
-        id
-        __typename
-      }
-      __typename
-    }
     __typename
   }
   total: _allMatchesMeta(page: $page, perPage: $perPage, filter: $filter) {
@@ -334,6 +336,17 @@
         matchSentAtLookupsInFlight.delete(matchId);
       }
     }
+    async function loadEmployerIdsForJobPositions(jobPositionIds) {
+      const employerIdByJobPositionId = /* @__PURE__ */ new Map();
+      for (let index = 0; index < jobPositionIds.length; index += 25) {
+        const ids = jobPositionIds.slice(index, index + 25);
+        const result = await request(JOB_POSITION_EMPLOYERS_QUERY, { filter: { ids } });
+        for (const item of result?.items || []) {
+          if (item?.id && item?.employer?.id) employerIdByJobPositionId.set(item.id, item.employer.id);
+        }
+      }
+      return employerIdByJobPositionId;
+    }
     return {
       async loadMatch(matchId) {
         const result = await request(MATCH_QUERY, { id: matchId });
@@ -380,10 +393,9 @@
         }
       },
       // Fast path for the candidate page. `onlineMatchStatus: process` is the
-      // current technical value for a sent match, and all data needed to mark
-      // its rows comes from the same allMatches response. The slower revision
-      // pass below adds matches that have since changed status and their exact
-      // send timestamp.
+      // current technical value for a sent match. Resolve the remaining
+      // JobPosition -> Employer relation separately: requesting `jobPosition`
+      // inline makes the whole GraphQL response fail for deleted vacancies.
       async loadCurrentSentMatchEmployers(candidateId) {
         const existing = currentSentEmployerLookupsInFlight.get(candidateId);
         if (existing) return existing;
@@ -403,9 +415,13 @@
               sortOrder: "DESC"
             });
             const items = result?.items || [];
-            for (const item of items) {
-              const employerId = item?.jobPosition?.employer?.id;
-              if (item?.onlineMatchStatus !== "process" || !item?.jobPositionId || !employerId) continue;
+            const currentItems = items.filter((item) => item?.onlineMatchStatus === "process" && item?.jobPositionId);
+            const employerIdsByJobPosition = await loadEmployerIdsForJobPositions(
+              [...new Set(currentItems.map((item) => item.jobPositionId))]
+            );
+            for (const item of currentItems) {
+              const employerId = employerIdsByJobPosition.get(item.jobPositionId);
+              if (!employerId) continue;
               employerIds.add(employerId);
               employerIdByJobPositionId.set(item.jobPositionId, employerId);
             }
@@ -446,7 +462,10 @@
             });
             const items = result?.items || [];
             const sentAtByMatchId = /* @__PURE__ */ new Map();
-            const matches = items.filter((item) => item?.id && item?.jobPositionId && item?.jobPosition?.employer?.id);
+            const employerIdsByJobPosition = await loadEmployerIdsForJobPositions(
+              [...new Set(items.map((item) => item?.jobPositionId).filter(Boolean))]
+            );
+            const matches = items.filter((item) => item?.id && employerIdsByJobPosition.has(item?.jobPositionId));
             for (let index = 0; index < matches.length; index += 20) {
               const batch = matches.slice(index, index + 20);
               const sentDateResults = await Promise.allSettled(batch.map((match) => loadMatchSentAt(match.id)));
@@ -460,7 +479,7 @@
               });
             }
             for (const item of matches) {
-              const employerId = item.jobPosition.employer.id;
+              const employerId = employerIdsByJobPosition.get(item.jobPositionId);
               const sentAt = sentAtByMatchId.get(item.id);
               if (!item?.jobPositionId || !employerId || !sentAt) continue;
               employerIds.add(employerId);
