@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.51
+// @version      1.1.52
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1763,6 +1763,12 @@
     const v = clean(text);
     return !v || v === "-" || v === "–" || v === "nicht angegeben";
   }
+  function isOwnMarkedValue(value, original) {
+    return value === original || value === `❌ ${original}` || value === `⚠️ ${original}`;
+  }
+  function comparisonValue(value, original) {
+    return original && isOwnMarkedValue(value, original) ? original : value;
+  }
   function travelRank(v) {
     v = clean(v);
     if (v.includes("keine reisebereitschaft")) return 0;
@@ -1863,7 +1869,8 @@
     }
     function clearMarks() {
       document.querySelectorAll(`[data-werkia-compare-marked="true"]`).forEach((el) => {
-        if (el.dataset[ORIGINAL_TEXT]) el.innerText = el.dataset[ORIGINAL_TEXT];
+        const original = el.dataset[ORIGINAL_TEXT];
+        if (original && isOwnMarkedValue(el.innerText || "", original)) el.innerText = original;
         el.style.background = "";
         el.style.color = "";
         el.style.padding = "";
@@ -2201,7 +2208,7 @@
     function currentFieldSignature(dialog) {
       return [...dialog.querySelectorAll("span.ra-field")].map((field) => {
         const label = field.querySelector("p span")?.innerText?.trim() || "";
-        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el) => el.dataset[ORIGINAL_TEXT] ?? el.innerText ?? el.textContent ?? "").join("|");
+        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el) => comparisonValue(el.innerText ?? el.textContent ?? "", el.dataset[ORIGINAL_TEXT])).join("|");
         return `${label}=${values}`;
       }).join(";");
     }
