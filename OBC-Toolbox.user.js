@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.2.42
+// @version      1.2.43
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -394,7 +394,7 @@
           let total = Infinity;
           while (page * perPage < total) {
             const result = await request(REVERSE_MATCH_QUERY, {
-              filter: { candidateIds: [candidateId], matched: true },
+              filter: { candidateIds: [candidateId] },
               page,
               perPage,
               sortField: "createdAt",

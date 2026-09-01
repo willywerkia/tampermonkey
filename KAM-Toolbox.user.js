@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.42
+// @version      1.1.43
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -403,7 +403,7 @@
           let total = Infinity;
           while (page * perPage < total) {
             const result = await request(REVERSE_MATCH_QUERY, {
-              filter: { candidateIds: [candidateId], matched: true },
+              filter: { candidateIds: [candidateId] },
               page,
               perPage,
               sortField: "createdAt",
