@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.41
+// @version      1.3.42
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -377,10 +377,10 @@
           reverseLookupsInFlight.delete(key);
         }
       },
-      // Reads the candidate's complete match history and keeps only matches for
-      // whose current onlineMatchStatus is "process", the technical value
-      // behind the Match status "Senden". The version history provides the
-      // timestamp of the transition to that status.
+      // Reads the candidate's actual match history. A match counts when its
+      // version history contains a transition to "process", the technical
+      // value behind the Match status "Senden", even when its current status
+      // has changed since then.
       async loadSentMatchEmployers(candidateId) {
         const existing = sentEmployerLookupsInFlight.get(candidateId);
         if (existing) return existing;
@@ -393,7 +393,7 @@
           let total = Infinity;
           while (page * perPage < total) {
             const result = await request(REVERSE_MATCH_QUERY, {
-              filter: { candidateIds: [candidateId] },
+              filter: { candidateIds: [candidateId], matched: true },
               page,
               perPage,
               sortField: "createdAt",
@@ -403,7 +403,7 @@
             const sentAtByMatchId = /* @__PURE__ */ new Map();
             const matches = [];
             for (const item of items) {
-              if (item?.onlineMatchStatus !== "process" || !item?.id || !item?.jobPositionId || !item?.jobPosition?.employer?.id) continue;
+              if (!item?.id || !item?.jobPositionId || !item?.jobPosition?.employer?.id) continue;
               matches.push(item);
             }
             for (let index = 0; index < matches.length; index += 5) {
