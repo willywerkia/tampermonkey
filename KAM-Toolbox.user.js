@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.48
+// @version      1.1.49
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3470,6 +3470,7 @@
   var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
   var EXPORTS_SELECTOR = ".werkia-slack-exports";
   var STYLE_ID2 = "werkia-slack-exports-style";
+  var SENT_STORE_KEY = "werkia_vt_slack_exports_sent_v1";
   var APPOINTMENT_DATE_RE = /\b\d{1,2}\.\s*(?:jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|apr(?:il)?|mai|jun(?:i)?|jul(?:i)?|aug(?:ust)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\.?\s+\d{4}\s+\d{1,2}:\d{2}\b/i;
   var APPOINTMENT_DATE_ALL_RE = new RegExp(APPOINTMENT_DATE_RE.source, "gi");
   var GERMAN_MONTHS = {
@@ -3553,11 +3554,42 @@
     if (!appointmentAt) throw new Error("Für VTV fehlt Datum und Uhrzeit des Termins.");
     return [data.candidateName, data.employerName, appointmentAt, tags].join("\n");
   }
+  function formatSentAt(iso) {
+    return new Date(iso).toLocaleString("de-DE", { timeZone: "Europe/Berlin" });
+  }
+  function exportButtonLabel(type, sentAt) {
+    return sentAt ? `${type} erneut senden` : `${type} Exportieren`;
+  }
+  function exportButtonTitle(type, webhookUrl2, sentAt) {
+    const base = webhookUrl2 ? `${type} direkt nach Slack senden` : `${type}-Text für Slack kopieren`;
+    return sentAt ? `${base} — bereits gesendet am ${formatSentAt(sentAt)}` : base;
+  }
+  function resendConfirmText(type, sentAt) {
+    return `${type} wurde für dieses Match bereits am ${formatSentAt(sentAt)} gesendet. Trotzdem erneut senden?`;
+  }
   function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl: webhookUrl2 = "" }) {
     runtime.registerSource(sourcePath);
     const matchDataCache = /* @__PURE__ */ new Map();
     const taggedRole = String(role).toLowerCase() === "kam" ? "cem" : "kam";
     let syncTimer = null;
+    function loadSentStore() {
+      try {
+        return JSON.parse(localStorage.getItem(SENT_STORE_KEY) || "{}");
+      } catch {
+        return {};
+      }
+    }
+    function sentAt(matchId, type) {
+      return loadSentStore()[`${matchId}:${type}`] || "";
+    }
+    function markSent(matchId, type) {
+      const store = loadSentStore();
+      store[`${matchId}:${type}`] = (/* @__PURE__ */ new Date()).toISOString();
+      try {
+        localStorage.setItem(SENT_STORE_KEY, JSON.stringify(store));
+      } catch {
+      }
+    }
     function ensureStyle() {
       if (document.getElementById(STYLE_ID2)) return;
       const style = document.createElement("style");
@@ -3633,7 +3665,8 @@
       const row = button.closest("tr");
       const matchId = row && matchIdFromRow(row);
       if (!matchId) return;
-      const originalLabel = button.textContent;
+      const previousSentAt = sentAt(matchId, type);
+      if (previousSentAt && !window.confirm(resendConfirmText(type, previousSentAt))) return;
       button.disabled = true;
       button.textContent = "Lädt …";
       try {
@@ -3641,9 +3674,11 @@
         const appointmentAt = latestAppointmentDate(appointmentCell(row)?.innerText);
         if (webhookUrl2) {
           await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl2, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
+          markSent(matchId, type);
           button.textContent = "Gesendet";
         } else {
           await copyText(buildSlackText(type, { ...data, appointmentAt }, taggedRole));
+          markSent(matchId, type);
           button.textContent = "Kopiert";
         }
       } catch (error) {
@@ -3653,7 +3688,8 @@
         runtime.setTimeout(() => {
           if (!button.isConnected) return;
           button.disabled = false;
-          button.textContent = originalLabel;
+          button.textContent = exportButtonLabel(type, sentAt(matchId, type));
+          button.title = exportButtonTitle(type, webhookUrl2, sentAt(matchId, type));
         }, 1200);
       }
     }
@@ -3667,8 +3703,8 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "werkia-slack-export";
-        button.textContent = `${type} Exportieren`;
-        button.title = webhookUrl2 ? `${type} direkt nach Slack senden` : `${type}-Text für Slack kopieren`;
+        button.textContent = exportButtonLabel(type, sentAt(matchId, type));
+        button.title = exportButtonTitle(type, webhookUrl2, sentAt(matchId, type));
         button.addEventListener("click", () => copyExport(button, type));
         exports.appendChild(button);
       });
