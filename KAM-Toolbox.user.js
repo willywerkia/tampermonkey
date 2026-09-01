@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.50
+// @version      1.1.51
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
+// @match        https://outlook.office.com/mail/*
+// @match        https://outlook.cloud.microsoft/mail/*
 // @run-at       document-idle
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -614,6 +616,10 @@
   function getKamGraphqlAdapter() {
     if (!adapter) throw new Error("KAM GraphQL-Adapter wurde noch nicht initialisiert.");
     return adapter;
+  }
+  function getKamBearerSnapshot() {
+    const getValue = typeof GM_getValue === "function" ? GM_getValue : () => "";
+    return String(getValue(BEARER_STORAGE_KEY, "") || "");
   }
 
   // ../../shared/js/admin-panel-reload.js
@@ -3752,6 +3758,521 @@
     });
   }
 
+  // src/features/kam-suite/outlook-match-outen.js
+  var EMPLOYERS_BY_NAME_QUERY = `query OutenEmployersByName($filter: EmployerFilter) {
+  items: allEmployers(filter: $filter) { id name __typename }
+}`;
+  var MATCHES_BY_EMPLOYER_QUERY = `query OutenMatchesByEmployer($filter: MatchFilter) {
+  items: allMatches(filter: $filter) {
+    id
+    candidateId
+    jobPositionId
+    kamStatus
+    matchedAt
+    jobPosition { id mainTitle subTitle }
+    candidate { id firstName lastName }
+  }
+}`;
+  var SUBJECT_RE = /^Bewerbung:\s*([^:]+):\s*(.+)\s-\s(.+?)\s*\(Werkia\)\s*$/i;
+  var REPLY_PREFIX_RE = /^(re|aw|wg|fw|fwd|antw|weiterleitung)\s*:\s*/i;
+  var AUTH_MISSING_MESSAGE = "GraphQL-Authentifizierung noch nicht aus dem Adminpanel erfasst.";
+  var AUTH_HTTP_ERROR_RE = /^GraphQL HTTP 40[13]\b/;
+  var AUTH_KEYWORD_RE = /unauthori[sz]ed|unauthenticated|forbidden/i;
+  function isAuthError(error) {
+    const message = String(error?.message || "");
+    return message === AUTH_MISSING_MESSAGE || AUTH_HTTP_ERROR_RE.test(message) || AUTH_KEYWORD_RE.test(message);
+  }
+  function stripReplyPrefixes(subject) {
+    let value = String(subject || "").trim();
+    while (REPLY_PREFIX_RE.test(value)) value = value.replace(REPLY_PREFIX_RE, "").trim();
+    return value;
+  }
+  function parseSubject(rawSubject) {
+    const stripped = stripReplyPrefixes(rawSubject);
+    const match = SUBJECT_RE.exec(stripped);
+    if (!match) return null;
+    return {
+      candidateName: match[1].trim(),
+      vacancyTitle: match[2].trim(),
+      employerName: match[3].trim()
+    };
+  }
+  function normalise(value) {
+    return String(value || "").trim().toLocaleLowerCase("de-DE");
+  }
+  function candidateFullName(match) {
+    return `${match?.candidate?.firstName || ""} ${match?.candidate?.lastName || ""}`.trim();
+  }
+  function rankEmployers(employers, term) {
+    const wanted = normalise(term);
+    return employers.map((employer) => {
+      const name = normalise(employer.name);
+      const score = name === wanted ? 0 : name.startsWith(wanted) ? 1 : name.includes(wanted) ? 2 : 99;
+      return { employer, score };
+    }).filter(({ score }) => score < 99).sort((left, right) => left.score - right.score || String(left.employer.name).localeCompare(String(right.employer.name), "de")).map(({ employer }) => employer);
+  }
+  function readSubjectFromReadingPane() {
+    const heading = document.querySelector('div[role="heading"][id$="_SUBJECT"][title]') || document.querySelector('[role="heading"][id$="_SUBJECT"]');
+    if (!heading) return "";
+    return (heading.getAttribute("title") || heading.textContent || "").trim();
+  }
+  var IDS2 = {
+    button: "werkia-outen-float-button",
+    dialog: "werkia-outen-dialog"
+  };
+  var SUPPORTED_OUTLOOK_HOSTNAMES = ["outlook.office.com", "outlook.cloud.microsoft"];
+  function executeOutlookMatchOuten(runtime) {
+    runtime.registerSource("kam/toolbox/src/features/kam-suite/outlook-match-outen.js");
+    if (!SUPPORTED_OUTLOOK_HOSTNAMES.includes(location.hostname)) return;
+    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    async function ensureAuthViaPopup() {
+      const before = getKamBearerSnapshot();
+      let popup;
+      try {
+        popup = window.open("https://admin.werkia.de/", "werkiaKamOutenAuth", "width=480,height=640");
+      } catch {
+        popup = null;
+      }
+      if (!popup) return false;
+      const deadline = Date.now() + 2e4;
+      while (Date.now() < deadline) {
+        await sleep(500);
+        const current2 = getKamBearerSnapshot();
+        if (current2 && current2 !== before) {
+          try {
+            popup.close();
+          } catch {
+          }
+          return true;
+        }
+        if (popup.closed) break;
+      }
+      try {
+        popup.close();
+      } catch {
+      }
+      const current = getKamBearerSnapshot();
+      return Boolean(current) && current !== before;
+    }
+    async function graphqlRequestWithRetry(query, variables) {
+      const { request } = getKamGraphqlAdapter();
+      try {
+        return await request(query, variables);
+      } catch (error) {
+        if (!isAuthError(error)) throw error;
+        const recovered = await ensureAuthViaPopup();
+        if (!recovered) throw error;
+        return request(query, variables);
+      }
+    }
+    async function searchEmployersByName(term) {
+      const prefix = normalise(term).slice(0, 1);
+      if (!prefix) return [];
+      const data = await graphqlRequestWithRetry(EMPLOYERS_BY_NAME_QUERY, { filter: { name: prefix } });
+      return rankEmployers(data.items || [], term);
+    }
+    async function matchesForEmployer(employerId) {
+      const data = await graphqlRequestWithRetry(MATCHES_BY_EMPLOYER_QUERY, { filter: { employerIds: [employerId] } });
+      return data.items || [];
+    }
+    async function openInterviewIdsForMatch(matchId) {
+      const perPage = 100;
+      const interviewIds = [];
+      let page = 0;
+      let total = Infinity;
+      while (interviewIds.length < total) {
+        const result = await graphqlRequestWithRetry(ALL_INTERVIEWS_QUERY, {
+          filter: { matchId, statuses: OPEN_INTERVIEW_STATUSES },
+          page,
+          perPage,
+          sortField: "status",
+          sortOrder: "ASC"
+        });
+        const items = result?.items || [];
+        interviewIds.push(...openInterviewIds(items));
+        total = Number(result?.total?.count) || 0;
+        if (!items.length || items.length < perPage) break;
+        page += 1;
+      }
+      return interviewIds;
+    }
+    async function declineOpenInterviewsForMatch(matchId) {
+      const interviewIds = await openInterviewIdsForMatch(matchId);
+      let declined = 0;
+      for (const interviewId of interviewIds) {
+        const result = await graphqlRequestWithRetry(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
+        const interview = result?.data;
+        if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
+          throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
+        }
+        declined += 1;
+      }
+      return declined;
+    }
+    async function setMatchOut(matchId, kamFeedback) {
+      const result = await graphqlRequestWithRetry(UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION, { id: matchId, kamStatus: "out", kamFeedback });
+      const match = result?.data;
+      if (match?.id !== matchId || match.kamStatus !== "out") {
+        throw new Error("KAM Status wurde nicht auf „Out“ bestätigt");
+      }
+      await graphqlRequestWithRetry(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: null });
+      return declineOpenInterviewsForMatch(matchId);
+    }
+    function styled(node, styles) {
+      Object.assign(node.style, styles);
+      return node;
+    }
+    function buildHead(titleText) {
+      const head = document.createElement("div");
+      head.textContent = titleText;
+      return styled(head, { padding: "16px 18px", color: "#fff", background: "#ef6c00", fontSize: "17px", fontWeight: "700" });
+    }
+    function buildBody(children) {
+      const body = document.createElement("div");
+      styled(body, { padding: "18px", display: "grid", gap: "12px", font: "14px/1.4 Arial,sans-serif", color: "#222" });
+      children.forEach((child) => {
+        if (child) body.appendChild(child);
+      });
+      return body;
+    }
+    function buildNote(parts, { error = false } = {}) {
+      const note = document.createElement("div");
+      styled(note, { padding: "10px", borderRadius: "5px", background: error ? "#fdecea" : "#f5f5f5", color: error ? "#b3261e" : "#444" });
+      (Array.isArray(parts) ? parts : [parts]).forEach((part) => {
+        if (part && typeof part === "object") {
+          const anchor = document.createElement("a");
+          anchor.textContent = part.text;
+          anchor.href = part.href;
+          anchor.target = "_blank";
+          anchor.rel = "noopener";
+          styled(anchor, { color: "#0b5cab" });
+          note.appendChild(anchor);
+        } else {
+          note.appendChild(document.createTextNode(String(part ?? "")));
+        }
+      });
+      return note;
+    }
+    function buildActions(children) {
+      const actions = document.createElement("div");
+      styled(actions, { display: "flex", justifyContent: "flex-end", gap: "8px" });
+      children.forEach((child) => actions.appendChild(child));
+      return actions;
+    }
+    function buildButton(label, { action, primary = false } = {}) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      if (action) btn.dataset.action = action;
+      styled(btn, {
+        padding: "8px 13px",
+        border: primary ? "1px solid #ef6c00" : "1px solid #aaa",
+        borderRadius: "5px",
+        background: primary ? "#ef6c00" : "#fff",
+        color: primary ? "#fff" : "#222",
+        cursor: "pointer",
+        fontWeight: "600"
+      });
+      return btn;
+    }
+    function setButtonDisabled(btn, disabled) {
+      btn.disabled = disabled;
+      styled(btn, { opacity: disabled ? ".55" : "1", cursor: disabled ? "wait" : "pointer" });
+    }
+    function buildList() {
+      const list = document.createElement("div");
+      return styled(list, { display: "grid", gap: "6px", maxHeight: "260px", overflowY: "auto", border: "1px solid #ddd", borderRadius: "6px", padding: "8px" });
+    }
+    function buildOptionRow({ name, index, checked, labelText, href, linkLabel = "im AP prüfen" }) {
+      const option = document.createElement("label");
+      styled(option, { display: "flex", alignItems: "flex-start", gap: "8px", padding: "6px", borderRadius: "5px", fontWeight: "400", cursor: "pointer" });
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = name;
+      radio.value = String(index);
+      radio.checked = checked;
+      const span = document.createElement("span");
+      span.textContent = labelText;
+      option.append(radio, span);
+      if (href) {
+        const anchor = document.createElement("a");
+        anchor.textContent = linkLabel;
+        anchor.href = href;
+        anchor.target = "_blank";
+        anchor.rel = "noopener";
+        styled(anchor, { marginLeft: "auto", fontSize: "12px", color: "#0b5cab", whiteSpace: "nowrap" });
+        option.appendChild(anchor);
+      }
+      return { option, radio };
+    }
+    function styleDialogFrame(dialog) {
+      styled(dialog, {
+        width: "min(520px, calc(100vw - 32px))",
+        border: "0",
+        borderRadius: "10px",
+        padding: "0",
+        boxShadow: "0 12px 45px rgba(0,0,0,.3)",
+        zIndex: "2147483001"
+      });
+    }
+    function ensureButton() {
+      let button = document.getElementById(IDS2.button);
+      if (!button) {
+        button = document.createElement("button");
+        button.id = IDS2.button;
+        button.type = "button";
+        button.textContent = "Match Outen";
+        styled(button, {
+          position: "fixed",
+          right: "24px",
+          bottom: "24px",
+          zIndex: "2147483000",
+          padding: "12px 18px",
+          border: "2px solid #ef6c00",
+          borderRadius: "8px",
+          background: "#fff",
+          color: "#bf4d00",
+          font: "700 14px/1.2 Arial,sans-serif",
+          cursor: "pointer",
+          boxShadow: "0 4px 14px rgba(0,0,0,.22)"
+        });
+        button.addEventListener("click", () => openWizard(readSubjectFromReadingPane()));
+        document.body.appendChild(button);
+      }
+      return button;
+    }
+    function removeButton() {
+      document.getElementById(IDS2.button)?.remove();
+    }
+    function renderLoading(dialog, text) {
+      dialog.replaceChildren(buildHead("Match Outen"), buildBody([buildNote(text)]));
+    }
+    function renderError(dialog, parts) {
+      const closeBtn = buildButton("Schließen", { action: "close" });
+      closeBtn.addEventListener("click", () => dialog.close());
+      dialog.replaceChildren(
+        buildHead("Match Outen"),
+        buildBody([buildNote(parts, { error: true }), buildActions([closeBtn])])
+      );
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    }
+    function renderCaughtError(dialog, error) {
+      if (isAuthError(error)) {
+        renderError(dialog, [
+          "Es konnte keine Anmeldung am Adminpanel erfasst werden (Popup ggf. blockiert oder nicht eingeloggt). Bitte kurz ",
+          { text: "admin.werkia.de", href: "https://admin.werkia.de/" },
+          " manuell öffnen/einloggen und diesen Dialog danach erneut öffnen."
+        ]);
+        return;
+      }
+      renderError(dialog, `Fehler: ${error?.message || String(error)}`);
+    }
+    function renderEmployerPicker(dialog, state, employers) {
+      const list = buildList();
+      const radios = employers.map((employer, index) => {
+        const { option, radio } = buildOptionRow({
+          name: "employer",
+          index,
+          checked: index === 0,
+          labelText: employer.name,
+          href: `https://admin.werkia.de/#/Employer/${employer.id}/show`
+        });
+        list.appendChild(option);
+        return radio;
+      });
+      const closeBtn = buildButton("Abbrechen", { action: "close" });
+      const continueBtn = buildButton("Weiter", { action: "continue", primary: true });
+      closeBtn.addEventListener("click", () => dialog.close());
+      continueBtn.addEventListener("click", () => {
+        const selectedIndex = radios.findIndex((radio) => radio.checked);
+        state.employer = employers[selectedIndex >= 0 ? selectedIndex : 0];
+        renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
+        loadMatches(dialog, state).catch((error) => renderCaughtError(dialog, error));
+      });
+      dialog.replaceChildren(
+        buildHead("Match Outen – Arbeitgeber bestätigen"),
+        buildBody([
+          buildNote(`Betreff: „${state.parsed.candidateName}: ${state.parsed.vacancyTitle} - ${state.parsed.employerName}“. Bitte den passenden Arbeitgeber auswählen.`),
+          list,
+          buildActions([closeBtn, continueBtn])
+        ])
+      );
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    }
+    async function loadMatches(dialog, state) {
+      renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
+      const matches = await matchesForEmployer(state.employer.id);
+      state.matches = matches;
+      const wantedName = normalise(state.parsed.candidateName);
+      const exactMatches = matches.filter((match) => normalise(candidateFullName(match)) === wantedName);
+      if (exactMatches.length === 1) {
+        state.matchId = exactMatches[0].id;
+        renderReasonStep(dialog, state, exactMatches[0]);
+        return;
+      }
+      renderMatchPicker(dialog, state, matches, wantedName);
+    }
+    function renderMatchPicker(dialog, state, matches, wantedName) {
+      if (!matches.length) {
+        renderError(dialog, [
+          `Bei „${state.employer.name}“ wurden keine Matches gefunden. `,
+          { text: "Arbeitgeber im Adminpanel prüfen", href: `https://admin.werkia.de/#/Employer/${state.employer.id}/show` },
+          "."
+        ]);
+        return;
+      }
+      const sorted = [...matches].sort((left, right) => (normalise(candidateFullName(left)) === wantedName ? -1 : 0) - (normalise(candidateFullName(right)) === wantedName ? -1 : 0));
+      const list = buildList();
+      const radios = sorted.map((match, index) => {
+        const jobLabel = [match.jobPosition?.mainTitle, match.jobPosition?.subTitle].filter(Boolean).join(" ");
+        const labelText = `${candidateFullName(match) || "(unbenannt)"} — ${jobLabel} · KAM: ${match.kamStatus || "(leer)"}`;
+        const { option, radio } = buildOptionRow({
+          name: "match",
+          index,
+          checked: index === 0,
+          labelText,
+          href: `https://admin.werkia.de/#/Match/${match.id}/show`
+        });
+        list.appendChild(option);
+        return radio;
+      });
+      const closeBtn = buildButton("Abbrechen", { action: "close" });
+      const continueBtn = buildButton("Weiter", { action: "continue", primary: true });
+      closeBtn.addEventListener("click", () => dialog.close());
+      continueBtn.addEventListener("click", () => {
+        const selectedIndex = radios.findIndex((radio) => radio.checked);
+        const selected = sorted[selectedIndex >= 0 ? selectedIndex : 0];
+        state.matchId = selected.id;
+        renderReasonStep(dialog, state, selected);
+      });
+      dialog.replaceChildren(
+        buildHead("Match Outen – Match bestätigen"),
+        buildBody([
+          buildNote(`Gesuchter Kandidat: „${state.parsed.candidateName}“. Kein eindeutiger Treffer bei „${state.employer.name}“ – bitte den richtigen Match auswählen.`),
+          list,
+          buildActions([closeBtn, continueBtn])
+        ])
+      );
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    }
+    function renderReasonStep(dialog, state, match) {
+      const noteText = `${candidateFullName(match) || state.parsed.candidateName} bei ${state.employer.name}${match.jobPosition?.mainTitle ? ` (${match.jobPosition.mainTitle})` : ""} auf KAM Status „Out“ setzen. Offene Terminvorschläge werden dabei automatisch abgelehnt.`;
+      const select = document.createElement("select");
+      select.name = "outFeedback";
+      select.required = true;
+      styled(select, { boxSizing: "border-box", width: "100%", padding: "9px", border: "1px solid #bbb", borderRadius: "5px", font: "inherit", background: "#fff" });
+      const chooseOption = document.createElement("option");
+      chooseOption.value = "__choose__";
+      chooseOption.textContent = "Bitte auswählen";
+      select.appendChild(chooseOption);
+      OUT_FEEDBACK_OPTIONS.forEach((reason) => {
+        const option = document.createElement("option");
+        option.value = reason.value;
+        option.textContent = reason.label;
+        select.appendChild(option);
+      });
+      const label = document.createElement("label");
+      styled(label, { display: "grid", gap: "5px", fontWeight: "700" });
+      label.append("Grund", select);
+      const statusEl = document.createElement("div");
+      statusEl.textContent = "Bitte einen Grund auswählen.";
+      const setStatus = (text, tone = "") => {
+        statusEl.textContent = text;
+        const color = tone === "ok" ? "#18752b" : tone === "error" ? "#b3261e" : tone === "busy" ? "#995000" : "#222";
+        styled(statusEl, { color });
+      };
+      const closeBtn = buildButton("Abbrechen", { action: "close" });
+      const applyBtn = buildButton("Out setzen", { action: "apply", primary: true });
+      closeBtn.addEventListener("click", () => dialog.close());
+      applyBtn.addEventListener("click", async () => {
+        if (applyBtn.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        const reason = OUT_FEEDBACK_OPTIONS.find((option) => option.value === select.value);
+        if (!reason) {
+          setStatus("Bitte einen Grund auswählen.", "error");
+          return;
+        }
+        if (!window.confirm(`${candidateFullName(match) || state.parsed.candidateName} bei ${state.employer.name} auf KAM Status „Out“ setzen? Grund: „${reason.label}“.`)) return;
+        select.disabled = true;
+        setButtonDisabled(closeBtn, true);
+        setButtonDisabled(applyBtn, true);
+        setStatus("Setze KAM Status „Out“ …", "busy");
+        try {
+          const declined = await setMatchOut(state.matchId, resolveOutFeedbackText(reason));
+          setStatus(`KAM Status auf „Out“ gesetzt. ${declined} Terminvorschläge abgelehnt.`, "ok");
+          applyBtn.dataset.completed = "true";
+          applyBtn.textContent = "Fertig – schließen";
+          setButtonDisabled(applyBtn, false);
+          closeBtn.hidden = true;
+        } catch (error) {
+          select.disabled = false;
+          setButtonDisabled(closeBtn, false);
+          setButtonDisabled(applyBtn, false);
+          if (isAuthError(error)) {
+            renderCaughtError(dialog, error);
+            return;
+          }
+          setStatus(`Fehlgeschlagen: ${error.message}`, "error");
+        }
+      });
+      dialog.replaceChildren(
+        buildHead("Match Outen – Grund"),
+        buildBody([buildNote(noteText), label, statusEl, buildActions([closeBtn, applyBtn])])
+      );
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    }
+    function openWizard(rawSubject) {
+      document.getElementById(IDS2.dialog)?.remove();
+      const parsed = parseSubject(rawSubject);
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS2.dialog;
+      styleDialogFrame(dialog);
+      document.body.appendChild(dialog);
+      const state = { parsed, employer: null, matchId: null, matches: [] };
+      if (!parsed) {
+        renderError(dialog, `Der Betreff „${rawSubject || "(leer)"}“ passt nicht auf das erwartete Muster „Bewerbung: Kandidat: Vakanztitel - Firma (Werkia)“. Bitte die passende Mail öffnen oder den Match im Adminpanel manuell suchen.`);
+        dialog.showModal();
+        return;
+      }
+      renderLoading(dialog, `Suche Arbeitgeber „${parsed.employerName}“ …`);
+      dialog.showModal();
+      searchEmployersByName(parsed.employerName).then((employers) => {
+        if (!employers.length) {
+          renderError(dialog, [
+            `Kein Arbeitgeber gefunden für „${parsed.employerName}“. `,
+            { text: "Arbeitgeberliste im Adminpanel öffnen", href: "https://admin.werkia.de/#/Employer" },
+            " und manuell prüfen."
+          ]);
+          return;
+        }
+        if (employers.length === 1 && normalise(employers[0].name) === normalise(parsed.employerName)) {
+          state.employer = employers[0];
+          return loadMatches(dialog, state);
+        }
+        renderEmployerPicker(dialog, state, employers);
+      }).catch((error) => renderCaughtError(dialog, error));
+    }
+    let scheduled = false;
+    function scheduleCheck() {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        const subject = readSubjectFromReadingPane();
+        if (parseSubject(subject)) ensureButton();
+        else removeButton();
+      }, 400);
+    }
+    runtime.createMutationObserver(scheduleCheck).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addCleanup(() => {
+      document.getElementById(IDS2.button)?.remove();
+      document.getElementById(IDS2.dialog)?.remove();
+    });
+    scheduleCheck();
+  }
+
   // ../../shared/js/om-notes-templates/index.js
   var OM_NOTE_TEMPLATES = [
     { group: "Unterlagen", label: "CV", value: "[CV]" },
@@ -4313,6 +4834,7 @@ ${next}`;
     { id: "kam-suite-chat-icon-redirect", execute: executeChatIconRedirect },
     { id: "kam-suite-appointment-copy-paste", execute: executeAppointmentCopyPaste },
     { id: "kam-suite-slack-exports", execute: executeSlackExports2 },
+    { id: "kam-suite-outlook-match-outen", execute: executeOutlookMatchOuten },
     { id: "om-notes-templates", execute: executeOmNotesTemplates },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);
