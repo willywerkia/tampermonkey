@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.57
+// @version      1.1.58
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3822,12 +3822,8 @@
   }
   function kamMyMatchesUrl({ candidateId, employerId }) {
     const params = new URLSearchParams({
-      displayedFilters: JSON.stringify({ undefined: true }),
-      filter: JSON.stringify({
-        hasKamStatus: true,
-        candidateIds: [candidateId],
-        employerIds: [employerId]
-      }),
+      displayedFilters: JSON.stringify({}),
+      filter: JSON.stringify({ candidateIds: [candidateId], employerIds: [employerId] }),
       order: "DESC",
       page: "1",
       perPage: "50",
