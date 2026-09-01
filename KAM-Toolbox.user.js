@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.52
+// @version      1.1.53
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3810,6 +3810,16 @@
   function candidateFullName(match) {
     return `${match?.candidate?.firstName || ""} ${match?.candidate?.lastName || ""}`.trim();
   }
+  var ADMIN_PANEL_BASE_URL = "https://admin.werkia.de";
+  function employerListUrl() {
+    return `${ADMIN_PANEL_BASE_URL}/#/Employer`;
+  }
+  function employerShowUrl(employerId) {
+    return `${ADMIN_PANEL_BASE_URL}/#/Employer/${employerId}/show`;
+  }
+  function matchShowUrl(matchId) {
+    return `${ADMIN_PANEL_BASE_URL}/#/Match/${matchId}/show`;
+  }
   function rankEmployers(employers, term) {
     const wanted = normalise(term);
     return employers.map((employer) => {
@@ -3966,6 +3976,15 @@
       children.forEach((child) => actions.appendChild(child));
       return actions;
     }
+    function buildSplitActions(leftChildren, rightChildren) {
+      const row = document.createElement("div");
+      styled(row, { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" });
+      const left = document.createElement("div");
+      styled(left, { display: "flex", gap: "8px" });
+      leftChildren.forEach((child) => left.appendChild(child));
+      row.append(left, buildActions(rightChildren));
+      return row;
+    }
     function buildButton(label, { action, primary = false } = {}) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -4082,7 +4101,7 @@
           index,
           checked: index === 0,
           labelText: employer.name,
-          href: `https://admin.werkia.de/#/Employer/${employer.id}/show`
+          href: employerShowUrl(employer.id)
         });
         list.appendChild(option);
         return radio;
@@ -4123,7 +4142,7 @@
       if (!matches.length) {
         renderError(dialog, [
           `Bei „${state.employer.name}“ wurden keine Matches gefunden. `,
-          { text: "Arbeitgeber im Adminpanel prüfen", href: `https://admin.werkia.de/#/Employer/${state.employer.id}/show` },
+          { text: "Arbeitgeber im Adminpanel prüfen", href: employerShowUrl(state.employer.id) },
           "."
         ]);
         return;
@@ -4138,7 +4157,7 @@
           index,
           checked: index === 0,
           labelText,
-          href: `https://admin.werkia.de/#/Match/${match.id}/show`
+          href: matchShowUrl(match.id)
         });
         list.appendChild(option);
         return radio;
@@ -4188,6 +4207,23 @@
         const color = tone === "ok" ? "#18752b" : tone === "error" ? "#b3261e" : tone === "busy" ? "#995000" : "#222";
         styled(statusEl, { color });
       };
+      const openMatchLink = document.createElement("a");
+      openMatchLink.textContent = "Match im Adminpanel öffnen";
+      openMatchLink.href = matchShowUrl(state.matchId);
+      openMatchLink.target = "_blank";
+      openMatchLink.rel = "noopener";
+      styled(openMatchLink, {
+        padding: "8px 13px",
+        border: "1px solid #aaa",
+        borderRadius: "5px",
+        background: "#fff",
+        color: "#0b5cab",
+        cursor: "pointer",
+        fontWeight: "600",
+        textDecoration: "none",
+        display: "inline-flex",
+        alignItems: "center"
+      });
       const closeBtn = buildButton("Abbrechen", { action: "close" });
       const applyBtn = buildButton("Out setzen", { action: "apply", primary: true });
       closeBtn.addEventListener("click", () => dialog.close());
@@ -4226,7 +4262,7 @@
       });
       dialog.replaceChildren(
         buildHead("Match Outen – Grund"),
-        buildBody([buildNote(noteText), label, statusEl, buildActions([closeBtn, applyBtn])])
+        buildBody([buildNote(noteText), label, statusEl, buildSplitActions([openMatchLink], [closeBtn, applyBtn])])
       );
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
     }
@@ -4249,7 +4285,7 @@
         if (!employers.length) {
           renderError(dialog, [
             `Kein Arbeitgeber gefunden für „${parsed.employerName}“. `,
-            { text: "Arbeitgeberliste im Adminpanel öffnen", href: "https://admin.werkia.de/#/Employer" },
+            { text: "Arbeitgeberliste im Adminpanel öffnen", href: employerListUrl() },
             " und manuell prüfen."
           ]);
           return;
