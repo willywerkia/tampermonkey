@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.43
+// @version      1.3.44
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -272,6 +272,16 @@
     __typename
   }
 }`;
+  var JOB_POSITION_EMPLOYERS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    employer {
+      id
+      __typename
+    }
+    __typename
+  }
+}`;
   var REVERSE_MATCH_QUERY = `query allMatches($sortField: String, $sortOrder: String, $page: Int, $perPage: Int, $filter: MatchFilter) {
   items: allMatches(sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage, filter: $filter) {
     id
@@ -279,13 +289,6 @@
     cemStatus
     kamStatus
     onlineMatchStatus
-    jobPosition {
-      employer {
-        id
-        __typename
-      }
-      __typename
-    }
     __typename
   }
   total: _allMatchesMeta(page: $page, perPage: $perPage, filter: $filter) {
@@ -331,6 +334,17 @@
       } finally {
         matchSentAtLookupsInFlight.delete(matchId);
       }
+    }
+    async function loadEmployerIdsForJobPositions(jobPositionIds) {
+      const employerIdByJobPositionId = /* @__PURE__ */ new Map();
+      for (let index = 0; index < jobPositionIds.length; index += 25) {
+        const ids = jobPositionIds.slice(index, index + 25);
+        const result = await request(JOB_POSITION_EMPLOYERS_QUERY, { filter: { ids } });
+        for (const item of result?.items || []) {
+          if (item?.id && item?.employer?.id) employerIdByJobPositionId.set(item.id, item.employer.id);
+        }
+      }
+      return employerIdByJobPositionId;
     }
     return {
       async loadMatch(matchId) {
@@ -401,11 +415,10 @@
             });
             const items = result?.items || [];
             const sentAtByMatchId = /* @__PURE__ */ new Map();
-            const matches = [];
-            for (const item of items) {
-              if (!item?.id || !item?.jobPositionId || !item?.jobPosition?.employer?.id) continue;
-              matches.push(item);
-            }
+            const employerIdsByJobPosition = await loadEmployerIdsForJobPositions(
+              [...new Set(items.map((item) => item?.jobPositionId).filter(Boolean))]
+            );
+            const matches = items.filter((item) => item?.id && employerIdsByJobPosition.has(item?.jobPositionId));
             for (let index = 0; index < matches.length; index += 5) {
               const batch = matches.slice(index, index + 5);
               const sentDateResults = await Promise.allSettled(batch.map((match) => loadMatchSentAt(match.id)));
@@ -419,7 +432,7 @@
               });
             }
             for (const item of matches) {
-              const employerId = item?.jobPosition?.employer?.id;
+              const employerId = employerIdsByJobPosition.get(item.jobPositionId);
               const sentAt = sentAtByMatchId.get(item.id);
               if (!item?.jobPositionId || !employerId || !sentAt) continue;
               employerIds.add(employerId);
