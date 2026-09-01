@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.46
+// @version      1.1.47
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -282,23 +282,21 @@
     __typename
   }
 }`;
-  var JOB_POSITION_EMPLOYERS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
-  items: allJobPositions(filter: $filter) {
-    id
-    employer {
-      id
-      __typename
-    }
-    __typename
-  }
-}`;
   var REVERSE_MATCH_QUERY = `query allMatches($sortField: String, $sortOrder: String, $page: Int, $perPage: Int, $filter: MatchFilter) {
   items: allMatches(sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage, filter: $filter) {
     id
     jobPositionId
+    createdAt
     cemStatus
     kamStatus
     onlineMatchStatus
+    jobPosition {
+      employer {
+        id
+        __typename
+      }
+      __typename
+    }
     __typename
   }
   total: _allMatchesMeta(page: $page, perPage: $perPage, filter: $filter) {
@@ -326,6 +324,7 @@
   }
   function createMatchProvider({ request }) {
     const reverseLookupsInFlight = /* @__PURE__ */ new Map();
+    const currentSentEmployerLookupsInFlight = /* @__PURE__ */ new Map();
     const sentEmployerLookupsInFlight = /* @__PURE__ */ new Map();
     const matchSentAtLookupsInFlight = /* @__PURE__ */ new Map();
     async function loadMatchSentAt(matchId) {
@@ -344,17 +343,6 @@
       } finally {
         matchSentAtLookupsInFlight.delete(matchId);
       }
-    }
-    async function loadEmployerIdsForJobPositions(jobPositionIds) {
-      const employerIdByJobPositionId = /* @__PURE__ */ new Map();
-      for (let index = 0; index < jobPositionIds.length; index += 25) {
-        const ids = jobPositionIds.slice(index, index + 25);
-        const result = await request(JOB_POSITION_EMPLOYERS_QUERY, { filter: { ids } });
-        for (const item of result?.items || []) {
-          if (item?.id && item?.employer?.id) employerIdByJobPositionId.set(item.id, item.employer.id);
-        }
-      }
-      return employerIdByJobPositionId;
     }
     return {
       async loadMatch(matchId) {
@@ -401,6 +389,49 @@
           reverseLookupsInFlight.delete(key);
         }
       },
+      // Fast path for the candidate page. `onlineMatchStatus: process` is the
+      // current technical value for a sent match, and all data needed to mark
+      // its rows comes from the same allMatches response. The slower revision
+      // pass below adds matches that have since changed status and their exact
+      // send timestamp.
+      async loadCurrentSentMatchEmployers(candidateId) {
+        const existing = currentSentEmployerLookupsInFlight.get(candidateId);
+        if (existing) return existing;
+        const promise = (async () => {
+          const employerIds = /* @__PURE__ */ new Set();
+          const employerIdByJobPositionId = /* @__PURE__ */ new Map();
+          const sentAtByEmployerId = /* @__PURE__ */ new Map();
+          const perPage = 100;
+          let page = 0;
+          let total = Infinity;
+          while (page * perPage < total) {
+            const result = await request(REVERSE_MATCH_QUERY, {
+              filter: { candidateIds: [candidateId] },
+              page,
+              perPage,
+              sortField: "createdAt",
+              sortOrder: "DESC"
+            });
+            const items = result?.items || [];
+            for (const item of items) {
+              const employerId = item?.jobPosition?.employer?.id;
+              if (item?.onlineMatchStatus !== "process" || !item?.jobPositionId || !employerId) continue;
+              employerIds.add(employerId);
+              employerIdByJobPositionId.set(item.jobPositionId, employerId);
+            }
+            total = Number(result?.total?.count);
+            if (!Number.isFinite(total) || !items.length) break;
+            page++;
+          }
+          return { employerIds, employerIdByJobPositionId, sentAtByEmployerId };
+        })();
+        currentSentEmployerLookupsInFlight.set(candidateId, promise);
+        try {
+          return await promise;
+        } finally {
+          currentSentEmployerLookupsInFlight.delete(candidateId);
+        }
+      },
       // Reads the candidate's actual match history. A match counts when its
       // version history contains a transition to "process", the technical
       // value behind the Match status "Senden", even when its current status
@@ -425,12 +456,9 @@
             });
             const items = result?.items || [];
             const sentAtByMatchId = /* @__PURE__ */ new Map();
-            const employerIdsByJobPosition = await loadEmployerIdsForJobPositions(
-              [...new Set(items.map((item) => item?.jobPositionId).filter(Boolean))]
-            );
-            const matches = items.filter((item) => item?.id && employerIdsByJobPosition.has(item?.jobPositionId));
-            for (let index = 0; index < matches.length; index += 5) {
-              const batch = matches.slice(index, index + 5);
+            const matches = items.filter((item) => item?.id && item?.jobPositionId && item?.jobPosition?.employer?.id);
+            for (let index = 0; index < matches.length; index += 20) {
+              const batch = matches.slice(index, index + 20);
               const sentDateResults = await Promise.allSettled(batch.map((match) => loadMatchSentAt(match.id)));
               batch.forEach((match, batchIndex) => {
                 const result2 = sentDateResults[batchIndex];
@@ -442,7 +470,7 @@
               });
             }
             for (const item of matches) {
-              const employerId = employerIdsByJobPosition.get(item.jobPositionId);
+              const employerId = item.jobPosition.employer.id;
               const sentAt = sentAtByMatchId.get(item.id);
               if (!item?.jobPositionId || !employerId || !sentAt) continue;
               employerIds.add(employerId);
