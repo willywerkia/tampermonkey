@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.45
+// @version      1.3.46
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @match        https://admin.werkia.de/*
 // @run-at       document-idle
@@ -1006,10 +1006,13 @@
       const style = document.createElement("style");
       style.id = MATCH_PRESENT_STYLE_ID;
       style.textContent = `
-      .${MATCH_PRESENT_ROW_CLASS} { outline:3px solid #c23f3f !important; outline-offset:-3px; box-shadow:inset 7px 0 0 #a83232 !important; }
+      .${MATCH_PRESENT_ROW_CLASS} > td, .${MATCH_PRESENT_ROW_CLASS} > th, .${MATCH_PRESENT_OLD_ROW_CLASS} > td, .${MATCH_PRESENT_OLD_ROW_CLASS} > th { border-top:3px solid #c23f3f !important; border-bottom:3px solid #c23f3f !important; }
+      .${MATCH_PRESENT_ROW_CLASS} > :first-child, .${MATCH_PRESENT_OLD_ROW_CLASS} > :first-child { border-left:3px solid #c23f3f !important; }
+      .${MATCH_PRESENT_ROW_CLASS} > :last-child, .${MATCH_PRESENT_OLD_ROW_CLASS} > :last-child { border-right:3px solid #c23f3f !important; }
+      .${MATCH_PRESENT_ROW_CLASS} > :first-child { box-shadow:inset 7px 0 0 #a83232 !important; }
+      .${MATCH_PRESENT_ROW_CLASS} + .${MATCH_PRESENT_ROW_CLASS} > td, .${MATCH_PRESENT_ROW_CLASS} + .${MATCH_PRESENT_ROW_CLASS} > th, .${MATCH_PRESENT_ROW_CLASS} + .${MATCH_PRESENT_OLD_ROW_CLASS} > td, .${MATCH_PRESENT_ROW_CLASS} + .${MATCH_PRESENT_OLD_ROW_CLASS} > th, .${MATCH_PRESENT_OLD_ROW_CLASS} + .${MATCH_PRESENT_ROW_CLASS} > td, .${MATCH_PRESENT_OLD_ROW_CLASS} + .${MATCH_PRESENT_ROW_CLASS} > th, .${MATCH_PRESENT_OLD_ROW_CLASS} + .${MATCH_PRESENT_OLD_ROW_CLASS} > td, .${MATCH_PRESENT_OLD_ROW_CLASS} + .${MATCH_PRESENT_OLD_ROW_CLASS} > th { border-top-width:0 !important; }
       .${MATCH_PRESENT_ROW_CLASS} > td, .${MATCH_PRESENT_ROW_CLASS} > th { background:#fbe6e6 !important; }
       .${MATCH_PRESENT_ROW_CLASS}:hover > td, .${MATCH_PRESENT_ROW_CLASS}:hover > th { background:#f5cccc !important; }
-      .${MATCH_PRESENT_OLD_ROW_CLASS} { outline:3px solid #c23f3f !important; outline-offset:-3px; }
     `;
       document.head.appendChild(style);
     }
@@ -1151,7 +1154,7 @@
         const statuses = cachedStatus(`${candidateId}|${employerId}`);
         if (statuses !== void 0) {
           setSentMatchTag(row, sentAt, chip);
-          setTag(row, statuses?.get(jobId) || { value: "not-found", label: "nicht gefunden" }, chip);
+          setTag(row, statuses?.get(jobId) || null, chip);
           return;
         }
         if (sentEmployers === void 0) setSentMatchTag(row, "", chip);
