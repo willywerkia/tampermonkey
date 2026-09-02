@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.4.62
+// @version      1.4.63
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2770,6 +2770,7 @@
   }
 
   // ../../shared/js/offline-match-bulk/index.js
+  var CANDIDATE_POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
   var CREATE_OFFLINE_MATCH_ROUTE = /^#\/CreateOfflineMatch(?:[/?]|$)/i;
   var MATCH_LINK_SELECTOR = 'a[aria-label="Offline Match erstellen"], a[href*="CreateOfflineMatch"]';
   var BULK_CHECKBOX_CLASS = "werkia-bulk-ofm-checkbox";
@@ -2782,6 +2783,9 @@
   var MATCH_PRESENT_ROW_CLASS2 = "werkia-cem-match-present-row";
   function isCreateOfflineMatchRoute(hash = window.location.hash) {
     return CREATE_OFFLINE_MATCH_ROUTE.test(hash || "");
+  }
+  function candidateIdFromHash(hash = window.location.hash) {
+    return CANDIDATE_POTENTIAL_MATCHES_ROUTE.exec(hash || "")?.[1] || null;
   }
   function sourceParams(href) {
     const url = new URL(href, globalThis.location?.href || "https://admin.werkia.de/");
@@ -3028,8 +3032,14 @@
     runtime.registerSource(sourcePath);
     const selectedMatches = /* @__PURE__ */ new Map();
     let scheduled = false;
+    let currentCandidateId = candidateIdFromHash();
     const refresh = () => {
       scheduled = false;
+      const candidateId = candidateIdFromHash();
+      if (candidateId !== currentCandidateId) {
+        currentCandidateId = candidateId;
+        selectedMatches.clear();
+      }
       if (document.querySelector(MATCH_LINK_SELECTOR)) {
         ensureStyles();
         addCandidateCheckboxes(selectedMatches);
