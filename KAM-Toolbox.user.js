@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.58
+// @version      1.1.59
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3782,6 +3782,11 @@
 }`;
   var SUBJECT_RE = /^Bewerbung:\s*([^:]+):\s*(.+)\s-\s(.+?)\s*\(Werkia\)\s*$/i;
   var REPLY_PREFIX_RE = /^(re|aw|wg|fw|fwd|antw|weiterleitung)\s*:\s*/i;
+  var TAG_PREFIX_RE = /^\[[^\]]*\]\s*/;
+  var LOOSE_SUBJECT_RE = /bewerbung/i;
+  function looksLikeApplicationSubject(rawSubject) {
+    return LOOSE_SUBJECT_RE.test(stripSubjectPrefixes(rawSubject));
+  }
   var AUTH_MISSING_MESSAGE = "GraphQL-Authentifizierung noch nicht aus dem Adminpanel erfasst.";
   var AUTH_HTTP_ERROR_RE = /^GraphQL HTTP 40[13]\b/;
   var AUTH_KEYWORD_RE = /unauthori[sz]ed|unauthenticated|forbidden/i;
@@ -3789,13 +3794,17 @@
     const message = String(error?.message || "");
     return message === AUTH_MISSING_MESSAGE || AUTH_HTTP_ERROR_RE.test(message) || AUTH_KEYWORD_RE.test(message);
   }
-  function stripReplyPrefixes(subject) {
+  function stripSubjectPrefixes(subject) {
     let value = String(subject || "").trim();
-    while (REPLY_PREFIX_RE.test(value)) value = value.replace(REPLY_PREFIX_RE, "").trim();
+    let previous = null;
+    while (value !== previous) {
+      previous = value;
+      value = value.replace(REPLY_PREFIX_RE, "").replace(TAG_PREFIX_RE, "").trim();
+    }
     return value;
   }
   function parseSubject(rawSubject) {
-    const stripped = stripReplyPrefixes(rawSubject);
+    const stripped = stripSubjectPrefixes(rawSubject);
     const match = SUBJECT_RE.exec(stripped);
     if (!match) return null;
     return {
@@ -4315,7 +4324,7 @@
       runtime.setTimeout(() => {
         scheduled = false;
         const subject = readSubjectFromReadingPane();
-        if (parseSubject(subject)) ensureButton();
+        if (looksLikeApplicationSubject(subject)) ensureButton();
         else removeButton();
       }, 400);
     }
