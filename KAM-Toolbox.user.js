@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.1.59
+// @version      1.1.60
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -3780,6 +3780,14 @@
     candidate { id firstName lastName }
   }
 }`;
+  var CANDIDATE_LOCATIONS_QUERY2 = `query OutenCandidateLocations($filter: CandidateLocationFilter!, $sortField: String, $sortOrder: String) {
+  items: allCandidateLocations(filter: $filter, sortField: $sortField, sortOrder: $sortOrder) {
+    id
+    postalCode
+    city
+    candidateId
+  }
+}`;
   var SUBJECT_RE = /^Bewerbung:\s*([^:]+):\s*(.+)\s-\s(.+?)\s*\(Werkia\)\s*$/i;
   var REPLY_PREFIX_RE = /^(re|aw|wg|fw|fwd|antw|weiterleitung)\s*:\s*/i;
   var TAG_PREFIX_RE = /^\[[^\]]*\]\s*/;
@@ -3812,6 +3820,44 @@
       vacancyTitle: match[2].trim(),
       employerName: match[3].trim()
     };
+  }
+  var PROFILE_FIELD_RES = {
+    name: /^[\s>*•\-]*Name\s*:\s*(.+?)\s*$/im,
+    phone: /^[\s>*•\-]*Telefon\s*:\s*(.+?)\s*$/im,
+    email: /^[\s>*•\-]*E-?mail\s*:\s*(.+?)\s*$/im,
+    location: /^[\s>*•\-]*PLZ\s*\/?\s*Kreis\s*:\s*(.+?)\s*$/im
+  };
+  function parseProfileFromMailBody(bodyText) {
+    const text = String(bodyText || "");
+    const read = (key) => PROFILE_FIELD_RES[key].exec(text)?.[1]?.trim() || "";
+    const locationLine = read("location");
+    const postalCode = /\b(\d{5})\b/.exec(locationLine)?.[1] || "";
+    const city = locationLine.replace(/\b\d{5}\b/, "").split(",")[0].trim();
+    return {
+      candidateName: read("name"),
+      phone: read("phone"),
+      email: read("email"),
+      postalCode,
+      city,
+      locationLine
+    };
+  }
+  function filterMatchesByName(matches, wantedName) {
+    const wanted = normalise(wantedName);
+    if (!wanted) return [];
+    const wantedTokens = wanted.split(/\s+/).filter(Boolean);
+    const scored = (matches || []).map((match) => {
+      const name = normalise(candidateFullName(match));
+      if (!name) return { match, score: 99 };
+      if (name === wanted) return { match, score: 0 };
+      const tokens = name.split(/\s+/).filter(Boolean);
+      if (wantedTokens.every((token) => tokens.includes(token))) return { match, score: 1 };
+      if (wantedTokens.every((token) => tokens.some((candidateToken) => candidateToken.startsWith(token)))) return { match, score: 2 };
+      return { match, score: 99 };
+    });
+    const best = scored.reduce((lowest, entry) => Math.min(lowest, entry.score), 99);
+    if (best === 99) return [];
+    return scored.filter((entry) => entry.score === best).map((entry) => entry.match);
   }
   function normalise(value) {
     return String(value || "").trim().toLocaleLowerCase("de-DE");
@@ -3847,6 +3893,9 @@
       const score = name === wanted ? 0 : name.startsWith(wanted) ? 1 : name.includes(wanted) ? 2 : 99;
       return { employer, score };
     }).filter(({ score }) => score < 99).sort((left, right) => left.score - right.score || String(left.employer.name).localeCompare(String(right.employer.name), "de")).map(({ employer }) => employer);
+  }
+  function readMailBodyText() {
+    return document.body?.innerText || "";
   }
   function readSubjectFromReadingPane() {
     const heading = document.querySelector('div[role="heading"][id$="_SUBJECT"][title]') || document.querySelector('[role="heading"][id$="_SUBJECT"]');
@@ -3907,6 +3956,24 @@
       if (!prefix) return [];
       const data = await graphqlRequestWithRetry(EMPLOYERS_BY_NAME_QUERY, { filter: { name: prefix } });
       return rankEmployers(data.items || [], term);
+    }
+    const POSTAL_LOOKUP_LIMIT = 12;
+    async function postalCodesForCandidates(candidateIds) {
+      const entries = /* @__PURE__ */ new Map();
+      for (const candidateId of candidateIds.slice(0, POSTAL_LOOKUP_LIMIT)) {
+        if (!candidateId || entries.has(candidateId)) continue;
+        try {
+          const data = await graphqlRequestWithRetry(CANDIDATE_LOCATIONS_QUERY2, {
+            filter: { candidateId },
+            sortField: "id",
+            sortOrder: "DESC"
+          });
+          const location2 = (data.items || [])[0];
+          if (location2) entries.set(candidateId, { postalCode: location2.postalCode || "", city: location2.city || "" });
+        } catch {
+        }
+      }
+      return entries;
     }
     async function matchesForEmployer(employerId) {
       const data = await graphqlRequestWithRetry(MATCHES_BY_EMPLOYER_QUERY, { filter: { employerIds: [employerId] } });
@@ -4149,16 +4216,24 @@
       renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
       const matches = await matchesForEmployer(state.employer.id);
       state.matches = matches;
-      const wantedName = normalise(state.parsed.candidateName);
-      const exactMatches = matches.filter((match) => normalise(candidateFullName(match)) === wantedName);
-      if (exactMatches.length === 1) {
-        state.matchId = exactMatches[0].id;
-        renderReasonStep(dialog, state, exactMatches[0]);
+      const wantedName = state.profile?.candidateName || state.parsed.candidateName;
+      state.wantedName = wantedName;
+      const byName = filterMatchesByName(matches, wantedName);
+      if (byName.length === 1) {
+        state.matchId = byName[0].id;
+        renderReasonStep(dialog, state, byName[0]);
         return;
       }
-      renderMatchPicker(dialog, state, matches, wantedName);
+      const shortlist = byName.length ? byName : matches;
+      renderLoading(dialog, `Lade Adressen zu ${shortlist.length} Kandidaten …`);
+      const postalCodes = await postalCodesForCandidates(shortlist.map((match) => match.candidateId));
+      renderMatchPicker(dialog, state, shortlist, {
+        nameNarrowed: byName.length > 0,
+        totalMatches: matches.length,
+        postalCodes
+      });
     }
-    function renderMatchPicker(dialog, state, matches, wantedName) {
+    function renderMatchPicker(dialog, state, matches, { nameNarrowed, totalMatches, postalCodes }) {
       if (!matches.length) {
         renderError(dialog, [
           `Bei „${state.employer.name}“ wurden keine Matches gefunden. `,
@@ -4167,11 +4242,20 @@
         ]);
         return;
       }
-      const sorted = [...matches].sort((left, right) => (normalise(candidateFullName(left)) === wantedName ? -1 : 0) - (normalise(candidateFullName(right)) === wantedName ? -1 : 0));
+      const wantedPostalCode = state.profile?.postalCode || "";
+      const postalOf = (match) => postalCodes?.get(match.candidateId)?.postalCode || "";
+      const sorted = [...matches].sort((left, right) => {
+        const leftHit = wantedPostalCode && postalOf(left) === wantedPostalCode ? 0 : 1;
+        const rightHit = wantedPostalCode && postalOf(right) === wantedPostalCode ? 0 : 1;
+        return leftHit - rightHit;
+      });
       const list = buildList();
       const radios = sorted.map((match, index) => {
         const jobLabel = [match.jobPosition?.mainTitle, match.jobPosition?.subTitle].filter(Boolean).join(" ");
-        const labelText = `${candidateFullName(match) || "(unbenannt)"} — ${jobLabel} · KAM: ${match.kamStatus || "(leer)"}`;
+        const location2 = postalCodes?.get(match.candidateId);
+        const locationLabel = location2?.postalCode ? ` · ${location2.postalCode}${location2.city ? ` ${location2.city}` : ""}` : "";
+        const postalHit = wantedPostalCode && location2?.postalCode === wantedPostalCode ? " ✓ PLZ" : "";
+        const labelText = `${candidateFullName(match) || "(unbenannt)"}${locationLabel}${postalHit} — ${jobLabel} · KAM: ${match.kamStatus || "(leer)"}`;
         const { option, radio } = buildOptionRow({
           name: "match",
           index,
@@ -4182,6 +4266,9 @@
         list.appendChild(option);
         return radio;
       });
+      const noteParts = [`Gesuchter Kandidat: „${state.wantedName || state.parsed.candidateName}“`];
+      if (wantedPostalCode) noteParts.push(`, PLZ ${wantedPostalCode}${state.profile?.city ? ` ${state.profile.city}` : ""} (aus der Mail)`);
+      noteParts.push(nameNarrowed ? `. ${matches.length} von ${totalMatches} Matches bei „${state.employer.name}“ passen zum Namen – bitte den richtigen auswählen.` : `. Kein Match bei „${state.employer.name}“ passt zu diesem Namen – hier alle ${matches.length} Matches des Arbeitgebers.`);
       const closeBtn = buildButton("Abbrechen", { action: "close" });
       const continueBtn = buildButton("Weiter", { action: "continue", primary: true });
       closeBtn.addEventListener("click", () => dialog.close());
@@ -4194,7 +4281,7 @@
       dialog.replaceChildren(
         buildHead("Match Outen – Match bestätigen"),
         buildBody([
-          buildNote(`Gesuchter Kandidat: „${state.parsed.candidateName}“. Kein eindeutiger Treffer bei „${state.employer.name}“ – bitte den richtigen Match auswählen.`),
+          buildNote(noteParts.join("")),
           list,
           buildActions([closeBtn, continueBtn])
         ])
@@ -4293,7 +4380,7 @@
       dialog.id = IDS2.dialog;
       styleDialogFrame(dialog);
       document.body.appendChild(dialog);
-      const state = { parsed, employer: null, matchId: null, matches: [] };
+      const state = { parsed, profile: parseProfileFromMailBody(readMailBodyText()), employer: null, matchId: null, matches: [] };
       if (!parsed) {
         renderError(dialog, `Der Betreff „${rawSubject || "(leer)"}“ passt nicht auf das erwartete Muster „Bewerbung: Kandidat: Vakanztitel - Firma (Werkia)“. Bitte die passende Mail öffnen oder den Match im Adminpanel manuell suchen.`);
         dialog.showModal();
