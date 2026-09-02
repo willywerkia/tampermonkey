@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.63
+// @version      1.2.64
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1403,10 +1403,148 @@
     scheduleContactBadges();
   }
 
+  // ../../shared/js/werkia-graphql/job-position-city-provider.js
+  var JOB_POSITION_CITY_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    location {
+      city
+      __typename
+    }
+    __typename
+  }
+}`;
+  async function fetchJobPositionCities(request, jobPositionIds) {
+    const index = /* @__PURE__ */ new Map();
+    if (!jobPositionIds.length) return index;
+    const result = await request(JOB_POSITION_CITY_QUERY, { filter: { ids: jobPositionIds } });
+    for (const item of result?.items || []) {
+      if (item?.id) index.set(item.id, String(item.location?.city || "").trim());
+    }
+    return index;
+  }
+
+  // src/features/kam-suite/vacancy-city-badges.js
+  var ROW_SELECTOR3 = "tbody tr.RaDataTable-row";
+  var JOB_TITLE_LINK_SELECTOR = '.column-jobPositionId a[href*="#/JobPosition/"]';
+  var STYLE_ID2 = "werkia-kam-vacancy-city-style";
+  var REFRESH_INTERVAL_MS2 = 5 * 60 * 1e3;
+  function isTargetPage3(hash = location.hash) {
+    return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
+  }
+  function getJobPositionId(href) {
+    return String(href || "").match(/#\/JobPosition\/([^/]+)\//i)?.[1] || "";
+  }
+  function executeVacancyCityBadges(runtime) {
+    runtime.registerSource("kam/toolbox/src/features/kam-suite/vacancy-city-badges.js");
+    const cityStates = /* @__PURE__ */ new Map();
+    const cityIndex = /* @__PURE__ */ new Map();
+    let loadPromise = null;
+    function getRows() {
+      return [...document.querySelectorAll(ROW_SELECTOR3)].filter((row) => row.querySelector(JOB_TITLE_LINK_SELECTOR));
+    }
+    function jobPositionFromRow(row) {
+      const link = row.querySelector(JOB_TITLE_LINK_SELECTOR);
+      if (!link) return null;
+      const id = getJobPositionId(link.href) || link.href;
+      return { id, link };
+    }
+    function getJobPositionIds() {
+      const ids = /* @__PURE__ */ new Set();
+      getRows().forEach((row) => {
+        const jobPosition = jobPositionFromRow(row);
+        if (jobPosition) ids.add(jobPosition.id);
+      });
+      return [...ids];
+    }
+    function ensureStyle() {
+      if (document.getElementById(STYLE_ID2)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID2;
+      style.textContent = `
+      .werkia-kam-vacancy-city { display: inline-flex; align-items: center; margin-left: 6px; padding: 2px 8px; border: 1px solid #9ca3af; border-radius: 999px; font: 700 11px/1.2 Arial,sans-serif; white-space: nowrap; vertical-align: middle; color: #374151; background: #f3f4f6; }
+      .werkia-kam-vacancy-city[data-tone="loading"] { color: #6b7280; border-color: #cbd5e1; background: #f8fafc; }
+      .werkia-kam-vacancy-city[data-tone="error"] { color: #8a3d00; border-color: #e07a1f; background: #ffedd5; }
+    `;
+      document.head.appendChild(style);
+    }
+    function renderCityBadges() {
+      getRows().forEach((row) => {
+        const jobPosition = jobPositionFromRow(row);
+        if (!jobPosition) return;
+        let badge = row.querySelector(`.werkia-kam-vacancy-city[data-job-position-id="${jobPosition.id}"]`);
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "werkia-kam-vacancy-city";
+          badge.dataset.jobPositionId = jobPosition.id;
+          jobPosition.link.insertAdjacentElement("afterend", badge);
+        }
+        const state = cityStates.get(jobPosition.id);
+        let text;
+        let tone = "";
+        if (cityIndex.has(jobPosition.id)) {
+          const city = cityIndex.get(jobPosition.id);
+          text = city || "Ort unbekannt";
+          tone = city ? "" : "error";
+        } else if (state?.status === "error") {
+          text = "Ort unbekannt";
+          tone = "error";
+        } else {
+          text = "…";
+          tone = "loading";
+        }
+        if (badge.textContent !== text) badge.textContent = text;
+        if (badge.dataset.tone !== tone) badge.dataset.tone = tone;
+      });
+    }
+    async function loadJobPositionCities({ force = false } = {}) {
+      if (loadPromise) return loadPromise;
+      const jobPositionIds = getJobPositionIds().filter((id) => force || !cityIndex.has(id) && !cityStates.has(id));
+      if (!jobPositionIds.length) return;
+      for (const id of jobPositionIds) cityStates.set(id, { status: "loading" });
+      renderCityBadges();
+      loadPromise = (async () => {
+        try {
+          const fetched = await fetchJobPositionCities(getKamGraphqlAdapter().request, jobPositionIds);
+          for (const id of jobPositionIds) {
+            cityStates.delete(id);
+            if (fetched.has(id)) cityIndex.set(id, fetched.get(id));
+            else cityStates.set(id, { status: "error" });
+          }
+        } catch (error) {
+          for (const id of jobPositionIds) cityStates.set(id, { status: "error" });
+          console.warn("[Werkia KAM Vakanz-Stadt]", error);
+        } finally {
+          renderCityBadges();
+          loadPromise = null;
+        }
+      })();
+      return loadPromise;
+    }
+    let scheduled = false;
+    const scheduleCityBadges = () => {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        if (!isTargetPage3()) return;
+        ensureStyle();
+        renderCityBadges();
+        loadJobPositionCities().catch((error) => console.warn("[Werkia KAM Vakanz-Stadt]", error));
+      }, 150);
+    };
+    runtime.createMutationObserver(scheduleCityBadges).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleCityBadges);
+    runtime.setInterval(() => {
+      if (isTargetPage3()) loadJobPositionCities({ force: true }).catch((error) => console.warn("[Werkia KAM Vakanz-Stadt]", error));
+    }, REFRESH_INTERVAL_MS2);
+    scheduleCityBadges();
+  }
+
   // src/features/kam-suite/questionnaire-context.js
   var QUESTIONNAIRE_CONTEXT_KEY = "__werkiaKamQuestionnaireContext";
   var EMPTY_CONTEXT = Object.freeze({ key: "", candidateId: "", jobId: "", candidateUrl: "", jobPositionUrl: "" });
-  function isTargetPage3(hash = location.hash) {
+  function isTargetPage4(hash = location.hash) {
     return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
   function questionnaireResourceIdFromRow(row, resource) {
@@ -1440,7 +1578,7 @@
     runtime.registerSource("kam/toolbox/src/features/kam-suite/questionnaire-context.js");
     const context = getQuestionnaireContext();
     function captureContext(event) {
-      if (!isTargetPage3()) return;
+      if (!isTargetPage4()) return;
       const button = event.target.closest('button[aria-label="OM Fragebogen"]');
       if (!button) return;
       const row = button.closest("tr");
@@ -1683,7 +1821,7 @@
       document.body.appendChild(panel);
     }
     async function handleQuestionnaireButtonClick(event) {
-      if (!isTargetPage3()) return;
+      if (!isTargetPage4()) return;
       const button = event.target.closest('button[aria-label="OM Fragebogen"]');
       if (!button) return;
       const row = button.closest("tr");
@@ -1710,7 +1848,7 @@
     }, true);
     let questionnaireWasOpen = false;
     function cleanupIfDialogClosed() {
-      if (!isTargetPage3()) {
+      if (!isTargetPage4()) {
         removeVacancyPanel();
         questionnaireWasOpen = false;
         return;
@@ -2221,7 +2359,7 @@
       lastSignature = null;
     }
     function runQuestionnaireFeatures() {
-      if (!isTargetPage3()) {
+      if (!isTargetPage4()) {
         resetQuestionnaireFeatures();
         return;
       }
@@ -2507,7 +2645,7 @@
     }
     function updateRouteBox() {
       const dialog = questionnaireDialog();
-      if (!isTargetPage3() || !dialog) {
+      if (!isTargetPage4() || !dialog) {
         document.getElementById(ROUTE_BOX_ID)?.remove();
         return;
       }
@@ -2545,7 +2683,7 @@
       }, 200);
     }
     function waitForQuestionnaireDialog(routeKey, attempt = 0) {
-      if (context.key !== routeKey || !isTargetPage3()) return;
+      if (context.key !== routeKey || !isTargetPage4()) return;
       const dialog = questionnaireDialog();
       if (dialog) {
         scheduleUpdate();
@@ -2555,7 +2693,7 @@
       runtime.setTimeout(() => waitForQuestionnaireDialog(routeKey, attempt + 1), 125);
     }
     function captureQuestionnaireClick(event) {
-      if (!isTargetPage3()) return;
+      if (!isTargetPage4()) return;
       const button = event.target?.closest?.('button[aria-label="OM Fragebogen"]');
       if (!button) return;
       if (!context.key) return;
@@ -2575,12 +2713,12 @@
   }
 
   // src/features/kam-suite/candidate-file-popup.js
-  var ROW_SELECTOR3 = "tbody tr.RaDataTable-row";
+  var ROW_SELECTOR4 = "tbody tr.RaDataTable-row";
   var WVL_CELL_SELECTOR3 = "td.column-kamFollowUpDate";
   var CANDIDATE_CELL_SELECTOR = "td.column-candidateId";
   var CANDIDATE_ACTIONS_CELL_SELECTOR = "td.column-candidateActions";
   var BULK_DIALOG_ID = "werkia-kam-wvl-bulk-dialog";
-  function isTargetPage4(hash = location.hash) {
+  function isTargetPage5(hash = location.hash) {
     return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
   function executeCandidateFilePopup(runtime) {
@@ -2588,7 +2726,7 @@
     let pendingCandidateId = "";
     let pendingCandidateAt = 0;
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR3)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
+      return [...document.querySelectorAll(ROW_SELECTOR4)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
     }
     function visibleOverlay(element) {
       if (!element) return false;
@@ -2664,7 +2802,7 @@
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        if (!isTargetPage4()) return;
+        if (!isTargetPage5()) return;
         injectStyle();
         installCandidateFileHooks();
         installCandidatePopupButton();
@@ -3086,7 +3224,7 @@
 
   // src/features/kam-suite/chat-icon-redirect.js
   var CHAT_LINK_SELECTOR = 'a[aria-label="Chat"][href*="#/Chat/?filter"]';
-  var ROW_SELECTOR4 = "tr.RaDataTable-row";
+  var ROW_SELECTOR5 = "tr.RaDataTable-row";
   var MATCH_LINK_SELECTOR = 'a[href*="#/Match/"]';
   var EMPLOYER_LINK_SELECTOR3 = 'a[href*="#/Employer/"]';
   function getMatchIdFromChatRow(row) {
@@ -3117,7 +3255,7 @@
       if (!isTargetPage()) return;
       const link = event.target.closest(CHAT_LINK_SELECTOR);
       if (!link) return;
-      const row = link.closest(ROW_SELECTOR4);
+      const row = link.closest(ROW_SELECTOR5);
       const matchId = getMatchIdFromChatRow(row);
       if (!matchId) return;
       event.preventDefault();
@@ -3482,10 +3620,10 @@
   }
 
   // ../../shared/js/slack-exports/index.js
-  var ROW_SELECTOR5 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var ROW_SELECTOR6 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
   var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
   var EXPORTS_SELECTOR = ".werkia-slack-exports";
-  var STYLE_ID2 = "werkia-slack-exports-style";
+  var STYLE_ID3 = "werkia-slack-exports-style";
   var SENT_STORE_KEY = "werkia_vt_slack_exports_sent_v1";
   var APPOINTMENT_DATE_RE = /\b\d{1,2}\.\s*(?:jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|apr(?:il)?|mai|jun(?:i)?|jul(?:i)?|aug(?:ust)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\.?\s+\d{4}\s+\d{1,2}:\d{2}\b/i;
   var APPOINTMENT_DATE_ALL_RE = new RegExp(APPOINTMENT_DATE_RE.source, "gi");
@@ -3529,7 +3667,7 @@
   }
   employees: allEmployees(filter: {}) { id firstName lastName slackId __typename }
 }`;
-  function isTargetPage5(hash = location.hash, role) {
+  function isTargetPage6(hash = location.hash, role) {
     return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
   }
   function matchIdFromHref(href) {
@@ -3607,9 +3745,9 @@
       }
     }
     function ensureStyle() {
-      if (document.getElementById(STYLE_ID2)) return;
+      if (document.getElementById(STYLE_ID3)) return;
       const style = document.createElement("style");
-      style.id = STYLE_ID2;
+      style.id = STYLE_ID3;
       style.textContent = `
       .werkia-slack-exports { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
       .werkia-slack-export { min-height:24px; padding:3px 8px; border:0; border-radius:5px; background:#4956df; color:#fff; cursor:pointer; font:700 11px/1 Arial,sans-serif; white-space:nowrap; }
@@ -3730,12 +3868,12 @@
       document.querySelectorAll(EXPORTS_SELECTOR).forEach((element) => element.remove());
     }
     function syncExports() {
-      if (!isTargetPage5(location.hash, role)) {
+      if (!isTargetPage6(location.hash, role)) {
         removeExports();
         return;
       }
       ensureStyle();
-      document.querySelectorAll(ROW_SELECTOR5).forEach(addExports);
+      document.querySelectorAll(ROW_SELECTOR6).forEach(addExports);
     }
     function scheduleSync() {
       if (syncTimer !== null) return;
@@ -3749,7 +3887,7 @@
     runtime.addCleanup?.(() => {
       if (syncTimer !== null) runtime.clearTimeout(syncTimer);
       removeExports();
-      document.getElementById(STYLE_ID2)?.remove();
+      document.getElementById(STYLE_ID3)?.remove();
     });
     scheduleSync();
   }
@@ -4614,7 +4752,7 @@
         if (typeof GM_setValue === "function") GM_setValue(STORAGE_KEY, value);
       }
     });
-    const isTargetPage6 = () => isTargetRoute(location.hash, routes);
+    const isTargetPage7 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
     function ensureStyle() {
@@ -4793,7 +4931,7 @@
       select.value = active;
     }
     function render() {
-      if (!isTargetPage6()) {
+      if (!isTargetPage7()) {
         document.getElementById(IDS3.bar)?.remove();
         closeDialog();
         return;
@@ -4861,7 +4999,7 @@
     { label: "Freitext", prefix: "" }
   ];
   var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
-  var STYLE_ID3 = "werkia-om-notes-template-style";
+  var STYLE_ID4 = "werkia-om-notes-template-style";
   var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
   var CEM_TARGET_SELECTOR = 'textarea[name="cemNotes"], input[name="cemNotes"]';
   var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
@@ -4913,9 +5051,9 @@ ${next}`;
     if (runtime?.addCleanup) runtime.addCleanup(callback);
   }
   function ensureStyles() {
-    if (document.getElementById(STYLE_ID3)) return;
+    if (document.getElementById(STYLE_ID4)) return;
     const style = document.createElement("style");
-    style.id = STYLE_ID3;
+    style.id = STYLE_ID4;
     style.textContent = `
     [${LAYOUT_ROOT_ATTR}="left"] { --om-flags-panel-width:min(620px, max(500px, 35%)); --om-flags-gap:16px; position:relative !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; max-width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; margin-left:calc(var(--om-flags-panel-width) + var(--om-flags-gap)) !important; flex:0 0 calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; }
@@ -5131,7 +5269,7 @@ ${next}`;
       }
       observer.disconnect();
       removeToolbar();
-      document.getElementById(STYLE_ID3)?.remove();
+      document.getElementById(STYLE_ID4)?.remove();
     });
     renderToolbar();
   }
@@ -5151,7 +5289,7 @@ ${next}`;
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID4 = "werkia-urgent-vacancy-style";
+      const STYLE_ID5 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const MATCH_PRESENT_ROW_CLASS = "werkia-cem-match-present-row";
@@ -5290,9 +5428,9 @@ ${next}`;
         return rowsByJobId;
       }
       function ensureStyles2() {
-        if (document.getElementById(STYLE_ID4)) return;
+        if (document.getElementById(STYLE_ID5)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID4;
+        style.id = STYLE_ID5;
         style.textContent = `
       .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
@@ -5380,6 +5518,7 @@ ${next}`;
   bootstrapKAMToolbox([
     { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions },
     { id: "kam-suite-contact-badges", execute: executeContactBadges },
+    { id: "kam-suite-vacancy-city-badges", execute: executeVacancyCityBadges },
     // questionnaire-context must run before route-calculation: both listen
     // for the same "OM Fragebogen" click in the capturing phase, and
     // route-calculation reads the context that questionnaire-context just
