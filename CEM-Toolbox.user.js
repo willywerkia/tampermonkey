@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.3.61
+// @version      1.4.62
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -3097,6 +3097,416 @@
     executeBulkOfflineMatches(runtime, "cem/toolbox/src/features/offline-match-bulk.js");
   }
 
+  // ../../shared/js/list-filter-presets/core.js
+  var STORAGE_KEY = "werkia_list_filter_presets_v1";
+  var STORE_VERSION = 1;
+  function parseJsonObject(value, fallback) {
+    if (!value) return fallback;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function safeCall(callback) {
+    if (typeof callback !== "function") return "";
+    try {
+      return callback();
+    } catch {
+      return "";
+    }
+  }
+  function routeFromHash(hash = "") {
+    return String(hash).replace(/^#\/?/, "").split("?")[0].replace(/\/+$/, "");
+  }
+  function parseListState(hash = "") {
+    const params = new URLSearchParams(String(hash).split("?").slice(1).join("?"));
+    const perPage = Number.parseInt(params.get("perPage") || "", 10);
+    return {
+      route: routeFromHash(hash),
+      filter: parseJsonObject(params.get("filter"), {}),
+      sort: params.get("sort") || "",
+      order: params.get("order") || "",
+      perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : 0
+    };
+  }
+  function buildListHash({ route, filter = {}, sort = "", order = "", perPage = 0 }) {
+    const params = new URLSearchParams({
+      displayedFilters: JSON.stringify({}),
+      filter: JSON.stringify(filter || {})
+    });
+    if (order) params.set("order", order);
+    params.set("page", "1");
+    if (perPage) params.set("perPage", String(perPage));
+    if (sort) params.set("sort", sort);
+    return `#/${route}?${params}`;
+  }
+  function isTargetRoute(hash, routes = []) {
+    const route = routeFromHash(hash).toLowerCase();
+    return routes.some((candidate) => String(candidate).toLowerCase() === route);
+  }
+  function isEmptyFilterValue(value) {
+    if (value === null || value === void 0 || value === "") return true;
+    return Array.isArray(value) && value.length === 0;
+  }
+  function filterKey(filter) {
+    const source = filter && typeof filter === "object" ? filter : {};
+    return JSON.stringify(
+      Object.keys(source).filter((key) => !isEmptyFilterValue(source[key])).sort().map((key) => [key, source[key]])
+    );
+  }
+  function filterFields(filter) {
+    const source = filter && typeof filter === "object" ? filter : {};
+    return Object.keys(source).filter((key) => !isEmptyFilterValue(source[key])).sort();
+  }
+  function describePreset(preset) {
+    const fields = filterFields(preset?.filter);
+    return fields.length ? fields.join(", ") : "ohne Filter (zeigt alles)";
+  }
+  function createPresetId(now = Date.now(), entropy = Math.random()) {
+    return `p${now.toString(36)}${entropy.toString(36).slice(2, 7)}`;
+  }
+  function presetFromState(name, state) {
+    return {
+      id: createPresetId(),
+      name: String(name || "").trim(),
+      filter: state?.filter && typeof state.filter === "object" ? state.filter : {},
+      sort: state?.sort || "",
+      order: state?.order || "",
+      perPage: state?.perPage || 0
+    };
+  }
+  function applyPresetToState(preset, currentState) {
+    return {
+      route: currentState?.route || "",
+      filter: preset?.filter || {},
+      sort: preset?.sort || currentState?.sort || "",
+      order: preset?.order || currentState?.order || "",
+      perPage: preset?.perPage || currentState?.perPage || 0
+    };
+  }
+  function findActivePresetId(presets, state) {
+    const key = filterKey(state?.filter);
+    return (presets || []).find((preset) => filterKey(preset.filter) === key)?.id || "";
+  }
+  function emptyStore() {
+    return { version: STORE_VERSION, routes: {} };
+  }
+  function parseStore(raw) {
+    const parsed = typeof raw === "string" ? parseJsonObject(raw, null) : raw;
+    if (!parsed || typeof parsed !== "object") return emptyStore();
+    const routes = parsed.routes && typeof parsed.routes === "object" ? parsed.routes : {};
+    const clean2 = {};
+    Object.keys(routes).forEach((route) => {
+      clean2[route] = (Array.isArray(routes[route]) ? routes[route] : []).filter((preset) => preset && typeof preset === "object" && preset.name).map((preset) => ({
+        id: String(preset.id || createPresetId()),
+        name: String(preset.name),
+        filter: preset.filter && typeof preset.filter === "object" ? preset.filter : {},
+        sort: preset.sort || "",
+        order: preset.order || "",
+        perPage: Number.parseInt(preset.perPage, 10) || 0
+      }));
+    });
+    return { version: STORE_VERSION, routes: clean2 };
+  }
+  function presetsForRoute(store, route) {
+    return store?.routes?.[route] ? [...store.routes[route]] : [];
+  }
+  function upsertPreset(store, route, preset) {
+    const kept = presetsForRoute(store, route).filter((entry) => entry.id !== preset.id);
+    const sameName = kept.findIndex((entry) => entry.name.toLowerCase() === preset.name.toLowerCase());
+    if (sameName >= 0) kept.splice(sameName, 1, preset);
+    else kept.push(preset);
+    return { version: STORE_VERSION, routes: { ...store?.routes, [route]: kept } };
+  }
+  function removePreset(store, route, id) {
+    const kept = presetsForRoute(store, route).filter((entry) => entry.id !== id);
+    return { version: STORE_VERSION, routes: { ...store?.routes, [route]: kept } };
+  }
+  function mergeStores(base, incoming) {
+    let result = { version: STORE_VERSION, routes: { ...base?.routes } };
+    const routes = incoming?.routes || {};
+    Object.keys(routes).forEach((route) => {
+      routes[route].forEach((preset) => {
+        const existing = presetsForRoute(result, route).find((entry) => entry.name.toLowerCase() === preset.name.toLowerCase());
+        result = upsertPreset(result, route, { ...preset, id: existing?.id || preset.id });
+      });
+    });
+    return result;
+  }
+  function createPresetStorage({ read, write, backupRead, backupWrite }) {
+    return {
+      load() {
+        const primary = parseStore(safeCall(read));
+        if (Object.keys(primary.routes).length) return primary;
+        const backup = parseStore(safeCall(backupRead));
+        if (Object.keys(backup.routes).length) safeCall(() => write(JSON.stringify(backup)));
+        return backup;
+      },
+      save(store) {
+        const serialized = JSON.stringify(store);
+        safeCall(() => write(serialized));
+        safeCall(() => backupWrite(serialized));
+      }
+    };
+  }
+
+  // ../../shared/js/list-filter-presets/index.js
+  var IDS = {
+    bar: "werkia-filter-presets-bar",
+    select: "werkia-filter-presets-select",
+    style: "werkia-filter-presets-style",
+    dialog: "werkia-filter-presets-dialog"
+  };
+  var LIST_ANCHOR_SELECTORS = [
+    ".RaList-content",
+    ".RaList-main",
+    "table.RaDataTable-table",
+    "main table"
+  ];
+  function findListAnchor(root = document) {
+    for (const selector of LIST_ANCHOR_SELECTORS) {
+      const element = root.querySelector(selector);
+      if (element) return element;
+    }
+    return null;
+  }
+  function executeListFilterPresets(runtime, {
+    routes = [],
+    sourcePath,
+    label: label2 = "Filtervorlagen",
+    builtInPresets = [],
+    storage
+  } = {}) {
+    runtime.registerSource(sourcePath);
+    const presetStorage = storage || createPresetStorage({
+      read: () => localStorage.getItem(STORAGE_KEY),
+      write: (value) => localStorage.setItem(STORAGE_KEY, value),
+      backupRead: () => typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY, "") : "",
+      backupWrite: (value) => {
+        if (typeof GM_setValue === "function") GM_setValue(STORAGE_KEY, value);
+      }
+    });
+    const isTargetPage = () => isTargetRoute(location.hash, routes);
+    const currentRoute = () => routeFromHash(location.hash);
+    const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
+    function ensureStyle() {
+      if (document.getElementById(IDS.style)) return;
+      const style = document.createElement("style");
+      style.id = IDS.style;
+      style.textContent = `
+      #${IDS.bar} { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 10px; padding:8px 10px; border:1px solid #d7dae6; border-radius:8px; background:#f7f8fc; font:400 13px/1.3 Arial,sans-serif; }
+      #${IDS.bar} > strong { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#5a6178; }
+      #${IDS.select} { min-width:230px; height:30px; padding:4px 8px; border:1px solid #c8ccdd; border-radius:6px; background:#fff; color:#1f2933; font:400 13px/1.3 Arial,sans-serif; }
+      #${IDS.bar} button { min-height:30px; padding:5px 10px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+      #${IDS.bar} button:hover { background:#3643c7; }
+      #${IDS.bar} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
+      #${IDS.bar} button.werkia-filter-presets-secondary:hover { background:#d7dbf0; }
+      #${IDS.dialog} { position:fixed; inset:0; z-index:2147483000; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.45); }
+      #${IDS.dialog} .werkia-filter-presets-card { width:min(600px,92vw); max-height:82vh; overflow:auto; padding:18px; border-radius:10px; background:#fff; font:400 13px/1.4 Arial,sans-serif; }
+      #${IDS.dialog} h2 { margin:0 0 12px; font-size:15px; }
+      #${IDS.dialog} p { margin:0 0 10px; color:#6b7280; font-size:12px; }
+      #${IDS.dialog} ul { margin:0 0 14px; padding:0; list-style:none; }
+      #${IDS.dialog} li { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #eceef6; }
+      #${IDS.dialog} .werkia-filter-presets-name { flex:1; font-weight:700; }
+      #${IDS.dialog} .werkia-filter-presets-fields { flex:1; color:#6b7280; font-size:11px; }
+      #${IDS.dialog} textarea { width:100%; min-height:120px; margin-bottom:10px; padding:8px; border:1px solid #c8ccdd; border-radius:6px; font:400 12px/1.4 monospace; }
+      #${IDS.dialog} button { min-height:28px; padding:5px 10px; margin-right:6px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+      #${IDS.dialog} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
+      #${IDS.dialog} button.werkia-filter-presets-danger { background:#f8d7da; color:#a02334; }
+    `;
+      document.head.appendChild(style);
+    }
+    function applyPreset(preset) {
+      location.hash = buildListHash(applyPresetToState(preset, parseListState(location.hash)));
+    }
+    function saveCurrentFilter() {
+      const state = parseListState(location.hash);
+      if (!filterFields(state.filter).length && !window.confirm("Im aktuellen Filter ist nichts gesetzt. Trotzdem als Vorlage speichern?")) return;
+      const name = window.prompt("Name der Vorlage:", "");
+      if (!name || !name.trim()) return;
+      presetStorage.save(upsertPreset(presetStorage.load(), currentRoute(), presetFromState(name, state)));
+      render();
+    }
+    function closeDialog() {
+      document.getElementById(IDS.dialog)?.remove();
+    }
+    function renderManager() {
+      closeDialog();
+      const route = currentRoute();
+      const overlay = document.createElement("div");
+      overlay.id = IDS.dialog;
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) closeDialog();
+      });
+      const card = document.createElement("div");
+      card.className = "werkia-filter-presets-card";
+      const heading = document.createElement("h2");
+      heading.textContent = `Filtervorlagen verwalten – ${route}`;
+      card.appendChild(heading);
+      const list = document.createElement("ul");
+      const presets = ownPresets();
+      if (!presets.length) {
+        const empty2 = document.createElement("li");
+        empty2.textContent = 'Noch keine eigenen Vorlagen. Filter oben normal setzen und "Aktuellen Filter speichern" druecken.';
+        list.appendChild(empty2);
+      }
+      presets.forEach((preset) => {
+        const row = document.createElement("li");
+        const name = document.createElement("span");
+        name.className = "werkia-filter-presets-name";
+        name.textContent = preset.name;
+        const fields = document.createElement("span");
+        fields.className = "werkia-filter-presets-fields";
+        fields.textContent = describePreset(preset);
+        const rename = document.createElement("button");
+        rename.type = "button";
+        rename.className = "werkia-filter-presets-secondary";
+        rename.textContent = "Umbenennen";
+        rename.addEventListener("click", () => {
+          const next = window.prompt("Neuer Name:", preset.name);
+          if (!next || !next.trim()) return;
+          presetStorage.save(upsertPreset(presetStorage.load(), route, { ...preset, name: next.trim() }));
+          renderManager();
+          render();
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "werkia-filter-presets-danger";
+        remove.textContent = "Loeschen";
+        remove.addEventListener("click", () => {
+          if (!window.confirm(`Vorlage "${preset.name}" loeschen?`)) return;
+          presetStorage.save(removePreset(presetStorage.load(), route, preset.id));
+          renderManager();
+          render();
+        });
+        row.append(name, fields, rename, remove);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+      const hint = document.createElement("p");
+      hint.textContent = "Sichern/Uebertragen: Text kopieren und in einem anderen Browser hier einfuegen. Import ergaenzt, er ueberschreibt nichts.";
+      card.appendChild(hint);
+      const transfer = document.createElement("textarea");
+      transfer.value = JSON.stringify(presetStorage.load(), null, 2);
+      transfer.spellcheck = false;
+      card.appendChild(transfer);
+      const importButton = document.createElement("button");
+      importButton.type = "button";
+      importButton.textContent = "Aus Textfeld importieren";
+      importButton.addEventListener("click", () => {
+        const incoming = parseStore(transfer.value);
+        if (!Object.keys(incoming.routes).length) return window.alert("Kein gueltiger Vorlagen-Export im Textfeld.");
+        presetStorage.save(mergeStores(presetStorage.load(), incoming));
+        renderManager();
+        render();
+      });
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.className = "werkia-filter-presets-secondary";
+      closeButton.textContent = "Schliessen";
+      closeButton.addEventListener("click", closeDialog);
+      card.append(importButton, closeButton);
+      overlay.appendChild(card);
+      document.body.appendChild(overlay);
+    }
+    function buildBar() {
+      const bar = document.createElement("div");
+      bar.id = IDS.bar;
+      const title = document.createElement("strong");
+      title.textContent = label2;
+      const select = document.createElement("select");
+      select.id = IDS.select;
+      select.addEventListener("change", () => {
+        const preset = [...builtInPresets, ...ownPresets()].find((entry) => entry.id === select.value);
+        if (preset) applyPreset(preset);
+      });
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.textContent = "Aktuellen Filter speichern";
+      saveButton.title = "Filter, Sortierung und Seitengroesse der aktuellen Ansicht als Vorlage sichern";
+      saveButton.addEventListener("click", saveCurrentFilter);
+      const manageButton = document.createElement("button");
+      manageButton.type = "button";
+      manageButton.className = "werkia-filter-presets-secondary";
+      manageButton.textContent = "Verwalten";
+      manageButton.addEventListener("click", renderManager);
+      const resetButton = document.createElement("button");
+      resetButton.type = "button";
+      resetButton.className = "werkia-filter-presets-secondary";
+      resetButton.textContent = "Filter zuruecksetzen";
+      resetButton.addEventListener("click", () => applyPreset({ filter: {} }));
+      bar.append(title, select, saveButton, manageButton, resetButton);
+      return bar;
+    }
+    function fillSelect(select) {
+      if (!select) return;
+      const own = ownPresets();
+      const active = findActivePresetId([...builtInPresets, ...own], parseListState(location.hash));
+      select.textContent = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = own.length || builtInPresets.length ? "Vorlage waehlen …" : "Noch keine Vorlage gespeichert";
+      select.appendChild(placeholder);
+      const addGroup = (groupLabel, groupPresets) => {
+        if (!groupPresets.length) return;
+        const group = document.createElement("optgroup");
+        group.label = groupLabel;
+        groupPresets.forEach((preset) => {
+          const option = document.createElement("option");
+          option.value = preset.id;
+          option.textContent = preset.name;
+          option.title = describePreset(preset);
+          group.appendChild(option);
+        });
+        select.appendChild(group);
+      };
+      addGroup("Team-Vorlagen", builtInPresets);
+      addGroup("Eigene Vorlagen", own);
+      select.value = active;
+    }
+    function render() {
+      if (!isTargetPage()) {
+        document.getElementById(IDS.bar)?.remove();
+        closeDialog();
+        return;
+      }
+      ensureStyle();
+      let bar = document.getElementById(IDS.bar);
+      if (!bar) {
+        const anchor = findListAnchor(document);
+        if (!anchor?.parentElement) return;
+        bar = buildBar();
+        anchor.parentElement.insertBefore(bar, anchor);
+      }
+      fillSelect(bar.querySelector(`#${IDS.select}`));
+    }
+    let scheduled = false;
+    const scheduleRender = () => {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        render();
+      }, 150);
+    };
+    runtime.createMutationObserver(scheduleRender).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleRender);
+    scheduleRender();
+  }
+
+  // src/features/filter-presets.js
+  var CEM_ROUTES = ["CEM/MyMatches"];
+  var CEM_BUILT_IN_PRESETS = [];
+  function executeFilterPresets(runtime) {
+    executeListFilterPresets(runtime, {
+      routes: CEM_ROUTES,
+      builtInPresets: CEM_BUILT_IN_PRESETS,
+      sourcePath: "cem/toolbox/src/features/filter-presets.js"
+    });
+  }
+
   // src/main.js
   initCemGraphqlAdapter();
   bootstrapCemToolbox([
@@ -3109,6 +3519,7 @@
     { id: "cem-ofm-route-calculation", execute: executeRouteCalculation },
     { id: "vacancy-candidate-info", execute: executeVacancyCandidateInfo },
     { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
+    { id: "filter-presets", execute: executeFilterPresets },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);
 })();

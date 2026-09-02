@@ -25,6 +25,7 @@ Enthaltene Funktionen:
 - Liest den Betreff einer geoeffneten Outlook-Bewerbungsmail, findet den passenden Match per GraphQL und setzt KAM Status auf "Out" inkl. Pflichtgrund - offene Terminvorschlaege werden ebenfalls abgelehnt.
 - Fuegt im Arbeitgeberprofil OM-Flag-Vorlagen direkt am Feld OM Notes ein.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
+- Dropdown ueber der Liste mit gespeicherten Filterkombinationen. "Aktuellen Filter speichern" uebernimmt Filter, Sortierung und Seitengroesse der Ansicht; Vorlagen liegen lokal im Browser und ueberstehen Toolbox-Updates.
 
 ## CEM Toolbox
 
@@ -43,6 +44,7 @@ Enthaltene Funktionen:
 - Ergaenzt die Kandidatenliste einer Vakanz um Zusatzinfos je Kandidat (Reisebereitschaft, Status, Registrierungsdatum, Telefonnummer) und eine Anruf-Empfehlung.
 - Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
+- Dropdown ueber der Liste mit gespeicherten Filterkombinationen. "Aktuellen Filter speichern" uebernimmt Filter, Sortierung und Seitengroesse der Ansicht; Vorlagen liegen lokal im Browser und ueberstehen Toolbox-Updates.
 
 ## OBC Toolbox
 
@@ -60,3 +62,4 @@ Enthaltene Funktionen:
 - Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
 - Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
+- Dropdown ueber der Liste mit gespeicherten Filterkombinationen. "Aktuellen Filter speichern" uebernimmt Filter, Sortierung und Seitengroesse der Ansicht; Vorlagen liegen lokal im Browser und ueberstehen Toolbox-Updates.
