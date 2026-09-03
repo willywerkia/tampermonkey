@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.4.64
+// @version      1.4.65
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -570,6 +570,101 @@
     };
   }
 
+  // ../../shared/js/werkia-graphql/no-go-provider.js
+  var CANDIDATE_NO_GO_QUERY = `query Candidate($id: UUID!) {
+  data: Candidate(id: $id) {
+    id
+    noGoEmployers {
+      id
+      name
+      status
+      employerUrl
+      __typename
+    }
+    __typename
+  }
+}`;
+  var EMPLOYERS_BY_IDS_QUERY = `query allEmployers($filter: EmployerFilter) {
+  items: allEmployers(filter: $filter) {
+    id
+    name
+    status
+    employerUrl
+    __typename
+  }
+}`;
+  var EMPLOYER_BATCH_SIZE = 25;
+  function createNoGoProvider({ request }) {
+    const candidateLoadsInFlight = /* @__PURE__ */ new Map();
+    const employerCache = /* @__PURE__ */ new Map();
+    const employerLoadsInFlight = /* @__PURE__ */ new Map();
+    return {
+      // Returns the candidate's No-Go entries as
+      // [{ id, name, status, employerUrl }]. An empty array means "checked,
+      // nothing hinterlegt" — callers must not confuse that with "not loaded
+      // yet", which is why this never resolves to null.
+      async loadCandidateNoGoEmployers(candidateId) {
+        if (!candidateId) return [];
+        const existing = candidateLoadsInFlight.get(candidateId);
+        if (existing) return existing;
+        const promise = (async () => {
+          const result = await request(CANDIDATE_NO_GO_QUERY, { id: candidateId });
+          const entries = result?.data?.noGoEmployers;
+          if (!Array.isArray(entries)) return [];
+          return entries.filter((entry) => entry?.id).map((entry) => ({
+            id: entry.id,
+            name: entry.name || "",
+            status: entry.status || "",
+            employerUrl: entry.employerUrl || ""
+          }));
+        })();
+        candidateLoadsInFlight.set(candidateId, promise);
+        try {
+          return await promise;
+        } finally {
+          candidateLoadsInFlight.delete(candidateId);
+        }
+      },
+      // Resolves employer ids to { id, name, status, employerUrl }. The list
+      // rows already carry the employer id and name, but not the URL, so the
+      // group level needs this lookup. Results are cached for the lifetime of
+      // the page: an employer's URL does not change while someone works
+      // through a match list.
+      async loadEmployersByIds(employerIds) {
+        const wanted = [...new Set((employerIds || []).filter(Boolean))];
+        const missing = wanted.filter((id) => !employerCache.has(id) && !employerLoadsInFlight.has(id));
+        for (let index = 0; index < missing.length; index += EMPLOYER_BATCH_SIZE) {
+          const ids = missing.slice(index, index + EMPLOYER_BATCH_SIZE);
+          const batch = (async () => {
+            const result = await request(EMPLOYERS_BY_IDS_QUERY, { filter: { ids } });
+            for (const item of result?.items || []) {
+              if (!item?.id) continue;
+              employerCache.set(item.id, {
+                id: item.id,
+                name: item.name || "",
+                status: item.status || "",
+                employerUrl: item.employerUrl || ""
+              });
+            }
+          })();
+          for (const id of ids) employerLoadsInFlight.set(id, batch);
+          try {
+            await batch;
+          } finally {
+            for (const id of ids) employerLoadsInFlight.delete(id);
+          }
+        }
+        await Promise.allSettled(wanted.map((id) => employerLoadsInFlight.get(id)).filter(Boolean));
+        const employers = /* @__PURE__ */ new Map();
+        for (const id of wanted) {
+          const employer = employerCache.get(id);
+          if (employer) employers.set(id, employer);
+        }
+        return employers;
+      }
+    };
+  }
+
   // src/graphql.js
   var BEARER_STORAGE_KEY = "werkia_candidate_info_graphql_bearer_v1";
   var FINGERPRINT_STORAGE_KEY = "werkia_candidate_info_graphql_fingerprint_v1";
@@ -598,7 +693,8 @@
     adapter = {
       request,
       matchProvider: createMatchProvider({ request }),
-      addressProvider: createAddressProvider({ request })
+      addressProvider: createAddressProvider({ request }),
+      noGoProvider: createNoGoProvider({ request })
     };
     return adapter;
   }
@@ -626,7 +722,7 @@
       const ROW_CLASS2 = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const MATCH_PRESENT_ROW_CLASS3 = "werkia-cem-match-present-row";
-      const POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
+      const POTENTIAL_MATCHES_ROUTE6 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
       const BEARER_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_bearer_v1";
       const FINGERPRINT_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_fingerprint_v1";
       const urgentIndex = /* @__PURE__ */ new Map();
@@ -634,7 +730,7 @@
       let loadPromise = null;
       const capturedAuth = { bearer: "", fingerprint: "" };
       function isPotentialMatchesPage() {
-        return POTENTIAL_MATCHES_ROUTE5.test(location.hash || "");
+        return POTENTIAL_MATCHES_ROUTE6.test(location.hash || "");
       }
       function getHeaderValue2(headers, name) {
         if (!headers) return "";
@@ -3517,6 +3613,460 @@
     });
   }
 
+  // ../../shared/js/no-go-check/core.js
+  var LEGAL_FORM_TOKENS = /* @__PURE__ */ new Set([
+    "gmbh",
+    "mbh",
+    "ggmbh",
+    "ag",
+    "kg",
+    "kgaa",
+    "ohg",
+    "gbr",
+    "se",
+    "ug",
+    "ek",
+    "eg",
+    "co",
+    "cie",
+    "partg",
+    "mbb",
+    "inc",
+    "ltd",
+    "llc",
+    "bv",
+    "nv",
+    "sarl",
+    "plc",
+    "holding",
+    "gruppe",
+    "group",
+    "deutschland",
+    "firma",
+    "fa",
+    "und",
+    "der",
+    "die",
+    "das",
+    "den",
+    "von",
+    "am",
+    "im",
+    "in",
+    "fuer",
+    "de"
+  ]);
+  var GENERIC_TOKENS = /* @__PURE__ */ new Set([
+    "elektro",
+    "elektrotechnik",
+    "elektroinstallationen",
+    "elektroanlagen",
+    "elektrobau",
+    "sanitaer",
+    "heizung",
+    "heizungsbau",
+    "lueftung",
+    "klima",
+    "kaelte",
+    "shk",
+    "haustechnik",
+    "gebaeudetechnik",
+    "gebaeude",
+    "anlagenbau",
+    "anlagentechnik",
+    "anlagen",
+    "technik",
+    "solar",
+    "photovoltaik",
+    "energie",
+    "energietechnik",
+    "service",
+    "services",
+    "dienstleistungen",
+    "montage",
+    "facility",
+    "management",
+    "bau",
+    "betrieb",
+    "systeme",
+    "system",
+    "sicherheitstechnik",
+    "versorgungstechnik",
+    "nord",
+    "sued",
+    "ost",
+    "west",
+    "mitte",
+    "zentral",
+    "bayern",
+    "berlin",
+    "hessen"
+  ]);
+  var COMMON_SURNAME_TOKENS = /* @__PURE__ */ new Set([
+    "mueller",
+    "schmidt",
+    "schneider",
+    "fischer",
+    "weber",
+    "meyer",
+    "wagner",
+    "becker",
+    "schulz",
+    "hoffmann",
+    "schaefer",
+    "koch",
+    "bauer",
+    "richter",
+    "klein",
+    "wolf",
+    "schroeder",
+    "neumann",
+    "schwarz",
+    "zimmermann",
+    "braun",
+    "krueger",
+    "hofmann",
+    "hartmann",
+    "lange",
+    "schmitt",
+    "werner",
+    "schmitz",
+    "krause",
+    "meier",
+    "lehmann",
+    "schmid",
+    "schulze",
+    "maier",
+    "koehler",
+    "herrmann",
+    "walter",
+    "koenig",
+    "mayer",
+    "huber",
+    "kaiser",
+    "fuchs",
+    "peters",
+    "lang",
+    "scholz",
+    "moeller",
+    "weiss",
+    "jung",
+    "hahn",
+    "schubert",
+    "vogel",
+    "friedrich",
+    "keller",
+    "guenther",
+    "frank",
+    "berger",
+    "winkler",
+    "roth",
+    "beck",
+    "lorenz",
+    "baumann",
+    "franke",
+    "albrecht",
+    "schuster",
+    "simon",
+    "ludwig",
+    "boehm",
+    "winter",
+    "kraus",
+    "martin",
+    "schumacher",
+    "kraemer",
+    "vogt",
+    "stein",
+    "jaeger",
+    "otto",
+    "sommer",
+    "gross",
+    "seidel",
+    "heinrich",
+    "brandt",
+    "haas",
+    "schreiber",
+    "graf",
+    "dietrich",
+    "ziegler",
+    "kuhn",
+    "kuehn",
+    "pohl",
+    "engel",
+    "horn",
+    "busch",
+    "bergmann",
+    "thomas",
+    "voigt",
+    "sauter",
+    "sander",
+    "stadler",
+    "knapp",
+    "zimmer",
+    "hess",
+    "beyer",
+    "wegener",
+    "rubin"
+  ]);
+  var AGGREGATOR_DOMAINS = [
+    "arbeitsagentur.de",
+    "indeed.com",
+    "indeed.de",
+    "stepstone.de",
+    "linkedin.com",
+    "facebook.com",
+    "instagram.com",
+    "xing.com",
+    "kimeta.de",
+    "jobware.de",
+    "meinestadt.de",
+    "jooble.org",
+    "jobsora.com",
+    "google.com"
+  ];
+  function normalizeEmployerName(value) {
+    return String(value ?? "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/&/g, " und ").replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter((token) => token && !LEGAL_FORM_TOKENS.has(token)).join(" ");
+  }
+  function isDistinctiveToken(token) {
+    return Boolean(token) && token.length >= 4 && !GENERIC_TOKENS.has(token) && !COMMON_SURNAME_TOKENS.has(token);
+  }
+  function employerDomain(employerUrl) {
+    const raw = String(employerUrl ?? "").trim();
+    if (!raw) return null;
+    let host = "";
+    try {
+      host = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+    host = host.replace(/^www\./, "");
+    if (!host.includes(".") || host.startsWith(".") || host.endsWith(".")) return null;
+    if (AGGREGATOR_DOMAINS.some((denied) => host === denied || host.endsWith(`.${denied}`))) return null;
+    return host;
+  }
+  function employerNamesMatch(left, right) {
+    const normalizedLeft = normalizeEmployerName(left);
+    const normalizedRight = normalizeEmployerName(right);
+    if (!normalizedLeft || !normalizedRight) return false;
+    if (normalizedLeft === normalizedRight) return true;
+    const leftTokens = normalizedLeft.split(" ");
+    const rightTokens = normalizedRight.split(" ");
+    const [shorter, longer] = leftTokens.length <= rightTokens.length ? [leftTokens, rightTokens] : [rightTokens, leftTokens];
+    if (!shorter.every((token) => longer.includes(token))) return false;
+    if (shorter.length >= 2) return shorter.some((token) => !GENERIC_TOKENS.has(token));
+    return isDistinctiveToken(shorter[0]);
+  }
+  var COLLISION_LEVELS = ["direct", "group", "name"];
+  function classifyCollision(employer, noGoEmployers) {
+    if (!employer?.id && !employer?.name) return null;
+    const entries = Array.isArray(noGoEmployers) ? noGoEmployers.filter(Boolean) : [];
+    if (!entries.length) return null;
+    const ownDomain = employerDomain(employer.employerUrl);
+    const byLevel = /* @__PURE__ */ new Map();
+    for (const noGo of entries) {
+      if (employer.id && noGo.id === employer.id) {
+        if (!byLevel.has("direct")) byLevel.set("direct", noGo);
+        continue;
+      }
+      const noGoDomain = employerDomain(noGo.employerUrl);
+      if (ownDomain && noGoDomain && ownDomain === noGoDomain) {
+        if (!byLevel.has("group")) byLevel.set("group", noGo);
+        continue;
+      }
+      if (employerNamesMatch(employer.name, noGo.name)) {
+        if (!byLevel.has("name")) byLevel.set("name", noGo);
+      }
+    }
+    for (const level of COLLISION_LEVELS) {
+      if (byLevel.has(level)) return { level, noGo: byLevel.get(level) };
+    }
+    return null;
+  }
+  var BADGE_LABELS = {
+    direct: "No-Go-Arbeitgeber",
+    group: "No-Go: gleiche Firmengruppe",
+    name: "No-Go? Name prüfen"
+  };
+  function describeCollision(collision) {
+    if (!collision) return null;
+    const name = String(collision.noGo?.name ?? "").replace(/\s+/g, " ").trim() || "unbenannt";
+    const label2 = BADGE_LABELS[collision.level];
+    if (collision.level === "direct") {
+      return {
+        label: label2,
+        title: `Dieser Arbeitgeber ist beim Kandidaten als No-Go hinterlegt ("${name}"). Nicht senden.`
+      };
+    }
+    if (collision.level === "group") {
+      return {
+        label: label2,
+        title: `Beim Kandidaten ist "${name}" als No-Go hinterlegt — derselbe Webauftritt, also dieselbe Firma bzw. Firmengruppe. Nicht senden, ohne das vorher zu klären.`
+      };
+    }
+    return {
+      label: label2,
+      title: `Beim Kandidaten ist "${name}" als No-Go hinterlegt, nur als Namenseintrag ohne eigenes Arbeitgeberprofil. Der Name passt zu diesem Arbeitgeber — vor dem Senden prüfen und das No-Go am echten Profil hinterlegen.`
+    };
+  }
+
+  // ../../shared/js/no-go-check/index.js
+  var POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
+  var ROW_SELECTOR = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var LEVEL_STYLES = {
+    direct: { badge: "border:2px solid #450a0a;background:#7f1d1d;color:#fff;", accent: "#7f1d1d", tint: "#f7dcdc" },
+    group: { badge: "border:2px solid #7f1d1d;background:#b91c1c;color:#fff;", accent: "#b91c1c", tint: "#fae3e3" },
+    name: { badge: "border:2px solid #b45309;background:#f59e0b;color:#231400;", accent: "#b45309", tint: "#fdf0d5" }
+  };
+  function getCandidateIdFromRoute2(hash = location.hash || "") {
+    return String(hash).match(POTENTIAL_MATCHES_ROUTE5)?.[1] || "";
+  }
+  function isPotentialMatchesRoute(hash = location.hash || "") {
+    return POTENTIAL_MATCHES_ROUTE5.test(String(hash));
+  }
+  function getEmployerIdFromRow(row) {
+    const link = row?.querySelector('a[href*="#/Employer/"][href*="/show"]') || row?.querySelector('a[href*="#/Employer/"]');
+    return link?.getAttribute("href")?.match(/\/Employer\/([a-f0-9-]{36})/i)?.[1] || "";
+  }
+  function getEmployerLinkFromRow(row) {
+    return row?.querySelector('td.column-jobPositionId a[href*="#/Employer/"]') || row?.querySelector('a[href*="#/Employer/"]') || null;
+  }
+  function executeNoGoCheck(runtime, options = {}) {
+    const namespace = options.namespace || "werkia";
+    const getProvider = options.getProvider;
+    if (options.sourcePath) runtime.registerSource(options.sourcePath);
+    const BADGE_CLASS = `werkia-${namespace}-no-go-badge`;
+    const ROW_CLASS2 = `werkia-${namespace}-no-go-row`;
+    const CHECK_ROW_CLASS = `werkia-${namespace}-no-go-check-row`;
+    const STYLE_ID3 = `werkia-${namespace}-no-go-style`;
+    const noGosByCandidate = /* @__PURE__ */ new Map();
+    const employersById = /* @__PURE__ */ new Map();
+    const pendingEmployerLookups = /* @__PURE__ */ new Set();
+    let candidateLoadInFlight = "";
+    let employerLoadInFlight = false;
+    let renderTimer = null;
+    function ensureStyles2() {
+      if (document.getElementById(STYLE_ID3)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID3;
+      style.textContent = `
+      .${ROW_CLASS2} > td, .${ROW_CLASS2} > th { background:${LEVEL_STYLES.direct.tint} !important; }
+      .${ROW_CLASS2} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.direct.accent} !important; }
+      .${CHECK_ROW_CLASS} > td, .${CHECK_ROW_CLASS} > th { background:${LEVEL_STYLES.name.tint} !important; }
+      .${CHECK_ROW_CLASS} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.name.accent} !important; }
+    `;
+      document.head.appendChild(style);
+    }
+    function clearRow(row) {
+      row.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
+      row.classList.remove(ROW_CLASS2);
+      row.classList.remove(CHECK_ROW_CLASS);
+    }
+    function paintRow(row, collision) {
+      const described = describeCollision(collision);
+      if (!described) {
+        clearRow(row);
+        return;
+      }
+      ensureStyles2();
+      const style = LEVEL_STYLES[collision.level];
+      row.classList.toggle(ROW_CLASS2, collision.level !== "name");
+      row.classList.toggle(CHECK_ROW_CLASS, collision.level === "name");
+      const existing = row.querySelector(`.${BADGE_CLASS}`);
+      if (existing && existing.dataset.level === collision.level && existing.title === described.title) return;
+      const badge = existing || document.createElement("span");
+      badge.className = BADGE_CLASS;
+      badge.dataset.level = collision.level;
+      badge.textContent = described.label;
+      badge.title = described.title;
+      badge.style.cssText = `display:inline-flex;align-items:center;width:max-content;margin:7px 0 2px 8px;padding:6px 11px;border-radius:7px;font:900 14px/1.3 Arial,sans-serif;letter-spacing:.2px;white-space:nowrap;vertical-align:middle;${style.badge}`;
+      if (existing) return;
+      const link = getEmployerLinkFromRow(row);
+      (link?.parentElement || row.querySelector("td.column-jobPositionId") || row.lastElementChild)?.appendChild(badge);
+    }
+    function loadCandidateNoGos(candidateId) {
+      if (candidateLoadInFlight === candidateId) return;
+      candidateLoadInFlight = candidateId;
+      Promise.resolve().then(() => getProvider().loadCandidateNoGoEmployers(candidateId)).then((entries) => {
+        noGosByCandidate.set(candidateId, entries);
+        if (getCandidateIdFromRoute2() === candidateId) scheduleRender();
+      }).catch((error) => console.warn(`[${namespace.toUpperCase()} No-Go] No-Go-Arbeitgeber konnten nicht geladen werden:`, error)).finally(() => {
+        if (candidateLoadInFlight === candidateId) candidateLoadInFlight = "";
+      });
+    }
+    function loadEmployers(employerIds) {
+      const missing = employerIds.filter((id) => !employersById.has(id) && !pendingEmployerLookups.has(id));
+      if (!missing.length || employerLoadInFlight) return;
+      missing.forEach((id) => pendingEmployerLookups.add(id));
+      employerLoadInFlight = true;
+      Promise.resolve().then(() => getProvider().loadEmployersByIds(missing)).then((employers) => {
+        for (const [id, employer] of employers) employersById.set(id, employer);
+      }).catch((error) => console.warn(`[${namespace.toUpperCase()} No-Go] Arbeitgeberdaten konnten nicht geladen werden:`, error)).finally(() => {
+        missing.forEach((id) => pendingEmployerLookups.delete(id));
+        employerLoadInFlight = false;
+        if (isPotentialMatchesRoute()) scheduleRender();
+      });
+    }
+    function renderRows() {
+      const candidateId = getCandidateIdFromRoute2();
+      if (!candidateId) return;
+      const noGos = noGosByCandidate.get(candidateId);
+      if (noGos === void 0) {
+        loadCandidateNoGos(candidateId);
+        return;
+      }
+      const rows = [...document.querySelectorAll(ROW_SELECTOR)];
+      if (!noGos.length) {
+        rows.forEach(clearRow);
+        return;
+      }
+      const rowEmployerIds = [];
+      for (const row of rows) {
+        const employerId = getEmployerIdFromRow(row);
+        if (employerId) rowEmployerIds.push(employerId);
+      }
+      loadEmployers([...new Set(rowEmployerIds)]);
+      for (const row of rows) {
+        const employerId = getEmployerIdFromRow(row);
+        if (!employerId) {
+          clearRow(row);
+          continue;
+        }
+        const employer = employersById.get(employerId) || {
+          id: employerId,
+          name: getEmployerLinkFromRow(row)?.textContent?.trim() || "",
+          employerUrl: ""
+        };
+        paintRow(row, classifyCollision(employer, noGos));
+      }
+    }
+    function cleanup() {
+      document.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
+      document.querySelectorAll(`.${ROW_CLASS2}, .${CHECK_ROW_CLASS}`).forEach((row) => {
+        row.classList.remove(ROW_CLASS2);
+        row.classList.remove(CHECK_ROW_CLASS);
+      });
+    }
+    function scheduleRender() {
+      runtime.clearTimeout(renderTimer);
+      renderTimer = runtime.setTimeout(() => {
+        if (isPotentialMatchesRoute()) renderRows();
+        else cleanup();
+      }, 200);
+    }
+    runtime.createMutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleRender);
+    scheduleRender();
+  }
+
+  // src/features/no-go-check.js
+  function executeNoGoCheck2(runtime) {
+    executeNoGoCheck(runtime, {
+      namespace: "cem",
+      sourcePath: "cem/toolbox/src/features/no-go-check.js",
+      getProvider: () => getCemGraphqlAdapter().noGoProvider
+    });
+  }
+
   // src/main.js
   initCemGraphqlAdapter();
   bootstrapCemToolbox([
@@ -3530,6 +4080,11 @@
     { id: "vacancy-candidate-info", execute: executeVacancyCandidateInfo },
     { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
     { id: "filter-presets", execute: executeFilterPresets },
-    { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
+    { id: "urgent-vacancy-highlight", execute: executeLegacyModule },
+    // Last on purpose: this feature tints rows on the same route as
+    // reverse-match-kam-status and urgent-vacancy-highlight, and its style
+    // element has to be inserted after theirs so a No-Go warning is not
+    // overpainted by a less severe highlight.
+    { id: "no-go-check", execute: executeNoGoCheck2 }
   ]);
 })();
