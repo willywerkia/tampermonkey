@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.67
+// @version      1.2.68
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -266,13 +266,6 @@
     cemStatus
     kamStatus
     onlineMatchStatus
-    jobPosition {
-      employer {
-        id
-        __typename
-      }
-      __typename
-    }
     __typename
   }
 }`;
