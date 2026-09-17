@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.4.68
+// @version      1.4.69
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -550,6 +550,21 @@
         const address = formatLocation(location2);
         if (!address) throw new Error("Keine Kandidatenadresse gefunden.");
         return address;
+      },
+      // Ported for ops/om (main + secondary/relocation addresses, unlike
+      // CEM/KAM/OBC which only ever show the single most recent one via
+      // loadCandidateAddress above). Same query and sort order, just without
+      // perPage:1 - returns every formatted address the candidate has on
+      // file, most recently created first.
+      async loadCandidateAddresses(candidateId) {
+        const result = await request(CANDIDATE_LOCATIONS_QUERY, {
+          filter: { candidateId },
+          page: 0,
+          perPage: 25,
+          sortField: "id",
+          sortOrder: "DESC"
+        });
+        return (result?.items || []).map(formatLocation).filter(Boolean);
       },
       async loadJobPositionAddress(jobPositionId) {
         const result = await request(JOB_POSITION_LOCATION_QUERY, { id: jobPositionId });
