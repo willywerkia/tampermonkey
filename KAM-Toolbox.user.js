@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.70
+// @version      1.2.71
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2226,6 +2226,47 @@
     return parts.join(" ");
   }
 
+  // ../../shared/js/werkia-questionnaire/job-title-catalog.js
+  var JOB_TITLE_CATALOG = [
+    { slug: "auto_mechatronics_tech", name: "KFZ-Mechatroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "azubi_electronic", name: "Azubi Elektrotechnik", workArea: ["electrical"], education: ["none"] },
+    { slug: "azubi_shk", name: "Azubi SHK", workArea: ["shc"], education: ["none"] },
+    { slug: "bachelor_computer_science", name: "Bachelor Informatik", workArea: ["electrical"], education: ["master"] },
+    { slug: "bachelor_electrical_engineering", name: "Bachelor Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "bachelor_electrical_info_tech", name: "Bachelor Elektro- und Informationstechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "central_hvac_engineer", name: "Zentralheizungs- und Lüftungsbauer", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "electrician", name: "Elektroinstallateur", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_automation", name: "Elektroniker für Automatisierungstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_devices_systems", name: "Elektroniker für Geräte und Systeme", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_energy_building", name: "Elektroniker für Energie- und Gebäudetechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_industrial", name: "Elektroniker für Betriebstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_info_telecom", name: "Elektroniker für Informations- und Telekommunikationstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_machine_drive", name: "Elektroniker für Maschinen- und Antriebstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "energy_system_electronic_tech", name: "Energieanlagenelektroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "gas_water_installer", name: "Gas- und Wasserinstallateur", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "industrial_electronic_tech", name: "Industrieelektroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "industrial_mechanic", name: "Industriemechaniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "master_computer_science", name: "Master Informatik", workArea: ["electrical"], education: ["master"] },
+    { slug: "master_electrical_engineering", name: "Master Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "master_electrical_info_tech", name: "Master Elektro- und Informationstechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "mechatronics_tech", name: "Mechatroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "mechatronics_tech_refrigeration", name: "Mechatroniker für Kältetechnik", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "meister_communication", name: "Meister Kommunikations & Sicherheitstechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "meister_electrical_engineering", name: "Meister Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "meister_energy", name: "Meister Energie- & Gebäudetechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "meister_refrigeration_tech", name: "Meister Kältetechnik", workArea: ["shc"], education: ["master"] },
+    { slug: "meister_shk", name: "Meister SHK", workArea: ["shc"], education: ["master"] },
+    { slug: "meister_system_electronics", name: "Meister Systemelektronik", workArea: ["electrical"], education: ["master"] },
+    { slug: "miscellaneous_electronic", name: "Sonstiges Elektrotechnik", workArea: ["electrical"], education: ["none", "in_progress", "finished", "master"] },
+    { slug: "miscellaneous_shk", name: "Sonstiges SHK", workArea: ["shc"], education: ["none", "in_progress", "finished", "master"] },
+    { slug: "plant_mechanic_shk", name: "Anlagenmechaniker SHK", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "refrigeration_system_builder", name: "Kälteanlagenbauer", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "state_certified_tech_electronic", name: "Staatlich Geprüfter Techniker Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "state_certified_tech_shk", name: "Staatlich Geprüfter Techniker SHK", workArea: ["shc"], education: ["master"] },
+    { slug: "tool_mechanic", name: "Werkzeugmechaniker", workArea: ["electrical"], education: ["in_progress", "finished"] }
+  ];
+  var JOB_TITLE_SLUGS = new Set(JOB_TITLE_CATALOG.map((entry) => entry.slug));
+
   // ../../shared/js/werkia-questionnaire/scoring.js
   var GREEN = "#d8f5d0";
   var RED = "#ffd6d6";
@@ -2311,66 +2352,72 @@
     return v;
   }
   var POSITION_EQUIVALENT_GROUPS = [
-    ["anlagenmechaniker shk", "zentralheizungs- und lüftungsbauer", "gas- und wasserinstallateur"],
-    ["mechatroniker für kältetechnik", "kälteanlagebauer"],
-    ["elektroniker für energie- und gebäudetechnik", "elektroinstallateur"],
-    ["elektroniker für betriebstechnik", "energieanlagenelektroniker"],
-    ["elektroniker für geräte und systeme", "industrieelektriker", "elektroniker für maschinen- und antriebstechnik"],
-    ["elektroniker für informations- und telekommunikationstechnik", "elektroniker für automatisierungstechnik"],
-    ["industriemechaniker", "werkzeugmechaniker", "anlagenmechaniker"],
-    ["kfz-mechatroniker"],
-    ["meister shk", "staatlich geprüfter techniker"],
-    ["meister kältetechnik"],
-    ["meister elektrotechnik", "meister energie- und gebäudetechnik", "staatlich geprüfter techniker"],
-    ["meister systemelektronik", "meister kommunikations und sicherheitstechnik"],
-    ["bachelor informatik", "bachelor elektro- und informationstechnik", "bachelor elektrotechnik", "master elektro- und informationstechnik", "master elektrotechnik", "master informatik"],
-    ["sonstiges shk"],
-    ["sonstiges elektrotechnik"],
-    ["zentralheizungs- und lüftungsbauer", "gas- und wasserinstallateur", "mechatroniker für kältetechnik", "kälteanlagebauer"]
+    ["plant_mechanic_shk", "central_hvac_engineer", "gas_water_installer"],
+    ["mechatronics_tech_refrigeration", "refrigeration_system_builder"],
+    ["electronic_tech_energy_building", "electrician"],
+    ["electronic_tech_industrial", "energy_system_electronic_tech"],
+    ["electronic_tech_devices_systems", "industrial_electronic_tech", "electronic_tech_machine_drive"],
+    ["electronic_tech_info_telecom", "electronic_tech_automation"],
+    ["industrial_mechanic", "tool_mechanic"],
+    ["auto_mechatronics_tech"],
+    ["meister_shk", "state_certified_tech_shk"],
+    ["meister_refrigeration_tech"],
+    ["meister_electrical_engineering", "meister_energy", "state_certified_tech_electronic"],
+    ["meister_system_electronics", "meister_communication"],
+    ["bachelor_computer_science", "bachelor_electrical_info_tech", "bachelor_electrical_engineering", "master_electrical_info_tech", "master_electrical_engineering", "master_computer_science"],
+    ["miscellaneous_shk"],
+    ["miscellaneous_electronic"],
+    ["central_hvac_engineer", "gas_water_installer", "mechatronics_tech_refrigeration", "refrigeration_system_builder"]
   ];
-  var POSITION_EQUIVALENT_GROUPS_ASCII = POSITION_EQUIVALENT_GROUPS.map((group) => group.map((item) => asciiFold(item)));
+  var SLUG_BY_NAME = new Map(JOB_TITLE_CATALOG.map((entry) => [normalizePosition(entry.name), entry.slug]));
+  var SLUG_BY_FOLDED_NAME = new Map(JOB_TITLE_CATALOG.map((entry) => [normalizePosition(entry.name, { fold: true }), entry.slug]));
+  function toPositionSlug(normalized, fold) {
+    if (!normalized) return "";
+    if (JOB_TITLE_SLUGS.has(normalized)) return normalized;
+    return (fold ? SLUG_BY_FOLDED_NAME : SLUG_BY_NAME).get(normalized) || "";
+  }
   function positionMatches(employerPosition, candidatePosition, { fold = false } = {}) {
-    const employer = normalizePosition(employerPosition, { fold });
-    const candidate = normalizePosition(candidatePosition, { fold });
-    if (!employer || !candidate || employer === "-" || candidate === "-") return false;
-    if (employer === candidate) return true;
-    if (employer === "mechatroniker" || candidate === "mechatroniker") return false;
-    const groups = fold ? POSITION_EQUIVALENT_GROUPS_ASCII : POSITION_EQUIVALENT_GROUPS;
-    return groups.some((group) => group.includes(employer) && group.includes(candidate));
+    const employerName = normalizePosition(employerPosition, { fold });
+    const candidateName = normalizePosition(candidatePosition, { fold });
+    if (!employerName || !candidateName || employerName === "-" || candidateName === "-") return false;
+    if (employerName === candidateName) return true;
+    const employer = toPositionSlug(employerName, fold);
+    const candidate = toPositionSlug(candidateName, fold);
+    if (!employer || !candidate) return false;
+    if (employer === "mechatronics_tech" || candidate === "mechatronics_tech") return false;
+    return POSITION_EQUIVALENT_GROUPS.some((group) => group.includes(employer) && group.includes(candidate));
   }
   var POSITION_REVIEW_GROUPS = [
     {
-      employer: ["elektroniker für energie- und gebäudetechnik", "elektroinstallateur"],
-      candidate: ["elektroniker für betriebstechnik"]
+      employer: ["electronic_tech_energy_building", "electrician"],
+      candidate: ["electronic_tech_industrial"]
     },
     {
-      employer: ["elektroniker für informations- und telekommunikationstechnik", "elektroniker für automatisierungstechnik"],
-      candidate: ["elektroniker für geräte und systeme", "elektroniker für maschinen- und antriebstechnik"]
+      employer: ["electronic_tech_info_telecom", "electronic_tech_automation"],
+      candidate: ["electronic_tech_devices_systems", "electronic_tech_machine_drive"]
     },
     {
-      employer: ["mechatroniker für kältetechnik", "kälteanlagebauer"],
-      candidate: ["anlagenmechaniker shk", "zentralheizungs- und lüftungsbauer"]
+      employer: ["mechatronics_tech_refrigeration", "refrigeration_system_builder"],
+      candidate: ["plant_mechanic_shk", "central_hvac_engineer"]
     },
     {
-      employer: ["elektroniker für betriebstechnik", "elektroniker für energie- und gebäudetechnik"],
-      candidate: ["elektroniker für betriebstechnik", "elektroniker für energie- und gebäudetechnik"]
+      employer: ["electronic_tech_industrial", "electronic_tech_energy_building"],
+      candidate: ["electronic_tech_industrial", "electronic_tech_energy_building"]
     },
     {
-      employer: ["elektroniker für betriebstechnik", "elektroinstallateur"],
-      candidate: ["elektroniker für betriebstechnik", "elektroinstallateur"]
+      employer: ["electronic_tech_industrial", "electrician"],
+      candidate: ["electronic_tech_industrial", "electrician"]
     }
   ];
-  var POSITION_REVIEW_GROUPS_ASCII = POSITION_REVIEW_GROUPS.map((group) => ({
-    employer: group.employer.map((item) => asciiFold(item)),
-    candidate: group.candidate.map((item) => asciiFold(item))
-  }));
   function positionsNeedReview(employerPosition, candidatePosition, { fold = false } = {}) {
-    const employer = normalizePosition(employerPosition, { fold });
-    const candidate = normalizePosition(candidatePosition, { fold });
-    if (!employer || !candidate || employer === "-" || candidate === "-") return false;
-    if (positionMatches(employer, candidate, { fold })) return false;
-    const groups = fold ? POSITION_REVIEW_GROUPS_ASCII : POSITION_REVIEW_GROUPS;
-    return groups.some((group) => group.employer.includes(employer) && group.candidate.includes(candidate));
+    const employerName = normalizePosition(employerPosition, { fold });
+    const candidateName = normalizePosition(candidatePosition, { fold });
+    if (!employerName || !candidateName || employerName === "-" || candidateName === "-") return false;
+    if (positionMatches(employerPosition, candidatePosition, { fold })) return false;
+    const employer = toPositionSlug(employerName, fold);
+    const candidate = toPositionSlug(candidateName, fold);
+    if (!employer || !candidate) return false;
+    return POSITION_REVIEW_GROUPS.some((group) => group.employer.includes(employer) && group.candidate.includes(candidate));
   }
   function positionRelated(employerPosition, candidatePosition, options) {
     return positionsNeedReview(employerPosition, candidatePosition, options);
