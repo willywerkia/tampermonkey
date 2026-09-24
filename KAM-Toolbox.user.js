@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.72
+// @version      1.2.73
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -763,6 +763,25 @@
   function openInterviewIds(items) {
     return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
   }
+  var FORWARDED_CHIP_CLASSES = ["MuiChip-colorInterviewForwarded", "MuiChip-filledInterviewForwarded"];
+  var FORWARDED_CHIP_BACKGROUND = "#b9e5fd";
+  function isSuggestionChip(chip) {
+    if (!chip?.classList?.contains("MuiChip-root")) return false;
+    if ([...chip.classList].some((name) => /^MuiChip-(?:color|filled)InterviewSuggest/i.test(name))) return true;
+    return /^vorschlag$/i.test(String(chip.getAttribute("aria-label") || "").trim());
+  }
+  function markSuggestionChipsForwarded(cell) {
+    if (!cell) return 0;
+    const chips = [...cell.querySelectorAll(".MuiChip-root")].filter(isSuggestionChip);
+    chips.forEach((chip) => {
+      [...chip.classList].filter((name) => /^MuiChip-(?:color|filled)/.test(name)).forEach((name) => chip.classList.remove(name));
+      chip.classList.add(...FORWARDED_CHIP_CLASSES);
+      chip.style.backgroundColor = FORWARDED_CHIP_BACKGROUND;
+      chip.setAttribute("aria-label", "Weitergeleitet");
+      chip.dataset.werkiaForwarded = "true";
+    });
+    return chips.length;
+  }
   function suggestedInterviews(items) {
     return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
   }
@@ -1162,6 +1181,9 @@
       }
       return interviews;
     }
+    function markRowForwarded(matchId) {
+      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markSuggestionChipsForwarded(row.querySelector("td.column-interview")));
+    }
     async function forwardInterview(matchId, interview) {
       const { request } = getKamGraphqlAdapter();
       const result = await request(FORWARD_INTERVIEW_MUTATION, { id: interview.id, status: "forwarded", dates: interview.dates });
@@ -1211,18 +1233,22 @@
         return setStatus("Nichts weitergeleitet.", "");
       }
       let forwarded = 0;
+      const pendingByMatch = /* @__PURE__ */ new Map();
+      queue.forEach((item) => pendingByMatch.set(item.matchId, (pendingByMatch.get(item.matchId) || 0) + 1));
       for (let index = 0; index < queue.length; index += 1) {
         if (cancelRequested) break;
         setStatus(`Leite weiter ${index + 1} von ${queue.length} …`, "busy");
         try {
           await forwardInterview(queue[index].matchId, queue[index].interview);
           forwarded += 1;
+          const remaining = pendingByMatch.get(queue[index].matchId) - 1;
+          pendingByMatch.set(queue[index].matchId, remaining);
+          if (remaining === 0) markRowForwarded(queue[index].matchId);
         } catch (error) {
           failures.push(`${index + 1}: ${error.message}`);
         }
       }
       running = false;
-      if (forwarded > 0) dialog.dataset.needsReload = "true";
       if (cancelRequested) {
         setStatus(`Lauf gestoppt: ${forwarded} weitergeleitet${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Vorschläge blieben unverändert.`, "busy");
       } else if (failures.length) {
