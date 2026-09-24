@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.73
+// @version      1.3.74
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -2269,7 +2269,11 @@
       cvInstructions,
       openOnly: normalizedTags.some((tag) => tag === "nur offen"),
       noRvm: normalizedTags.some((tag) => /^kein\s+rvm$/.test(tag)),
-      strictRvm: normalizedTags.some((tag) => /^rvm\s*:\s*nur\s*100\s*%$/.test(tag))
+      // Beide Schreibweisen: die Flag-Leiste (shared/js/om-notes-templates)
+      // und docs/reference/om_flags.md schreiben [RVM:100%], aeltere Notizen
+      // [RVM: NUR 100%]. Bis 2026-09-24 erkannte der Parser nur die zweite -
+      // bei 9 von 14 Arbeitgebern mit dem Flag blieb es dadurch wirkungslos.
+      strictRvm: normalizedTags.some((tag) => /^rvm\s*:\s*(?:nur\s*)?100\s*%$/.test(tag))
     };
   }
   function describeOmNoteTags(tags) {
