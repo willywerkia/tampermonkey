@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.69
+// @version      1.2.70
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1550,10 +1550,288 @@
     scheduleCityBadges();
   }
 
+  // ../../shared/js/werkia-graphql/match-cem-provider.js
+  var BATCH_SIZE = 25;
+  var SINGLE_MATCH_CONCURRENCY = 5;
+  var MATCHES_BY_IDS_QUERY = `query allMatches($page: Int, $perPage: Int, $filter: MatchFilter) {
+  items: allMatches(page: $page, perPage: $perPage, filter: $filter) {
+    id
+    candidateId
+    cemStatus
+    __typename
+  }
+}`;
+  var CANDIDATE_CEM_QUERY = `query allCandidates($filter: CandidateFilter) {
+  items: allCandidates(filter: $filter) { id cemEmployeeId __typename }
+}`;
+  var EMPLOYEE_NAMES_QUERY = `query allEmployees($filter: EmployeeFilter!) {
+  items: allEmployees(filter: $filter) { id firstName lastName __typename }
+}`;
+  function chunks(values, size) {
+    const result = [];
+    for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
+    return result;
+  }
+  async function loadMatches(request, matchIds) {
+    const matches = /* @__PURE__ */ new Map();
+    for (const ids of chunks(matchIds, BATCH_SIZE)) {
+      try {
+        const result = await request(MATCHES_BY_IDS_QUERY, { filter: { ids }, page: 0, perPage: ids.length });
+        for (const item of result?.items || []) {
+          if (item?.id && ids.includes(item.id)) matches.set(item.id, item);
+        }
+      } catch (error) {
+        console.warn("[Werkia CEM-Status] allMatches(filter:{ids}) fehlgeschlagen, lade Matches einzeln:", error);
+      }
+    }
+    const missing = matchIds.filter((id) => !matches.has(id));
+    for (const ids of chunks(missing, SINGLE_MATCH_CONCURRENCY)) {
+      await Promise.all(ids.map(async (id) => {
+        try {
+          const match = (await request(MATCH_QUERY, { id }))?.data;
+          if (match?.id) matches.set(match.id, match);
+        } catch (error) {
+          console.warn(`[Werkia CEM-Status] Match ${id} nicht ladbar:`, error);
+        }
+      }));
+    }
+    return matches;
+  }
+  async function loadById(request, query, ids) {
+    const byId = /* @__PURE__ */ new Map();
+    for (const batch of chunks(ids, BATCH_SIZE)) {
+      const result = await request(query, { filter: { ids: batch } });
+      for (const item of result?.items || []) if (item?.id) byId.set(item.id, item);
+    }
+    return byId;
+  }
+  function employeeDisplayName(employee) {
+    return [employee?.firstName, employee?.lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  }
+  async function fetchMatchCemInfo(request, matchIds) {
+    const info = /* @__PURE__ */ new Map();
+    if (!matchIds.length) return info;
+    const matches = await loadMatches(request, matchIds);
+    const candidateIds = [...new Set([...matches.values()].map((match) => match.candidateId).filter(Boolean))];
+    const candidates = candidateIds.length ? await loadById(request, CANDIDATE_CEM_QUERY, candidateIds) : /* @__PURE__ */ new Map();
+    const employeeIds = [...new Set([...candidates.values()].map((candidate) => candidate.cemEmployeeId).filter(Boolean))];
+    const employees = employeeIds.length ? await loadById(request, EMPLOYEE_NAMES_QUERY, employeeIds) : /* @__PURE__ */ new Map();
+    for (const [matchId, match] of matches) {
+      const cemEmployeeId = candidates.get(match.candidateId)?.cemEmployeeId;
+      info.set(matchId, {
+        cemStatus: mapCemStatus(match.cemStatus),
+        cemName: employeeDisplayName(employees.get(cemEmployeeId))
+      });
+    }
+    return info;
+  }
+
+  // src/features/kam-suite/cem-status-line.js
+  var ROW_SELECTOR4 = "tbody tr.RaDataTable-row";
+  var KAM_STATUS_CELL_SELECTOR = "td.column-kamStatus";
+  var MATCH_LINK_SELECTOR = 'a[href*="#/Match/"]';
+  var LINE_CLASS = "werkia-kam-cem-line";
+  var STYLE_ID3 = "werkia-kam-cem-line-style";
+  var REFRESH_INTERVAL_MS3 = 5 * 60 * 1e3;
+  var COPIED_FEEDBACK_MS = 1200;
+  var COPY_ICON_PATH = "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2m0 16H8V7h11z";
+  var CHECK_ICON_PATH = "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+  function isTargetPage4(hash = location.hash) {
+    return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
+  }
+  function getMatchId(href) {
+    return String(href || "").match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
+  }
+  function cemStatusTone(value) {
+    if (value === "out") return "error";
+    if (value === "hired") return "success";
+    if (value === "hot_case" || value === "hot_hot_case") return "warning";
+    return "";
+  }
+  function executeCemStatusLine(runtime) {
+    runtime.registerSource("kam/toolbox/src/features/kam-suite/cem-status-line.js");
+    const infoByMatchId = /* @__PURE__ */ new Map();
+    const failedMatchIds = /* @__PURE__ */ new Set();
+    let loadPromise = null;
+    function getRows() {
+      return [...document.querySelectorAll(ROW_SELECTOR4)].filter((row) => row.querySelector(KAM_STATUS_CELL_SELECTOR));
+    }
+    function matchIdFromRow(row) {
+      return getMatchId(row.querySelector(MATCH_LINK_SELECTOR)?.getAttribute("href"));
+    }
+    function ensureStyle() {
+      if (document.getElementById(STYLE_ID3)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID3;
+      style.textContent = `
+      .${LINE_CLASS} { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; font-family: inherit; font-size: 0.75rem; line-height: 1.66; letter-spacing: 0.03333em; color: rgba(0, 0, 0, 0.6); }
+      .${LINE_CLASS}__label { font-weight: 500; }
+      .${LINE_CLASS}__chip { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 16px; background: rgba(0, 0, 0, 0.08); color: rgba(0, 0, 0, 0.87); white-space: nowrap; }
+      .${LINE_CLASS}__chip[data-tone="error"] { background: #fdeded; color: #d32f2f; }
+      .${LINE_CLASS}__chip[data-tone="success"] { background: #edf7ed; color: #2e7d32; }
+      .${LINE_CLASS}__chip[data-tone="warning"] { background: #fff4e5; color: #b45309; }
+      .${LINE_CLASS}__name { display: inline-flex; align-items: center; gap: 3px; margin: 0; padding: 1px 4px; border: 0; border-radius: 4px; background: transparent; color: rgba(0, 0, 0, 0.87); font: inherit; cursor: copy; transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); }
+      .${LINE_CLASS}__name:hover { background: rgba(0, 0, 0, 0.04); }
+      .${LINE_CLASS}__name svg { width: 14px; height: 14px; fill: currentColor; opacity: 0.6; }
+      .${LINE_CLASS}__name[data-copied="true"] { color: #2e7d32; }
+      .${LINE_CLASS}__name[data-copied="true"] svg { opacity: 1; }
+      .${LINE_CLASS}__muted { font-style: italic; }
+    `;
+      document.head.appendChild(style);
+    }
+    function icon(path) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      pathEl.setAttribute("d", path);
+      svg.appendChild(pathEl);
+      return svg;
+    }
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+    }
+    function nameButton(name) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `${LINE_CLASS}__name`;
+      button.title = "CEM-Namen kopieren";
+      const label = document.createElement("span");
+      label.textContent = name;
+      button.append(label, icon(COPY_ICON_PATH));
+      return button;
+    }
+    function renderState(matchId) {
+      const info = infoByMatchId.get(matchId);
+      if (info) return { key: `ready|${info.cemStatus?.value || ""}|${info.cemName}`, info };
+      if (failedMatchIds.has(matchId)) return { key: "error" };
+      return { key: "loading" };
+    }
+    function fillLine(line, state) {
+      const label = document.createElement("span");
+      label.className = `${LINE_CLASS}__label`;
+      label.textContent = "CEM";
+      const parts = [label];
+      if (state.info) {
+        const chip = document.createElement("span");
+        chip.className = `${LINE_CLASS}__chip`;
+        chip.textContent = state.info.cemStatus?.label || "Kein Status";
+        const tone = cemStatusTone(state.info.cemStatus?.value);
+        if (tone) chip.dataset.tone = tone;
+        parts.push(chip);
+        if (state.info.cemName) {
+          parts.push(nameButton(state.info.cemName));
+        } else {
+          const muted = document.createElement("span");
+          muted.className = `${LINE_CLASS}__muted`;
+          muted.textContent = "keine CEM-Person";
+          parts.push(muted);
+        }
+      } else {
+        const muted = document.createElement("span");
+        muted.className = `${LINE_CLASS}__muted`;
+        muted.textContent = state.key === "error" ? "nicht ladbar" : "lädt …";
+        parts.push(muted);
+      }
+      line.replaceChildren(...parts);
+    }
+    function renderLines() {
+      getRows().forEach((row) => {
+        const cell = row.querySelector(KAM_STATUS_CELL_SELECTOR);
+        const matchId = matchIdFromRow(row);
+        let line = cell.querySelector(`.${LINE_CLASS}`);
+        if (!matchId) {
+          line?.remove();
+          return;
+        }
+        if (!line) {
+          line = document.createElement("div");
+          line.className = LINE_CLASS;
+          cell.appendChild(line);
+        }
+        const state = renderState(matchId);
+        if (line.dataset.matchId === matchId && line.dataset.stateKey === state.key) return;
+        line.dataset.matchId = matchId;
+        line.dataset.stateKey = state.key;
+        fillLine(line, state);
+      });
+    }
+    async function loadCemInfo({ force = false } = {}) {
+      if (loadPromise) return loadPromise;
+      const matchIds = [...new Set(getRows().map(matchIdFromRow).filter(Boolean))].filter((id) => force || !infoByMatchId.has(id) && !failedMatchIds.has(id));
+      if (!matchIds.length) return;
+      loadPromise = (async () => {
+        try {
+          const fetched = await fetchMatchCemInfo(getKamGraphqlAdapter().request, matchIds);
+          for (const id of matchIds) {
+            if (fetched.has(id)) {
+              infoByMatchId.set(id, fetched.get(id));
+              failedMatchIds.delete(id);
+            } else if (!infoByMatchId.has(id)) {
+              failedMatchIds.add(id);
+            }
+          }
+        } catch (error) {
+          for (const id of matchIds) if (!infoByMatchId.has(id)) failedMatchIds.add(id);
+          console.warn("[Werkia KAM CEM-Status]", error);
+        } finally {
+          renderLines();
+          loadPromise = null;
+        }
+      })();
+      return loadPromise;
+    }
+    let scheduled = false;
+    const scheduleLines = () => {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        if (!isTargetPage4()) return;
+        ensureStyle();
+        renderLines();
+        loadCemInfo().catch((error) => console.warn("[Werkia KAM CEM-Status]", error));
+      }, 150);
+    };
+    runtime.addDocumentListener("click", (event) => {
+      const button = event.target.closest?.(`.${LINE_CLASS}__name`);
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const name = button.querySelector("span")?.textContent || "";
+      if (!name) return;
+      copyText(name).then(() => {
+        button.dataset.copied = "true";
+        button.title = "Kopiert";
+        button.querySelector("svg")?.replaceWith(icon(CHECK_ICON_PATH));
+        runtime.setTimeout(() => {
+          delete button.dataset.copied;
+          button.title = "CEM-Namen kopieren";
+          button.querySelector("svg")?.replaceWith(icon(COPY_ICON_PATH));
+        }, COPIED_FEEDBACK_MS);
+      });
+    }, true);
+    runtime.createMutationObserver(scheduleLines).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleLines);
+    runtime.setInterval(() => {
+      if (isTargetPage4()) loadCemInfo({ force: true }).catch((error) => console.warn("[Werkia KAM CEM-Status]", error));
+    }, REFRESH_INTERVAL_MS3);
+    scheduleLines();
+  }
+
   // src/features/kam-suite/questionnaire-context.js
   var QUESTIONNAIRE_CONTEXT_KEY = "__werkiaKamQuestionnaireContext";
   var EMPTY_CONTEXT = Object.freeze({ key: "", candidateId: "", jobId: "", candidateUrl: "", jobPositionUrl: "" });
-  function isTargetPage4(hash = location.hash) {
+  function isTargetPage5(hash = location.hash) {
     return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
   function questionnaireResourceIdFromRow(row, resource) {
@@ -1587,7 +1865,7 @@
     runtime.registerSource("kam/toolbox/src/features/kam-suite/questionnaire-context.js");
     const context = getQuestionnaireContext();
     function captureContext(event) {
-      if (!isTargetPage4()) return;
+      if (!isTargetPage5()) return;
       const button = event.target.closest('button[aria-label="OM Fragebogen"]');
       if (!button) return;
       const row = button.closest("tr");
@@ -1830,7 +2108,7 @@
       document.body.appendChild(panel);
     }
     async function handleQuestionnaireButtonClick(event) {
-      if (!isTargetPage4()) return;
+      if (!isTargetPage5()) return;
       const button = event.target.closest('button[aria-label="OM Fragebogen"]');
       if (!button) return;
       const row = button.closest("tr");
@@ -1857,7 +2135,7 @@
     }, true);
     let questionnaireWasOpen = false;
     function cleanupIfDialogClosed() {
-      if (!isTargetPage4()) {
+      if (!isTargetPage5()) {
         removeVacancyPanel();
         questionnaireWasOpen = false;
         return;
@@ -2605,7 +2883,7 @@
       document.getElementById(OM_NOTES_ID)?.remove();
     }
     function runQuestionnaireFeatures() {
-      if (!isTargetPage4()) {
+      if (!isTargetPage5()) {
         resetQuestionnaireFeatures();
         return;
       }
@@ -2877,7 +3155,7 @@
     }
     function updateRouteBox() {
       const dialog = questionnaireDialog();
-      if (!isTargetPage4() || !dialog) {
+      if (!isTargetPage5() || !dialog) {
         document.getElementById(ROUTE_BOX_ID)?.remove();
         return;
       }
@@ -2915,7 +3193,7 @@
       }, 200);
     }
     function waitForQuestionnaireDialog(routeKey, attempt = 0) {
-      if (context.key !== routeKey || !isTargetPage4()) return;
+      if (context.key !== routeKey || !isTargetPage5()) return;
       const dialog = questionnaireDialog();
       if (dialog) {
         scheduleUpdate();
@@ -2925,7 +3203,7 @@
       runtime.setTimeout(() => waitForQuestionnaireDialog(routeKey, attempt + 1), 125);
     }
     function captureQuestionnaireClick(event) {
-      if (!isTargetPage4()) return;
+      if (!isTargetPage5()) return;
       const button = event.target?.closest?.('button[aria-label="OM Fragebogen"]');
       if (!button) return;
       if (!context.key) return;
@@ -2945,12 +3223,12 @@
   }
 
   // src/features/kam-suite/candidate-file-popup.js
-  var ROW_SELECTOR4 = "tbody tr.RaDataTable-row";
+  var ROW_SELECTOR5 = "tbody tr.RaDataTable-row";
   var WVL_CELL_SELECTOR3 = "td.column-kamFollowUpDate";
   var CANDIDATE_CELL_SELECTOR = "td.column-candidateId";
   var CANDIDATE_ACTIONS_CELL_SELECTOR = "td.column-candidateActions";
   var BULK_DIALOG_ID = "werkia-kam-wvl-bulk-dialog";
-  function isTargetPage5(hash = location.hash) {
+  function isTargetPage6(hash = location.hash) {
     return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
   function executeCandidateFilePopup(runtime) {
@@ -2958,7 +3236,7 @@
     let pendingCandidateId = "";
     let pendingCandidateAt = 0;
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR4)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
+      return [...document.querySelectorAll(ROW_SELECTOR5)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
     }
     function visibleOverlay(element) {
       if (!element) return false;
@@ -3034,7 +3312,7 @@
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        if (!isTargetPage5()) return;
+        if (!isTargetPage6()) return;
         injectStyle();
         installCandidateFileHooks();
         installCandidatePopupButton();
@@ -3456,11 +3734,11 @@
 
   // src/features/kam-suite/chat-icon-redirect.js
   var CHAT_LINK_SELECTOR = 'a[aria-label="Chat"][href*="#/Chat/?filter"]';
-  var ROW_SELECTOR5 = "tr.RaDataTable-row";
-  var MATCH_LINK_SELECTOR = 'a[href*="#/Match/"]';
+  var ROW_SELECTOR6 = "tr.RaDataTable-row";
+  var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
   var EMPLOYER_LINK_SELECTOR3 = 'a[href*="#/Employer/"]';
   function getMatchIdFromChatRow(row) {
-    const link = row?.querySelector(MATCH_LINK_SELECTOR);
+    const link = row?.querySelector(MATCH_LINK_SELECTOR2);
     return link?.getAttribute("href")?.match(/#\/Match\/([^/?]+)/i)?.[1] || "";
   }
   function getEmployerIdFromChatRow(row) {
@@ -3487,7 +3765,7 @@
       if (!isTargetPage()) return;
       const link = event.target.closest(CHAT_LINK_SELECTOR);
       if (!link) return;
-      const row = link.closest(ROW_SELECTOR5);
+      const row = link.closest(ROW_SELECTOR6);
       const matchId = getMatchIdFromChatRow(row);
       if (!matchId) return;
       event.preventDefault();
@@ -3852,10 +4130,10 @@
   }
 
   // ../../shared/js/slack-exports/index.js
-  var ROW_SELECTOR6 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
-  var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
+  var ROW_SELECTOR7 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var MATCH_LINK_SELECTOR3 = 'a[href*="#/Match/"]';
   var EXPORTS_SELECTOR = ".werkia-slack-exports";
-  var STYLE_ID3 = "werkia-slack-exports-style";
+  var STYLE_ID4 = "werkia-slack-exports-style";
   var SENT_STORE_KEY = "werkia_vt_slack_exports_sent_v1";
   var APPOINTMENT_DATE_RE = /\b\d{1,2}\.\s*(?:jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|apr(?:il)?|mai|jun(?:i)?|jul(?:i)?|aug(?:ust)?|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\.?\s+\d{4}\s+\d{1,2}:\d{2}\b/i;
   var APPOINTMENT_DATE_ALL_RE = new RegExp(APPOINTMENT_DATE_RE.source, "gi");
@@ -3899,7 +4177,7 @@
   }
   employees: allEmployees(filter: {}) { id firstName lastName slackId __typename }
 }`;
-  function isTargetPage6(hash = location.hash, role) {
+  function isTargetPage7(hash = location.hash, role) {
     return new RegExp(`#/${role}/MyMatches(?:[/?]|$)`, "i").test(hash);
   }
   function matchIdFromHref(href) {
@@ -3977,9 +4255,9 @@
       }
     }
     function ensureStyle() {
-      if (document.getElementById(STYLE_ID3)) return;
+      if (document.getElementById(STYLE_ID4)) return;
       const style = document.createElement("style");
-      style.id = STYLE_ID3;
+      style.id = STYLE_ID4;
       style.textContent = `
       .werkia-slack-exports { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
       .werkia-slack-export { min-height:24px; padding:3px 8px; border:0; border-radius:5px; background:#4956df; color:#fff; cursor:pointer; font:700 11px/1 Arial,sans-serif; white-space:nowrap; }
@@ -3992,7 +4270,7 @@
       return [...row.querySelectorAll("td")].find((cell) => hasAppointmentDate(cell.innerText));
     }
     function matchIdFromRow(row) {
-      return matchIdFromHref(row.querySelector(MATCH_LINK_SELECTOR2)?.href);
+      return matchIdFromHref(row.querySelector(MATCH_LINK_SELECTOR3)?.href);
     }
     async function loadMatchData(matchId) {
       if (matchDataCache.has(matchId)) return matchDataCache.get(matchId);
@@ -4100,12 +4378,12 @@
       document.querySelectorAll(EXPORTS_SELECTOR).forEach((element) => element.remove());
     }
     function syncExports() {
-      if (!isTargetPage6(location.hash, role)) {
+      if (!isTargetPage7(location.hash, role)) {
         removeExports();
         return;
       }
       ensureStyle();
-      document.querySelectorAll(ROW_SELECTOR6).forEach(addExports);
+      document.querySelectorAll(ROW_SELECTOR7).forEach(addExports);
     }
     function scheduleSync() {
       if (syncTimer !== null) return;
@@ -4119,7 +4397,7 @@
     runtime.addCleanup?.(() => {
       if (syncTimer !== null) runtime.clearTimeout(syncTimer);
       removeExports();
-      document.getElementById(STYLE_ID3)?.remove();
+      document.getElementById(STYLE_ID4)?.remove();
     });
     scheduleSync();
   }
@@ -4570,7 +4848,7 @@
         const selectedIndex = radios.findIndex((radio) => radio.checked);
         state.employer = employers[selectedIndex >= 0 ? selectedIndex : 0];
         renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
-        loadMatches(dialog, state).catch((error) => renderCaughtError(dialog, error));
+        loadMatches2(dialog, state).catch((error) => renderCaughtError(dialog, error));
       });
       dialog.replaceChildren(
         buildHead("Match Outen – Arbeitgeber bestätigen"),
@@ -4582,7 +4860,7 @@
       );
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
     }
-    async function loadMatches(dialog, state) {
+    async function loadMatches2(dialog, state) {
       renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
       const matches = await matchesForEmployer(state.employer.id);
       state.matches = matches;
@@ -4769,7 +5047,7 @@
         }
         if (employers.length === 1 && normalise(employers[0].name) === normalise(parsed.employerName)) {
           state.employer = employers[0];
-          return loadMatches(dialog, state);
+          return loadMatches2(dialog, state);
         }
         renderEmployerPicker(dialog, state, employers);
       }).catch((error) => renderCaughtError(dialog, error));
@@ -4984,7 +5262,7 @@
         if (typeof GM_setValue === "function") GM_setValue(STORAGE_KEY, value);
       }
     });
-    const isTargetPage7 = () => isTargetRoute(location.hash, routes);
+    const isTargetPage8 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
     function ensureStyle() {
@@ -5163,7 +5441,7 @@
       select.value = active;
     }
     function render() {
-      if (!isTargetPage7()) {
+      if (!isTargetPage8()) {
         document.getElementById(IDS3.bar)?.remove();
         closeDialog();
         return;
@@ -5231,7 +5509,7 @@
     { label: "Freitext", prefix: "" }
   ];
   var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
-  var STYLE_ID4 = "werkia-om-notes-template-style";
+  var STYLE_ID5 = "werkia-om-notes-template-style";
   var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
   var CEM_TARGET_SELECTOR = 'textarea[name="cemNotes"], input[name="cemNotes"]';
   var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
@@ -5241,8 +5519,12 @@
   function appendOmNote(currentValue, addition) {
     const current = String(currentValue || "").trim();
     const next = String(addition || "").trim();
-    if (!next) return current;
-    if (!current) return next;
+    if (!next) {
+      return current;
+    }
+    if (!current) {
+      return next;
+    }
     return `${current}
 ${next}`;
   }
@@ -5253,8 +5535,12 @@ ${next}`;
   function toggleOmNote(currentValue, note) {
     const current = String(currentValue || "");
     const value = String(note || "").trim();
-    if (!value) return current.trim();
-    if (!hasOmNote(current, value)) return appendOmNote(current, value);
+    if (!value) {
+      return current.trim();
+    }
+    if (!hasOmNote(current, value)) {
+      return appendOmNote(current, value);
+    }
     const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return current.split(/\r?\n/).filter((line) => !new RegExp(`^\\s*${escaped}\\s*$`, "i").test(line)).map((line) => line.trim()).filter(Boolean).join("\n");
   }
@@ -5271,21 +5557,32 @@ ${next}`;
     field.dispatchEvent(new ViewEvent("change", { bubbles: true }));
   }
   function createObserver(runtime, callback) {
-    if (runtime?.createMutationObserver) return runtime.createMutationObserver(callback);
-    if (runtime?.MutationObserver) return new runtime.MutationObserver(callback);
+    if (runtime?.createMutationObserver) {
+      return runtime.createMutationObserver(callback);
+    }
+    if (runtime?.MutationObserver) {
+      return new runtime.MutationObserver(callback);
+    }
     return new MutationObserver(callback);
   }
   function addWindowListener(runtime, type, listener) {
-    if (runtime?.addWindowListener) runtime.addWindowListener(type, listener);
-    else window.addEventListener(type, listener);
+    if (runtime?.addWindowListener) {
+      runtime.addWindowListener(type, listener);
+    } else {
+      window.addEventListener(type, listener);
+    }
   }
   function addCleanup(runtime, callback) {
-    if (runtime?.addCleanup) runtime.addCleanup(callback);
+    if (runtime?.addCleanup) {
+      runtime.addCleanup(callback);
+    }
   }
   function ensureStyles() {
-    if (document.getElementById(STYLE_ID4)) return;
+    if (document.getElementById(STYLE_ID5)) {
+      return;
+    }
     const style = document.createElement("style");
-    style.id = STYLE_ID4;
+    style.id = STYLE_ID5;
     style.textContent = `
     [${LAYOUT_ROOT_ATTR}="left"] { --om-flags-panel-width:min(620px, max(500px, 35%)); --om-flags-gap:16px; position:relative !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; max-width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; margin-left:calc(var(--om-flags-panel-width) + var(--om-flags-gap)) !important; flex:0 0 calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; }
@@ -5320,7 +5617,9 @@ ${next}`;
   function sharedLayoutRoot(first, second) {
     let parent = first.parentElement;
     while (parent && parent !== document.body) {
-      if (parent.contains(second)) return parent;
+      if (parent.contains(second)) {
+        return parent;
+      }
       parent = parent.parentElement;
     }
     return null;
@@ -5328,7 +5627,9 @@ ${next}`;
   function positionLeftToolbar(toolbar, anchor, fallbackRoot) {
     const ElementClass = toolbar.ownerDocument.defaultView?.HTMLElement;
     const positioningRoot = ElementClass && toolbar.offsetParent instanceof ElementClass ? toolbar.offsetParent : fallbackRoot;
-    if (!positioningRoot) return;
+    if (!positioningRoot) {
+      return;
+    }
     const documentRef = toolbar.ownerDocument;
     const viewportHeight = documentRef.defaultView?.innerHeight || 0;
     const rootRect = positioningRoot.getBoundingClientRect();
@@ -5353,13 +5654,17 @@ ${next}`;
     let currentField = null;
     function syncToolbarState(field = currentField) {
       const toolbar = document.getElementById(TOOLBAR_ID);
-      if (!field || !toolbar) return;
+      if (!field || !toolbar) {
+        return;
+      }
       toolbar.querySelectorAll(".werkia-om-notes-chip").forEach((button) => {
         button.classList.toggle("is-active", hasOmNote(field.value, button.title));
       });
     }
     function write(nextValue) {
-      if (!currentField) return;
+      if (!currentField) {
+        return;
+      }
       setNativeValue(currentField, nextValue);
       renderToolbar(true);
     }
@@ -5378,14 +5683,18 @@ ${next}`;
       currentField = field;
       ensureStyles();
       const anchor = toolbarAnchor(field);
-      if (!anchor) return;
+      if (!anchor) {
+        return;
+      }
       const cemField = document.querySelector(CEM_TARGET_SELECTOR);
       const cemAnchor = cemField ? toolbarAnchor(cemField) : null;
       const layoutRoot = cemAnchor ? sharedLayoutRoot(anchor, cemAnchor) : null;
       const layout = layoutRoot ? "left" : "above";
       let toolbar = document.getElementById(TOOLBAR_ID);
       if (!force && toolbar?.isConnected && toolbar.dataset.layout === layout && currentField === field) {
-        if (layoutRoot) positionLeftToolbar(toolbar, anchor, layoutRoot);
+        if (layoutRoot) {
+          positionLeftToolbar(toolbar, anchor, layoutRoot);
+        }
         syncToolbarState(field);
         return;
       }
@@ -5476,14 +5785,18 @@ ${next}`;
       });
       custom.appendChild(addButton);
       toolbar.appendChild(custom);
-      if (layoutRoot) positionLeftToolbar(toolbar, anchor, layoutRoot);
+      if (layoutRoot) {
+        positionLeftToolbar(toolbar, anchor, layoutRoot);
+      }
       if (!field.dataset.werkiaOmNotesTemplatesBound) {
         field.dataset.werkiaOmNotesTemplatesBound = "true";
         field.addEventListener("input", () => syncToolbarState(field));
       }
     }
     function scheduleRender() {
-      if (refreshTimer !== null) return;
+      if (refreshTimer !== null) {
+        return;
+      }
       const schedule = runtime?.setTimeout ? runtime.setTimeout.bind(runtime) : window.setTimeout.bind(window);
       refreshTimer = schedule(() => {
         refreshTimer = null;
@@ -5501,7 +5814,7 @@ ${next}`;
       }
       observer.disconnect();
       removeToolbar();
-      document.getElementById(STYLE_ID4)?.remove();
+      document.getElementById(STYLE_ID5)?.remove();
     });
     renderToolbar();
   }
@@ -5521,7 +5834,7 @@ ${next}`;
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID5 = "werkia-urgent-vacancy-style";
+      const STYLE_ID6 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const MATCH_PRESENT_ROW_CLASS = "werkia-cem-match-present-row";
@@ -5660,9 +5973,9 @@ ${next}`;
         return rowsByJobId;
       }
       function ensureStyles2() {
-        if (document.getElementById(STYLE_ID5)) return;
+        if (document.getElementById(STYLE_ID6)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID5;
+        style.id = STYLE_ID6;
         style.textContent = `
       .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
@@ -5751,6 +6064,7 @@ ${next}`;
     { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions },
     { id: "kam-suite-contact-badges", execute: executeContactBadges },
     { id: "kam-suite-vacancy-city-badges", execute: executeVacancyCityBadges },
+    { id: "kam-suite-cem-status-line", execute: executeCemStatusLine },
     // questionnaire-context must run before route-calculation: both listen
     // for the same "OM Fragebogen" click in the capturing phase, and
     // route-calculation reads the context that questionnaire-context just

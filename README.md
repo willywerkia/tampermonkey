@@ -12,6 +12,7 @@ Enthaltene Funktionen:
 
 - Setzt Wiedervorlagedatum und KAM-Status fuer mehrere Zeilen in der Matches-Liste gleichzeitig. Bei Out werden offene Terminvorschlaege abgelehnt.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Kontakthaeufigkeit (z. B. "Direkter Kontakt", "Kein Kontakt").
+- Zeigt in Meine Matches unter dem KAM Status den CEM Status und die zustaendige CEM-Person. Ein Klick auf den Namen kopiert ihn.
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich Kandidat/Vakanz des offenen Fragebogens fuer andere Funktionen.
 - Blendet neben dem OM-Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein ("Zustaendigkeiten", "Dein Profil").
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Ampel-Empfehlung plus Notizfeld.
