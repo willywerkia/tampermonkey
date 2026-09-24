@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.71
+// @version      1.2.72
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -644,6 +644,7 @@
   var IDS = {
     button: "werkia-kam-wvl-bulk-button",
     statusButton: "werkia-kam-status-bulk-button",
+    forwardButton: "werkia-kam-interview-forward-bulk-button",
     dialog: "werkia-kam-wvl-bulk-dialog",
     style: "werkia-kam-wvl-bulk-style",
     status: "werkia-kam-wvl-bulk-status",
@@ -706,6 +707,23 @@
     status
   }
 }`;
+  var SUGGESTED_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
+  items: allInterviews(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
+    id
+    status
+    dates
+  }
+  total: _allInterviewsMeta(filter: $filter, page: $page, perPage: $perPage) {
+    count
+  }
+}`;
+  var FORWARD_INTERVIEW_MUTATION = `mutation updateInterview($id: UUID, $status: String, $dates: [DateTime!]) {
+  data: updateInterview(id: $id, status: $status, dates: $dates) {
+    id
+    matchId
+    status
+  }
+}`;
   var UPDATE_MATCH_STATUS_MUTATION = `mutation updateMatch($id: String!, $kamStatus: String) {
   data: updateMatch(id: $id, kamStatus: $kamStatus) {
     id
@@ -744,6 +762,9 @@
   }
   function openInterviewIds(items) {
     return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
+  }
+  function suggestedInterviews(items) {
+    return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
   }
   function resolveOutFeedbackText(reason) {
     return reason?.customFeedback || reason?.label || "";
@@ -811,8 +832,8 @@
       const style = document.createElement("style");
       style.id = IDS.style;
       style.textContent = `
-      #${IDS.button}, #${IDS.statusButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-      #${IDS.button}:hover, #${IDS.statusButton}:hover { background: #fff3e0; }
+      #${IDS.button}, #${IDS.statusButton}, #${IDS.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      #${IDS.button}:hover, #${IDS.statusButton}:hover, #${IDS.forwardButton}:hover { background: #fff3e0; }
       #${IDS.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
       #${IDS.dialog}::backdrop { background: rgba(0,0,0,.38); }
       #${IDS.dialog} .wkw-head { padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
@@ -979,6 +1000,40 @@
       dialog.showModal();
       dialog.querySelector('[name="kamStatus"]').focus();
     }
+    function renderForwardDialog() {
+      document.getElementById(IDS.dialog)?.remove();
+      const choices = getEmployerChoices();
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS.dialog;
+      dialog.innerHTML = `
+      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten</div>
+      <form class="wkw-body" method="dialog">
+        <label>Arbeitgeber
+          <select name="employer" required>
+            <option value="__all__">Alle sichtbaren Arbeitgeber (${getRows().length} sichtbare Matches)</option>
+            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
+          </select>
+        </label>
+        <div class="wkw-note">Alle Terminvorschläge mit Status „Vorschlag“ der ausgewählten sichtbaren Matches werden auf „Weitergeleitet“ gesetzt, wie mit dem Button „Weiterleiten“ im Termindialog. Vor dem Weiterleiten wird die genaue Anzahl angezeigt.</div>
+        <div id="${IDS.status}">Bitte Arbeitgeber prüfen.</div>
+        <div class="wkw-actions">
+          <button type="button" data-action="close">Abbrechen</button>
+          <button type="button" data-action="apply">Weiterleiten</button>
+        </div>
+      </form>`;
+      document.body.appendChild(dialog);
+      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
+      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
+        if (event.currentTarget.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        applyForwardFromDialog(dialog);
+      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
+      dialog.showModal();
+      dialog.querySelector('[name="employer"]').focus();
+    }
     function visibleOutFeedbackDialogs() {
       return [...document.querySelectorAll('[role="dialog"]')].filter((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]'));
     }
@@ -1082,6 +1137,100 @@
         declined += 1;
       }
       return declined;
+    }
+    async function suggestedInterviewsForMatch(matchId) {
+      const { request } = getKamGraphqlAdapter();
+      const perPage = 100;
+      const interviews = [];
+      let page = 0;
+      let total = Infinity;
+      let loaded = 0;
+      while (loaded < total) {
+        const result = await request(SUGGESTED_INTERVIEWS_QUERY, {
+          filter: { matchId, statuses: ["suggestion"] },
+          page,
+          perPage,
+          sortField: "status",
+          sortOrder: "ASC"
+        });
+        const items = result?.items || [];
+        loaded += items.length;
+        interviews.push(...suggestedInterviews(items));
+        total = Number(result?.total?.count) || 0;
+        if (!items.length || items.length < perPage) break;
+        page += 1;
+      }
+      return interviews;
+    }
+    async function forwardInterview(matchId, interview) {
+      const { request } = getKamGraphqlAdapter();
+      const result = await request(FORWARD_INTERVIEW_MUTATION, { id: interview.id, status: "forwarded", dates: interview.dates });
+      const updated = result?.data;
+      if (updated?.id !== interview.id || updated.status !== "forwarded" || updated.matchId !== matchId) {
+        throw new Error(`Terminvorschlag ${interview.id} wurde nicht als weitergeleitet bestätigt`);
+      }
+    }
+    async function applyForwardFromDialog(dialog) {
+      if (running) return;
+      const employerId = dialog.querySelector('[name="employer"]').value;
+      const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
+      if (!choice?.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
+      running = true;
+      cancelRequested = false;
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      applyButton.dataset.completed = "false";
+      setRunningControls(dialog, true);
+      const matchIds = [...new Set(choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean))];
+      const queue = [];
+      const failures = [];
+      for (let index = 0; index < matchIds.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Lade Terminvorschläge ${index + 1} von ${matchIds.length} …`, "busy");
+        try {
+          (await suggestedInterviewsForMatch(matchIds[index])).forEach((interview) => queue.push({ matchId: matchIds[index], interview }));
+        } catch (error) {
+          failures.push(`Laden ${index + 1}: ${error.message}`);
+        }
+      }
+      if (cancelRequested) {
+        running = false;
+        setStatus("Lauf gestoppt, bevor etwas weitergeleitet wurde.", "busy");
+        return finishDialog(dialog);
+      }
+      if (!queue.length) {
+        running = false;
+        setStatus(failures.length ? `Keine Vorschläge weitergeleitet, ${failures.length} Matches nicht ladbar. ${failures.slice(0, 3).join(" | ")}` : "Keine Terminvorschläge mit Status „Vorschlag“ gefunden.", failures.length ? "error" : "ok");
+        return finishDialog(dialog);
+      }
+      const matchCount = new Set(queue.map((item) => item.matchId)).size;
+      const scopeText = employerId === "__all__" ? "aller sichtbaren Arbeitgeber" : `von „${choice.name}“`;
+      const failureText = failures.length ? ` (${failures.length} Matches konnten nicht geladen werden und bleiben unverändert.)` : "";
+      if (!window.confirm(`${queue.length} Terminvorschläge aus ${matchCount} Matches ${scopeText} weiterleiten?${failureText}`)) {
+        running = false;
+        setRunningControls(dialog, false);
+        return setStatus("Nichts weitergeleitet.", "");
+      }
+      let forwarded = 0;
+      for (let index = 0; index < queue.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Leite weiter ${index + 1} von ${queue.length} …`, "busy");
+        try {
+          await forwardInterview(queue[index].matchId, queue[index].interview);
+          forwarded += 1;
+        } catch (error) {
+          failures.push(`${index + 1}: ${error.message}`);
+        }
+      }
+      running = false;
+      if (forwarded > 0) dialog.dataset.needsReload = "true";
+      if (cancelRequested) {
+        setStatus(`Lauf gestoppt: ${forwarded} weitergeleitet${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Vorschläge blieben unverändert.`, "busy");
+      } else if (failures.length) {
+        setStatus(`${forwarded} weitergeleitet, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else {
+        setStatus(`${forwarded} Terminvorschläge erfolgreich weitergeleitet.`, "ok");
+      }
+      finishDialog(dialog);
     }
     async function applyStatusFromDialog(dialog) {
       if (running) return;
@@ -1216,6 +1365,21 @@
           renderStatusDialog();
         });
         statusHeader.appendChild(button);
+      }
+      const interviewHeader = document.querySelector("th.column-interview");
+      if (interviewHeader && !interviewHeader.querySelector(`#${IDS.forwardButton}`)) {
+        const button = document.createElement("button");
+        button.id = IDS.forwardButton;
+        button.type = "button";
+        button.textContent = "Alle weiterleiten";
+        button.title = "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten";
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
+          renderForwardDialog();
+        });
+        interviewHeader.appendChild(button);
       }
     }
     let scheduled = false;
@@ -1664,7 +1828,7 @@
       const style = document.createElement("style");
       style.id = STYLE_ID3;
       style.textContent = `
-      .${LINE_CLASS} { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; font-family: inherit; font-size: 0.75rem; line-height: 1.66; letter-spacing: 0.03333em; color: rgba(0, 0, 0, 0.6); }
+      .${LINE_CLASS} { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 10px; font-family: inherit; font-size: 0.75rem; line-height: 1.66; letter-spacing: 0.03333em; color: rgba(0, 0, 0, 0.6); }
       .${LINE_CLASS}__label { font-weight: 500; }
       .${LINE_CLASS}__chip { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 16px; background: rgba(0, 0, 0, 0.08); color: rgba(0, 0, 0, 0.87); white-space: nowrap; }
       .${LINE_CLASS}__chip[data-tone="error"] { background: #fdeded; color: #d32f2f; }

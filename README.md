@@ -10,7 +10,7 @@ Installation: die gewuenschte `.user.js`-Datei unten anklicken - Tampermonkey er
 
 Enthaltene Funktionen:
 
-- Setzt Wiedervorlagedatum und KAM-Status fuer mehrere Zeilen in der Matches-Liste gleichzeitig. Bei Out werden offene Terminvorschlaege abgelehnt.
+- Setzt Wiedervorlagedatum und KAM-Status fuer mehrere Zeilen in der Matches-Liste gleichzeitig. Bei Out werden offene Terminvorschlaege abgelehnt. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der sichtbaren Matches (optional nur eines Arbeitgebers) weiter.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Kontakthaeufigkeit (z. B. "Direkter Kontakt", "Kein Kontakt").
 - Zeigt in Meine Matches unter dem KAM Status den CEM Status und die zustaendige CEM-Person. Ein Klick auf den Namen kopiert ihn.
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich Kandidat/Vakanz des offenen Fragebogens fuer andere Funktionen.
