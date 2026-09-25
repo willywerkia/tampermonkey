@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.79
+// @version      1.3.80
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -4177,7 +4177,7 @@
     } catch {
       enabled = Object.fromEntries(FLAG_TYPES.map((type) => [type.key, true]));
     }
-    let hiddenEnabled = { experience: true, area: true, sentEmployer: false, employerLimit: true };
+    let hiddenEnabled = { experience: true, area: false, sentEmployer: false, employerLimit: true };
     try {
       hiddenEnabled = { ...hiddenEnabled, ...JSON.parse(localStorage.getItem(`${SETTINGS_KEY}_hide`) || "{}") };
     } catch {
