@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.78
+// @version      1.3.79
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -4062,7 +4062,7 @@
     additionalInformation
     jobAreas
     requiredYearsOfExperience
-    employer { omNotes __typename }
+    employer { id omNotes __typename }
     __typename
   }
 }`;
@@ -4073,6 +4073,15 @@
     yearsOfExperience
     __typename
   }
+}`;
+  var MATCHES_QUERY = `query allPotentialMatches($filter: PotentialMatchFilter!, $sortField: String, $sortOrder: String, $page: Int, $perPage: Int) {
+  items: allPotentialMatches(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
+    jobPositionId
+  }
+  total: _allPotentialMatchesMeta(filter: $filter, page: $page, perPage: $perPage) { count }
+}`;
+  var RANKING_JOBS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) { id employer { id } }
 }`;
   function collectOmMatchFlags(...notes) {
     const entries = /* @__PURE__ */ new Map();
@@ -4121,6 +4130,18 @@
   function shouldHideSentEmployerMatch(hasSentMatch, enabled) {
     return Boolean(hasSentMatch && enabled);
   }
+  function findEmployerOverflowIndexes(items, limit = 3) {
+    const seen = /* @__PURE__ */ new Map();
+    const overflow = /* @__PURE__ */ new Set();
+    items.forEach(({ employerId }, index) => {
+      if (!employerId) return;
+      const id = String(employerId).toLowerCase();
+      const count = (seen.get(id) || 0) + 1;
+      seen.set(id, count);
+      if (count > limit) overflow.add(index);
+    });
+    return overflow;
+  }
   function certainOmMatchExclusions(flags, candidate, job, enabled = { experience: true, area: true }) {
     if (!candidate || !job) return [];
     const reasons = [];
@@ -4146,6 +4167,8 @@
     const pending = /* @__PURE__ */ new Set();
     const candidateCache = /* @__PURE__ */ new Map();
     const candidatePending = /* @__PURE__ */ new Set();
+    const rankingCache = /* @__PURE__ */ new Map();
+    const rankingPending = /* @__PURE__ */ new Set();
     let loading = false;
     let scheduled = false;
     let enabled;
@@ -4154,7 +4177,7 @@
     } catch {
       enabled = Object.fromEntries(FLAG_TYPES.map((type) => [type.key, true]));
     }
-    let hiddenEnabled = { experience: true, area: true, sentEmployer: false };
+    let hiddenEnabled = { experience: true, area: true, sentEmployer: false, employerLimit: true };
     try {
       hiddenEnabled = { ...hiddenEnabled, ...JSON.parse(localStorage.getItem(`${SETTINGS_KEY}_hide`) || "{}") };
     } catch {
@@ -4279,7 +4302,8 @@
       const exclusionOptions = [
         { key: "experience", label: "Stellen bei zu wenig Berufserfahrung ausblenden", hint: "Nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen." },
         { key: "area", label: "Stellen mit abweichendem Fachbereich ausblenden", hint: "Nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten." },
-        { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten. Mehrere noch nicht gematchte Stellen desselben Arbeitgebers bleiben sichtbar." }
+        { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten. Mehrere noch nicht gematchte Stellen desselben Arbeitgebers bleiben sichtbar." },
+        { key: "employerLimit", label: "Ab der vierten Stelle je Arbeitgeber ausblenden", hint: "Behält die ersten drei Stellen in der AP-Reihenfolge, auch über Seitenwechsel hinweg." }
       ];
       exclusionOptions.forEach(({ key, label, hint }) => addOption(exclusions, {
         label,
@@ -4349,26 +4373,33 @@
       const cachedCandidate = candidateCache.get(candidateId);
       const candidateEntry = cachedCandidate?.expiresAt > Date.now() ? cachedCandidate : null;
       if (candidateId && !candidateEntry) loadCandidate(candidateId);
+      const cachedRanking = rankingCache.get(candidateId);
+      const ranking = cachedRanking?.expiresAt > Date.now() ? cachedRanking : null;
+      if (hiddenEnabled.employerLimit && candidateId && !ranking) loadRanking(candidateId);
       const missing = [];
+      const prepared = [];
       document.querySelectorAll(ROWS).forEach((row) => {
         const id = getJobId(row);
         if (row.dataset.werkiaOmJobId !== id) clearRow(row);
         if (!id) return;
         row.dataset.werkiaOmJobId = id;
-        const entry = cache.get(id);
-        if (!entry || entry.expiresAt <= Date.now()) {
-          if (!pending.has(id)) missing.push(id);
-        } else {
-          renderRow(row, visibleOmMatchFlagsBySource(entry.flags, enabled));
-          const reasons = certainOmMatchExclusions(entry.flags, candidateEntry?.candidate, entry.job, hiddenEnabled);
-          if (shouldHideSentEmployerMatch(row.dataset.werkiaMatchPresent === "true", hiddenEnabled.sentEmployer)) {
-            reasons.push("Kandidat hat bei diesem Arbeitgeber bereits einen gesendeten Match");
-          }
-          renderExclusion(row, reasons);
-          row.classList.toggle(HIDDEN_CLASS, !showExcluded && reasons.length > 0);
-          if (reasons.length) row.dataset.werkiaOmExclusion = reasons.join("; ");
-          else delete row.dataset.werkiaOmExclusion;
+        const cached = cache.get(id);
+        const entry = cached?.expiresAt > Date.now() ? cached : null;
+        if (!entry && !pending.has(id)) missing.push(id);
+        const reasons = certainOmMatchExclusions(entry?.flags || [], candidateEntry?.candidate, entry?.job, hiddenEnabled);
+        if (shouldHideSentEmployerMatch(row.dataset.werkiaMatchPresent === "true", hiddenEnabled.sentEmployer)) {
+          reasons.push("Kandidat hat bei diesem Arbeitgeber bereits einen gesendeten Match");
         }
+        prepared.push({ row, entry, reasons });
+      });
+      const overflow = hiddenEnabled.employerLimit && ranking?.overflowJobIds ? new Set(prepared.flatMap((item, index) => ranking.overflowJobIds.has(item.row.dataset.werkiaOmJobId) ? [index] : [])) : /* @__PURE__ */ new Set();
+      prepared.forEach(({ row, entry, reasons }, index) => {
+        if (entry) renderRow(row, visibleOmMatchFlagsBySource(entry.flags, enabled));
+        if (overflow.has(index)) reasons.push("Mehr als drei Vorschläge bei diesem Arbeitgeber");
+        renderExclusion(row, reasons);
+        row.classList.toggle(HIDDEN_CLASS, !showExcluded && reasons.length > 0);
+        if (reasons.length) row.dataset.werkiaOmExclusion = reasons.join("; ");
+        else delete row.dataset.werkiaOmExclusion;
       });
       renderControl();
       load([...new Set(missing)]);
@@ -4384,6 +4415,44 @@
         candidateCache.set(id, { candidate: null, expiresAt: Date.now() + 15 * 1e3 });
       } finally {
         candidatePending.delete(id);
+        scheduleRender();
+      }
+    }
+    async function loadRanking(id) {
+      if (rankingPending.has(id)) return;
+      rankingPending.add(id);
+      try {
+        const matches = [];
+        const perPage = 100;
+        for (let page = 0; ; page++) {
+          const result = await getObcGraphqlAdapter().request(MATCHES_QUERY, {
+            filter: { candidateId: id },
+            sortField: "score",
+            sortOrder: "DESC",
+            page,
+            perPage
+          });
+          const items = result?.items || [];
+          matches.push(...items);
+          if (!items.length || matches.length >= (result?.total?.count || 0)) break;
+        }
+        const jobIds = [...new Set(matches.map((match) => match.jobPositionId?.toLowerCase()).filter(Boolean))];
+        const jobs = [];
+        for (let index = 0; index < jobIds.length; index += perPage) {
+          const result = await getObcGraphqlAdapter().request(RANKING_JOBS_QUERY, { filter: { ids: jobIds.slice(index, index + perPage) } });
+          jobs.push(...result?.items || []);
+        }
+        const jobsById = new Map(jobs.filter((job) => job?.id).map((job) => [job.id.toLowerCase(), job]));
+        const overflowIndexes = findEmployerOverflowIndexes(matches.map((match) => ({
+          employerId: jobsById.get(match.jobPositionId?.toLowerCase())?.employer?.id
+        })));
+        const overflowJobIds = new Set([...overflowIndexes].map((index) => matches[index].jobPositionId?.toLowerCase()).filter(Boolean));
+        rankingCache.set(id, { overflowJobIds, expiresAt: Date.now() + CACHE_MS });
+      } catch (error) {
+        console.warn("[OBC OM-Flags] Match-Reihenfolge konnte nicht geladen werden:", error);
+        rankingCache.set(id, { overflowJobIds: null, expiresAt: Date.now() + 15 * 1e3 });
+      } finally {
+        rankingPending.delete(id);
         scheduleRender();
       }
     }
