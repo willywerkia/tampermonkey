@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.76
+// @version      1.3.77
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -3898,10 +3898,10 @@
     const namespace = options.namespace || "werkia";
     const getProvider = options.getProvider;
     if (options.sourcePath) runtime.registerSource(options.sourcePath);
-    const BADGE_CLASS = `werkia-${namespace}-no-go-badge`;
-    const ROW_CLASS = `werkia-${namespace}-no-go-row`;
+    const BADGE_CLASS2 = `werkia-${namespace}-no-go-badge`;
+    const ROW_CLASS2 = `werkia-${namespace}-no-go-row`;
     const CHECK_ROW_CLASS = `werkia-${namespace}-no-go-check-row`;
-    const STYLE_ID2 = `werkia-${namespace}-no-go-style`;
+    const STYLE_ID3 = `werkia-${namespace}-no-go-style`;
     const noGosByCandidate = /* @__PURE__ */ new Map();
     const employersById = /* @__PURE__ */ new Map();
     const pendingEmployerLookups = /* @__PURE__ */ new Set();
@@ -3909,20 +3909,20 @@
     let employerLoadInFlight = false;
     let renderTimer = null;
     function ensureStyles2() {
-      if (document.getElementById(STYLE_ID2)) return;
+      if (document.getElementById(STYLE_ID3)) return;
       const style = document.createElement("style");
-      style.id = STYLE_ID2;
+      style.id = STYLE_ID3;
       style.textContent = `
-      .${ROW_CLASS} > td, .${ROW_CLASS} > th { background:${LEVEL_STYLES.direct.tint} !important; }
-      .${ROW_CLASS} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.direct.accent} !important; }
+      .${ROW_CLASS2} > td, .${ROW_CLASS2} > th { background:${LEVEL_STYLES.direct.tint} !important; }
+      .${ROW_CLASS2} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.direct.accent} !important; }
       .${CHECK_ROW_CLASS} > td, .${CHECK_ROW_CLASS} > th { background:${LEVEL_STYLES.name.tint} !important; }
       .${CHECK_ROW_CLASS} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.name.accent} !important; }
     `;
       document.head.appendChild(style);
     }
     function clearRow(row) {
-      row.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
-      row.classList.remove(ROW_CLASS);
+      row.querySelectorAll(`.${BADGE_CLASS2}`).forEach((badge) => badge.remove());
+      row.classList.remove(ROW_CLASS2);
       row.classList.remove(CHECK_ROW_CLASS);
     }
     function paintRow(row, collision) {
@@ -3933,12 +3933,12 @@
       }
       ensureStyles2();
       const style = LEVEL_STYLES[collision.level];
-      row.classList.toggle(ROW_CLASS, collision.level !== "name");
+      row.classList.toggle(ROW_CLASS2, collision.level !== "name");
       row.classList.toggle(CHECK_ROW_CLASS, collision.level === "name");
-      const existing = row.querySelector(`.${BADGE_CLASS}`);
+      const existing = row.querySelector(`.${BADGE_CLASS2}`);
       if (existing && existing.dataset.level === collision.level && existing.title === described.title) return;
       const badge = existing || document.createElement("span");
-      badge.className = BADGE_CLASS;
+      badge.className = BADGE_CLASS2;
       badge.dataset.level = collision.level;
       badge.textContent = described.label;
       badge.title = described.title;
@@ -4004,9 +4004,9 @@
       }
     }
     function cleanup() {
-      document.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
-      document.querySelectorAll(`.${ROW_CLASS}, .${CHECK_ROW_CLASS}`).forEach((row) => {
-        row.classList.remove(ROW_CLASS);
+      document.querySelectorAll(`.${BADGE_CLASS2}`).forEach((badge) => badge.remove());
+      document.querySelectorAll(`.${ROW_CLASS2}, .${CHECK_ROW_CLASS}`).forEach((row) => {
+        row.classList.remove(ROW_CLASS2);
         row.classList.remove(CHECK_ROW_CLASS);
       });
     }
@@ -4031,6 +4031,381 @@
     });
   }
 
+  // ../../shared/js/werkia-graphql/questionnaire-ranks.js
+  var EXPERIENCE_RANKS = {
+    none: 0,
+    one_to_two: 1,
+    three_to_five: 2,
+    six_to_ten: 3,
+    ten_plus: 4
+  };
+
+  // src/features/om-match-flags.js
+  var ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
+  var ROWS = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var ROW_CLASS = "werkia-obc-om-must-row";
+  var HIDDEN_CLASS = "werkia-obc-om-must-hidden";
+  var BADGE_CLASS = "werkia-obc-om-must-badge";
+  var EXCLUSION_BADGE_CLASS = "werkia-obc-om-exclusion-badge";
+  var STYLE_ID2 = "werkia-obc-om-must-style";
+  var CONTROL_ID = "werkia-obc-om-must-control";
+  var SETTINGS_KEY = "werkia_obc_om_match_flags_v1";
+  var CACHE_MS = 5 * 60 * 1e3;
+  var FLAG_TYPES = [
+    { key: "experience", label: "Berufserfahrung" },
+    { key: "area", label: "Fachbereich" },
+    { key: "qualification", label: "Qualifikation/Zertifikate" }
+  ];
+  var JOBS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    additionalInformation
+    jobAreas
+    requiredYearsOfExperience
+    employer { omNotes __typename }
+    __typename
+  }
+}`;
+  var CANDIDATE_QUERY = `query Candidate($id: UUID!) {
+  data: Candidate(id: $id) {
+    id
+    jobAreas
+    yearsOfExperience
+    __typename
+  }
+}`;
+  function collectOmMatchFlags(...notes) {
+    const entries = /* @__PURE__ */ new Map();
+    for (const [index, note] of notes.entries()) {
+      const source = index === 0 ? "employer" : "vacancy";
+      for (const match of String(note || "").matchAll(/\[\s*([^\[\]]+?)\s*\]/g)) {
+        const flag = match[1].trim();
+        if (/^Muss\s*:\s*BE$/i.test(flag)) entries.set(`${source}:experience:must`, { source, type: "experience", strict: true, label: "Berufserfahrung erforderlich" });
+        else if (/^Muss\s*:\s*Fachbereich$/i.test(flag)) entries.set(`${source}:area:must`, { source, type: "area", strict: true, label: "Fachbereich strikt beachten" });
+        else {
+          const area = flag.match(/^(Muss|Plus)\s*:\s*Fachbereich\s*:\s*(.+)$/i);
+          const qualification = flag.match(/^Muss\s*:\s*Qualifikation\s*:\s*(.+)$/i);
+          if (area?.[2].trim()) {
+            const label = `${area[1].toLowerCase() === "muss" ? "Fachbereich" : "Fachbereich bevorzugt"}: ${area[2].trim()}`;
+            entries.set(`${source}:area:${label.toLocaleLowerCase("de-DE")}`, {
+              source,
+              type: "area",
+              label,
+              mustArea: area[1].toLowerCase() === "muss" ? area[2].trim() : ""
+            });
+          }
+          if (qualification?.[1].trim()) {
+            const label = `Qualifikation: ${qualification[1].trim()}`;
+            entries.set(`${source}:qualification:${label.toLocaleLowerCase("de-DE")}`, { source, type: "qualification", label });
+          }
+        }
+      }
+    }
+    return [...entries.values()];
+  }
+  function visibleOmMatchFlagLabels(entries, enabled) {
+    const visible = entries.filter((entry) => enabled[entry.type]);
+    const hasExperience = visible.some((entry) => entry.type === "experience");
+    const mustAreas = visible.filter((entry) => entry.mustArea);
+    if (hasExperience && mustAreas.length === 1) {
+      return [`nur mit BE in ${mustAreas[0].mustArea}`, ...visible.filter((entry) => entry.type !== "experience" && entry !== mustAreas[0]).map((entry) => entry.label)];
+    }
+    return visible.map((entry) => entry.label);
+  }
+  function visibleOmMatchFlagsBySource(entries, enabled) {
+    return {
+      employer: visibleOmMatchFlagLabels(entries.filter((entry) => entry.source === "employer"), enabled),
+      vacancy: visibleOmMatchFlagLabels(entries.filter((entry) => entry.source === "vacancy"), enabled)
+    };
+  }
+  function shouldHideSentEmployerMatch(hasSentMatch, enabled) {
+    return Boolean(hasSentMatch && enabled);
+  }
+  function certainOmMatchExclusions(flags, candidate, job, enabled = { experience: true, area: true }) {
+    if (!candidate || !job) return [];
+    const reasons = [];
+    if (enabled.experience && flags.some((flag) => flag.type === "experience" && flag.strict)) {
+      const required = EXPERIENCE_RANKS[job.requiredYearsOfExperience];
+      const actual = EXPERIENCE_RANKS[candidate.yearsOfExperience];
+      if (Number.isInteger(required) && Number.isInteger(actual) && actual < required) {
+        reasons.push("Berufserfahrung unter der geforderten Stufe");
+      }
+    }
+    if (enabled.area && flags.some((flag) => flag.type === "area" && flag.strict)) {
+      const required = job.jobAreas;
+      const actual = candidate.jobAreas;
+      if (Array.isArray(required) && required.length && Array.isArray(actual) && actual.length && !required.some((area) => actual.includes(area))) {
+        reasons.push("Kein gemeinsamer hinterlegter Fachbereich");
+      }
+    }
+    return reasons;
+  }
+  function executeOmMatchFlags(runtime) {
+    runtime.registerSource("obc/toolbox/src/features/om-match-flags.js");
+    const cache = /* @__PURE__ */ new Map();
+    const pending = /* @__PURE__ */ new Set();
+    const candidateCache = /* @__PURE__ */ new Map();
+    const candidatePending = /* @__PURE__ */ new Set();
+    let loading = false;
+    let scheduled = false;
+    let enabled;
+    try {
+      enabled = { ...Object.fromEntries(FLAG_TYPES.map((type) => [type.key, true])), ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
+    } catch {
+      enabled = Object.fromEntries(FLAG_TYPES.map((type) => [type.key, true]));
+    }
+    let hiddenEnabled = { experience: true, area: true, sentEmployer: false };
+    try {
+      hiddenEnabled = { ...hiddenEnabled, ...JSON.parse(localStorage.getItem(`${SETTINGS_KEY}_hide`) || "{}") };
+    } catch {
+    }
+    let showExcluded = false;
+    function ensureStyles2() {
+      if (document.getElementById(STYLE_ID2)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID2;
+      style.textContent = `
+      .${ROW_CLASS}[data-werkia-om-sources="employer"] > td, .${ROW_CLASS}[data-werkia-om-sources="employer"] > th { background:#eee6fa !important; }
+      .${ROW_CLASS}[data-werkia-om-sources="vacancy"] > td, .${ROW_CLASS}[data-werkia-om-sources="vacancy"] > th { background:#e7f0ff !important; }
+      .${ROW_CLASS}[data-werkia-om-sources="both"] > td, .${ROW_CLASS}[data-werkia-om-sources="both"] > th { background:linear-gradient(90deg,#eee6fa,#e7f0ff) !important; }
+      .${ROW_CLASS} > :first-child { box-shadow:inset 7px 0 0 #6b46a1 !important; }
+      .${BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid;border-radius:7px;color:#fff;font:800 12px/1.3 Arial,sans-serif;vertical-align:middle; }
+      .${BADGE_CLASS}[data-source="employer"] { border-color:#6b46a1;background:#6b46a1; }
+      .${BADGE_CLASS}[data-source="vacancy"] { border-color:#245a9b;background:#245a9b; }
+      .${EXCLUSION_BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid #a43f38;border-radius:7px;background:#a43f38;color:#fff;font:800 12px/1.3 Arial,sans-serif;vertical-align:middle; }
+      .${HIDDEN_CLASS} { display:none !important; }
+      #${CONTROL_ID} { position:fixed;left:18px;bottom:18px;z-index:1200;padding:8px 10px;border:1px solid #245a9b;border-radius:7px;background:#fff;box-shadow:0 2px 8px #0003;color:#173c69;font:700 12px/1.4 Arial,sans-serif; }
+      #${CONTROL_ID} summary { cursor:pointer; }
+      #${CONTROL_ID} label { display:block;margin-top:6px;cursor:pointer;white-space:nowrap; }
+      #${CONTROL_ID} input { margin-right:6px;accent-color:#245a9b; }
+    `;
+      document.head.appendChild(style);
+    }
+    function clearRow(row) {
+      row.classList.remove(ROW_CLASS);
+      row.classList.remove(HIDDEN_CLASS);
+      delete row.dataset.werkiaOmJobId;
+      delete row.dataset.werkiaOmSources;
+      delete row.dataset.werkiaOmExclusion;
+      row.querySelectorAll(`.${BADGE_CLASS}, .${EXCLUSION_BADGE_CLASS}`).forEach((badge) => badge.remove());
+    }
+    function renderExclusion(row, reasons) {
+      let badge = row.querySelector(`.${EXCLUSION_BADGE_CLASS}`);
+      if (!reasons.length) {
+        badge?.remove();
+        return;
+      }
+      const label = `Ausgeschlossen: ${reasons.join(" · ")}`;
+      if (badge?.textContent === label) return;
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = EXCLUSION_BADGE_CLASS;
+        (row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row).appendChild(badge);
+      }
+      badge.textContent = label;
+      badge.title = "Über „OM-Hinweise auswählen“ lassen sich diese Zeilen wieder anzeigen.";
+    }
+    function renderControl() {
+      let control = document.getElementById(CONTROL_ID);
+      if (!ROUTE.test(location.hash || "")) {
+        control?.remove();
+        return;
+      }
+      if (control) {
+        const count = document.querySelectorAll(`${ROWS.split(",").map((selector) => `${selector}.${HIDDEN_CLASS}`).join(",")}`).length;
+        const summary2 = control.querySelector("summary");
+        const label = `OM-Hinweise auswählen${count ? ` · ${count} ausgeblendet` : ""}`;
+        if (summary2.textContent !== label) summary2.textContent = label;
+        return;
+      }
+      ensureStyles2();
+      control = document.createElement("details");
+      control.id = CONTROL_ID;
+      const summary = document.createElement("summary");
+      summary.textContent = "OM-Hinweise auswählen";
+      control.appendChild(summary);
+      FLAG_TYPES.forEach(({ key, label }) => {
+        const option = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = enabled[key] !== false;
+        checkbox.addEventListener("change", () => {
+          enabled[key] = checkbox.checked;
+          try {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(enabled));
+          } catch {
+          }
+          scheduleRender();
+        });
+        option.append(checkbox, label);
+        control.appendChild(option);
+      });
+      const heading = document.createElement("div");
+      heading.textContent = "Eindeutige Ausschlüsse ausblenden";
+      heading.style.cssText = "margin-top:9px;border-top:1px solid #ccd8e8;padding-top:8px;";
+      control.appendChild(heading);
+      for (const { key, label } of FLAG_TYPES.filter((type) => type.key !== "qualification")) {
+        const option = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = hiddenEnabled[key] !== false;
+        checkbox.addEventListener("change", () => {
+          hiddenEnabled[key] = checkbox.checked;
+          try {
+            localStorage.setItem(`${SETTINGS_KEY}_hide`, JSON.stringify(hiddenEnabled));
+          } catch {
+          }
+          scheduleRender();
+        });
+        option.append(checkbox, label);
+        control.appendChild(option);
+      }
+      const duplicateOption = document.createElement("label");
+      const duplicateCheckbox = document.createElement("input");
+      duplicateCheckbox.type = "checkbox";
+      duplicateCheckbox.checked = hiddenEnabled.sentEmployer === true;
+      duplicateCheckbox.addEventListener("change", () => {
+        hiddenEnabled.sentEmployer = duplicateCheckbox.checked;
+        try {
+          localStorage.setItem(`${SETTINGS_KEY}_hide`, JSON.stringify(hiddenEnabled));
+        } catch {
+        }
+        scheduleRender();
+      });
+      duplicateOption.append(duplicateCheckbox, "Bereits gematchte Arbeitgeber");
+      control.appendChild(duplicateOption);
+      const reveal = document.createElement("label");
+      const revealCheckbox = document.createElement("input");
+      revealCheckbox.type = "checkbox";
+      revealCheckbox.addEventListener("change", () => {
+        showExcluded = revealCheckbox.checked;
+        scheduleRender();
+      });
+      reveal.append(revealCheckbox, "Ausgeblendete zeigen");
+      control.appendChild(reveal);
+      document.body.appendChild(control);
+    }
+    function renderRow(row, labelsBySource) {
+      const sources = ["employer", "vacancy"].filter((source) => labelsBySource[source].length);
+      if (!sources.length) {
+        row.classList.remove(ROW_CLASS);
+        delete row.dataset.werkiaOmSources;
+        row.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
+        return;
+      }
+      ensureStyles2();
+      const hasPriorityColor = row.matches(".werkia-cem-match-present-row, .werkia-cem-old-match-present-row, .werkia-obc-no-go-row, .werkia-obc-no-go-check-row, .werkia-urgent-vacancy-row");
+      row.classList.toggle(ROW_CLASS, !hasPriorityColor);
+      const sourceState = sources.length === 2 ? "both" : sources[0];
+      if (row.dataset.werkiaOmSources !== sourceState) row.dataset.werkiaOmSources = sourceState;
+      for (const source of ["employer", "vacancy"]) {
+        const label = `${source === "employer" ? "Arbeitgeber-OM" : "Vakanz"}: ${labelsBySource[source].join(" · ")}`;
+        let badge = row.querySelector(`.${BADGE_CLASS}[data-source="${source}"]`);
+        if (!labelsBySource[source].length) {
+          badge?.remove();
+          continue;
+        }
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = BADGE_CLASS;
+          badge.dataset.source = source;
+          (row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row).appendChild(badge);
+        }
+        if (badge.textContent !== label) badge.textContent = label;
+        badge.title = source === "employer" ? "Anforderung aus den OM-Notizen des Arbeitgebers." : "Anforderung aus den Notizen dieser Vakanz.";
+      }
+    }
+    function getJobId(row) {
+      const link = row.querySelector('a[href*="#/JobPosition/"][href*="/show"]');
+      return link?.getAttribute("href")?.match(/#\/JobPosition\/([a-f0-9-]{36})\/show/i)?.[1]?.toLowerCase() || "";
+    }
+    function render() {
+      renderControl();
+      if (!ROUTE.test(location.hash || "")) {
+        document.querySelectorAll(`.${ROW_CLASS}, .${HIDDEN_CLASS}, .${BADGE_CLASS}, .${EXCLUSION_BADGE_CLASS}`).forEach((el) => el.matches("tr") ? clearRow(el) : el.remove());
+        return;
+      }
+      const candidateId = location.hash.match(ROUTE)?.[0]?.match(/Candidate\/([a-f0-9-]{36})/i)?.[1]?.toLowerCase();
+      const cachedCandidate = candidateCache.get(candidateId);
+      const candidateEntry = cachedCandidate?.expiresAt > Date.now() ? cachedCandidate : null;
+      if (candidateId && !candidateEntry) loadCandidate(candidateId);
+      const missing = [];
+      document.querySelectorAll(ROWS).forEach((row) => {
+        const id = getJobId(row);
+        if (row.dataset.werkiaOmJobId !== id) clearRow(row);
+        if (!id) return;
+        row.dataset.werkiaOmJobId = id;
+        const entry = cache.get(id);
+        if (!entry || entry.expiresAt <= Date.now()) {
+          if (!pending.has(id)) missing.push(id);
+        } else {
+          renderRow(row, visibleOmMatchFlagsBySource(entry.flags, enabled));
+          const reasons = certainOmMatchExclusions(entry.flags, candidateEntry?.candidate, entry.job, hiddenEnabled);
+          if (shouldHideSentEmployerMatch(row.dataset.werkiaMatchPresent === "true", hiddenEnabled.sentEmployer)) {
+            reasons.push("Kandidat hat bei diesem Arbeitgeber bereits einen gesendeten Match");
+          }
+          renderExclusion(row, reasons);
+          row.classList.toggle(HIDDEN_CLASS, !showExcluded && reasons.length > 0);
+          if (reasons.length) row.dataset.werkiaOmExclusion = reasons.join("; ");
+          else delete row.dataset.werkiaOmExclusion;
+        }
+      });
+      renderControl();
+      load([...new Set(missing)]);
+    }
+    async function loadCandidate(id) {
+      if (candidatePending.has(id)) return;
+      candidatePending.add(id);
+      try {
+        const result = await getObcGraphqlAdapter().request(CANDIDATE_QUERY, { id });
+        candidateCache.set(id, { candidate: result?.data || null, expiresAt: Date.now() + CACHE_MS });
+      } catch (error) {
+        console.warn("[OBC OM-Flags] Kandidatenanforderungen konnten nicht geladen werden:", error);
+        candidateCache.set(id, { candidate: null, expiresAt: Date.now() + 15 * 1e3 });
+      } finally {
+        candidatePending.delete(id);
+        scheduleRender();
+      }
+    }
+    async function load(ids) {
+      if (!ids.length || loading) return;
+      loading = true;
+      ids.forEach((id) => pending.add(id));
+      try {
+        const result = await getObcGraphqlAdapter().request(JOBS_QUERY, { filter: { ids } });
+        const found = new Map((result?.items || []).filter((item) => item?.id).map((item) => [item.id.toLowerCase(), item]));
+        ids.forEach((id) => {
+          const job = found.get(id);
+          cache.set(id, {
+            flags: job ? collectOmMatchFlags(job.employer?.omNotes, job.additionalInformation) : [],
+            job,
+            expiresAt: Date.now() + CACHE_MS
+          });
+        });
+        scheduleRender();
+      } catch (error) {
+        console.warn("[OBC OM-Flags] Anforderungen konnten nicht geladen werden:", error);
+        ids.forEach((id) => cache.set(id, { flags: [], job: null, expiresAt: Date.now() + 15 * 1e3 }));
+      } finally {
+        ids.forEach((id) => pending.delete(id));
+        loading = false;
+        scheduleRender();
+      }
+    }
+    function scheduleRender() {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        render();
+      }, 150);
+    }
+    runtime.createMutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleRender);
+    runtime.setInterval(scheduleRender, CACHE_MS);
+    scheduleRender();
+  }
+
   // obc-legacy-userscript:shared/userscripts/dringende_vakanzen_highlight.user.js
   function executeLegacyModule(runtime) {
     runtime.registerSource("shared/userscripts/dringende_vakanzen_highlight.user.js");
@@ -4046,9 +4421,9 @@
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
       const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID2 = "werkia-urgent-vacancy-style";
-      const ROW_CLASS = "werkia-urgent-vacancy-row";
-      const BADGE_CLASS = "werkia-urgent-vacancy-badge";
+      const STYLE_ID3 = "werkia-urgent-vacancy-style";
+      const ROW_CLASS2 = "werkia-urgent-vacancy-row";
+      const BADGE_CLASS2 = "werkia-urgent-vacancy-badge";
       const MATCH_PRESENT_ROW_CLASS3 = "werkia-cem-match-present-row";
       const POTENTIAL_MATCHES_ROUTE2 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
       const BEARER_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_bearer_v1";
@@ -4185,37 +4560,37 @@
         return rowsByJobId;
       }
       function ensureStyles2() {
-        if (document.getElementById(STYLE_ID2)) return;
+        if (document.getElementById(STYLE_ID3)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID2;
+        style.id = STYLE_ID3;
         style.textContent = `
-      .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
-      .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
-      .${ROW_CLASS}:hover > td, .${ROW_CLASS}:hover > th { background: #ffe8a3 !important; }
-      .${BADGE_CLASS} { display: inline-flex; align-items: center; margin: 6px 0 2px 8px; padding: 5px 9px; border: 1px solid #92400e; border-radius: 999px; background: #b45309; color: #fff; font: 800 12px/1.2 Arial, sans-serif; letter-spacing: .15px; vertical-align: middle; white-space: nowrap; }
+      .${ROW_CLASS2} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
+      .${ROW_CLASS2} > td, .${ROW_CLASS2} > th { background: #fff3cd !important; }
+      .${ROW_CLASS2}:hover > td, .${ROW_CLASS2}:hover > th { background: #ffe8a3 !important; }
+      .${BADGE_CLASS2} { display: inline-flex; align-items: center; margin: 6px 0 2px 8px; padding: 5px 9px; border: 1px solid #92400e; border-radius: 999px; background: #b45309; color: #fff; font: 800 12px/1.2 Arial, sans-serif; letter-spacing: .15px; vertical-align: middle; white-space: nowrap; }
     `;
         document.head.appendChild(style);
       }
       function removeHighlight(row) {
-        row.classList.remove(ROW_CLASS);
-        row.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
+        row.classList.remove(ROW_CLASS2);
+        row.querySelectorAll(`.${BADGE_CLASS2}`).forEach((badge) => badge.remove());
       }
       function applyHighlight(row, urgent) {
-        const existingBadge = row.querySelector(`.${BADGE_CLASS}`);
+        const existingBadge = row.querySelector(`.${BADGE_CLASS2}`);
         if (row.classList.contains(MATCH_PRESENT_ROW_CLASS3)) {
-          if (row.classList.contains(ROW_CLASS) || existingBadge) removeHighlight(row);
+          if (row.classList.contains(ROW_CLASS2) || existingBadge) removeHighlight(row);
           return;
         }
         if (!urgent) {
-          if (row.classList.contains(ROW_CLASS) || existingBadge) removeHighlight(row);
+          if (row.classList.contains(ROW_CLASS2) || existingBadge) removeHighlight(row);
           return;
         }
-        if (row.classList.contains(ROW_CLASS) && existingBadge) return;
+        if (row.classList.contains(ROW_CLASS2) && existingBadge) return;
         removeHighlight(row);
-        row.classList.add(ROW_CLASS);
+        row.classList.add(ROW_CLASS2);
         const target = row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row;
         const badge = document.createElement("span");
-        badge.className = BADGE_CLASS;
+        badge.className = BADGE_CLASS2;
         badge.textContent = "Dringende Suche";
         badge.title = "Der KAM hat diese Vakanz als dringend markiert.";
         target.appendChild(badge);
@@ -4247,7 +4622,7 @@
       }
       function run() {
         if (!isPotentialMatchesPage()) {
-          document.querySelectorAll(`.${ROW_CLASS}`).forEach(removeHighlight);
+          document.querySelectorAll(`.${ROW_CLASS2}`).forEach(removeHighlight);
           return;
         }
         const rowsByJobId = getRowsByJobId();
@@ -4290,6 +4665,7 @@
     { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
     { id: "filter-presets", execute: executeFilterPresets },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule },
+    { id: "om-match-flags", execute: executeOmMatchFlags },
     // See cem/toolbox/src/main.js: last so the No-Go tint is not
     // overpainted by another row highlight on the same route.
     { id: "no-go-check", execute: executeNoGoCheck2 }
