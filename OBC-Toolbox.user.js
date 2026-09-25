@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.77
+// @version      1.3.78
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -4052,9 +4052,9 @@
   var SETTINGS_KEY = "werkia_obc_om_match_flags_v1";
   var CACHE_MS = 5 * 60 * 1e3;
   var FLAG_TYPES = [
-    { key: "experience", label: "Berufserfahrung" },
-    { key: "area", label: "Fachbereich" },
-    { key: "qualification", label: "Qualifikation/Zertifikate" }
+    { key: "experience", label: "BE-Anforderungen markieren", hint: "Zeigt Hinweise zur geforderten Berufserfahrung." },
+    { key: "area", label: "Fachbereiche markieren", hint: "Zeigt Muss- und Plus-Hinweise zum Fachbereich." },
+    { key: "qualification", label: "Qualifikationen markieren", hint: "Zeigt geforderte Scheine und Zertifikate." }
   ];
   var JOBS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
   items: allJobPositions(filter: $filter) {
@@ -4169,15 +4169,25 @@
       .${ROW_CLASS}[data-werkia-om-sources="vacancy"] > td, .${ROW_CLASS}[data-werkia-om-sources="vacancy"] > th { background:#e7f0ff !important; }
       .${ROW_CLASS}[data-werkia-om-sources="both"] > td, .${ROW_CLASS}[data-werkia-om-sources="both"] > th { background:linear-gradient(90deg,#eee6fa,#e7f0ff) !important; }
       .${ROW_CLASS} > :first-child { box-shadow:inset 7px 0 0 #6b46a1 !important; }
-      .${BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid;border-radius:7px;color:#fff;font:800 12px/1.3 Arial,sans-serif;vertical-align:middle; }
-      .${BADGE_CLASS}[data-source="employer"] { border-color:#6b46a1;background:#6b46a1; }
-      .${BADGE_CLASS}[data-source="vacancy"] { border-color:#245a9b;background:#245a9b; }
-      .${EXCLUSION_BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid #a43f38;border-radius:7px;background:#a43f38;color:#fff;font:800 12px/1.3 Arial,sans-serif;vertical-align:middle; }
+      .${BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 10px;border:1px solid;border-radius:999px;font:600 12px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;vertical-align:middle; }
+      .${BADGE_CLASS}[data-source="employer"] { border-color:#d8ccff;background:#f1edff;color:#4b32b3; }
+      .${BADGE_CLASS}[data-source="vacancy"] { border-color:#b8d5fa;background:#e7f0ff;color:#245a9b; }
+      .${EXCLUSION_BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 10px;border:1px solid #f4c2c2;border-radius:999px;background:#fbe6e6;color:#8f2b2b;font:600 12px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;vertical-align:middle; }
       .${HIDDEN_CLASS} { display:none !important; }
-      #${CONTROL_ID} { position:fixed;left:18px;bottom:18px;z-index:1200;padding:8px 10px;border:1px solid #245a9b;border-radius:7px;background:#fff;box-shadow:0 2px 8px #0003;color:#173c69;font:700 12px/1.4 Arial,sans-serif; }
-      #${CONTROL_ID} summary { cursor:pointer; }
-      #${CONTROL_ID} label { display:block;margin-top:6px;cursor:pointer;white-space:nowrap; }
-      #${CONTROL_ID} input { margin-right:6px;accent-color:#245a9b; }
+      #${CONTROL_ID} { --apt-color-surface:#fff;--apt-color-bg:#f6f5f8;--apt-color-surface-muted:#f1eef7;--apt-color-border:#e2e0e8;--apt-color-text:#1c1a22;--apt-color-text-muted:#6b6775;--apt-color-primary:#6d4aff;--apt-color-primary-tint:#f1edff;--apt-color-focus:#b6a4ff;position:fixed;left:18px;bottom:18px;z-index:1200;width:min(360px,calc(100vw - 36px));box-sizing:border-box;border:1px solid var(--apt-color-border);border-radius:24px;background:var(--apt-color-surface);box-shadow:0 12px 32px #1c1a222e;color:var(--apt-color-text);font:400 13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden; }
+      #${CONTROL_ID} summary { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;box-sizing:border-box;padding:12px 16px;background:#3a3548;color:#fff;font-size:14px;font-weight:650;cursor:pointer;list-style:none; }
+      #${CONTROL_ID} summary::-webkit-details-marker { display:none; }
+      #${CONTROL_ID} summary::after { content:'⌄';font-size:20px;line-height:1;transition:transform 120ms ease; }
+      #${CONTROL_ID}[open] summary::after { transform:rotate(180deg); }
+      #${CONTROL_ID} summary:focus-visible,#${CONTROL_ID} label:has(input:focus-visible) { outline:2px solid var(--apt-color-focus);outline-offset:-3px; }
+      #${CONTROL_ID} .werkia-om-filter-body { max-height:min(70vh,520px);overflow:auto;background:var(--apt-color-bg); }
+      #${CONTROL_ID} fieldset { display:grid;gap:8px;margin:0;padding:16px;border:0;border-top:1px solid var(--apt-color-border);min-width:0; }
+      #${CONTROL_ID} legend { padding:0 0 2px;color:var(--apt-color-text);font-size:14px;font-weight:650; }
+      #${CONTROL_ID} .werkia-om-filter-option { position:relative;display:block;padding:12px;border:1px solid var(--apt-color-border);border-radius:16px;background:var(--apt-color-surface);cursor:pointer;transition:background-color 120ms ease,border-color 120ms ease; }
+      #${CONTROL_ID} .werkia-om-filter-option:hover,#${CONTROL_ID} .werkia-om-filter-option:has(input:checked) { border-color:var(--apt-color-primary);background:var(--apt-color-primary-tint); }
+      #${CONTROL_ID} .werkia-om-filter-option input { position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
+      #${CONTROL_ID} .werkia-om-filter-title { display:block;font-size:13px;font-weight:650;line-height:1.3; }
+      #${CONTROL_ID} .werkia-om-filter-hint { display:block;margin-top:3px;color:var(--apt-color-text-muted);font-size:11px;line-height:1.4; }
     `;
       document.head.appendChild(style);
     }
@@ -4203,7 +4213,7 @@
         (row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row).appendChild(badge);
       }
       badge.textContent = label;
-      badge.title = "Über „OM-Hinweise auswählen“ lassen sich diese Zeilen wieder anzeigen.";
+      badge.title = "Über „Match-Hinweise & Filter“ lassen sich diese Zeilen wieder anzeigen.";
     }
     function renderControl() {
       let control = document.getElementById(CONTROL_ID);
@@ -4214,7 +4224,7 @@
       if (control) {
         const count = document.querySelectorAll(`${ROWS.split(",").map((selector) => `${selector}.${HIDDEN_CLASS}`).join(",")}`).length;
         const summary2 = control.querySelector("summary");
-        const label = `OM-Hinweise auswählen${count ? ` · ${count} ausgeblendet` : ""}`;
+        const label = `Match-Hinweise & Filter${count ? ` · ${count} ausgeblendet` : ""}`;
         if (summary2.textContent !== label) summary2.textContent = label;
         return;
       }
@@ -4222,67 +4232,77 @@
       control = document.createElement("details");
       control.id = CONTROL_ID;
       const summary = document.createElement("summary");
-      summary.textContent = "OM-Hinweise auswählen";
+      summary.textContent = "Match-Hinweise & Filter";
       control.appendChild(summary);
-      FLAG_TYPES.forEach(({ key, label }) => {
+      const body = document.createElement("div");
+      body.className = "werkia-om-filter-body";
+      control.appendChild(body);
+      function addGroup(title) {
+        const group = document.createElement("fieldset");
+        const heading = document.createElement("legend");
+        heading.textContent = title;
+        group.appendChild(heading);
+        body.appendChild(group);
+        return group;
+      }
+      function addOption(group, { label, hint, checked, onChange }) {
         const option = document.createElement("label");
+        option.className = "werkia-om-filter-option";
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
-        checkbox.checked = enabled[key] !== false;
-        checkbox.addEventListener("change", () => {
-          enabled[key] = checkbox.checked;
+        checkbox.checked = checked;
+        checkbox.addEventListener("change", () => onChange(checkbox.checked));
+        const title = document.createElement("span");
+        title.className = "werkia-om-filter-title";
+        title.textContent = label;
+        const description = document.createElement("span");
+        description.className = "werkia-om-filter-hint";
+        description.textContent = hint;
+        option.append(checkbox, title, description);
+        group.appendChild(option);
+      }
+      const hints = addGroup("Hinweise in der Liste");
+      FLAG_TYPES.forEach(({ key, label, hint }) => addOption(hints, {
+        label,
+        hint,
+        checked: enabled[key] !== false,
+        onChange(checked) {
+          enabled[key] = checked;
           try {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(enabled));
           } catch {
           }
           scheduleRender();
-        });
-        option.append(checkbox, label);
-        control.appendChild(option);
-      });
-      const heading = document.createElement("div");
-      heading.textContent = "Eindeutige Ausschlüsse ausblenden";
-      heading.style.cssText = "margin-top:9px;border-top:1px solid #ccd8e8;padding-top:8px;";
-      control.appendChild(heading);
-      for (const { key, label } of FLAG_TYPES.filter((type) => type.key !== "qualification")) {
-        const option = document.createElement("label");
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.checked = hiddenEnabled[key] !== false;
-        checkbox.addEventListener("change", () => {
-          hiddenEnabled[key] = checkbox.checked;
+        }
+      }));
+      const exclusions = addGroup("Stellen ausblenden");
+      const exclusionOptions = [
+        { key: "experience", label: "Stellen bei zu wenig Berufserfahrung ausblenden", hint: "Nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen." },
+        { key: "area", label: "Stellen mit abweichendem Fachbereich ausblenden", hint: "Nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten." },
+        { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten. Mehrere noch nicht gematchte Stellen desselben Arbeitgebers bleiben sichtbar." }
+      ];
+      exclusionOptions.forEach(({ key, label, hint }) => addOption(exclusions, {
+        label,
+        hint,
+        checked: hiddenEnabled[key] === true,
+        onChange(checked) {
+          hiddenEnabled[key] = checked;
           try {
             localStorage.setItem(`${SETTINGS_KEY}_hide`, JSON.stringify(hiddenEnabled));
           } catch {
           }
           scheduleRender();
-        });
-        option.append(checkbox, label);
-        control.appendChild(option);
-      }
-      const duplicateOption = document.createElement("label");
-      const duplicateCheckbox = document.createElement("input");
-      duplicateCheckbox.type = "checkbox";
-      duplicateCheckbox.checked = hiddenEnabled.sentEmployer === true;
-      duplicateCheckbox.addEventListener("change", () => {
-        hiddenEnabled.sentEmployer = duplicateCheckbox.checked;
-        try {
-          localStorage.setItem(`${SETTINGS_KEY}_hide`, JSON.stringify(hiddenEnabled));
-        } catch {
         }
-        scheduleRender();
+      }));
+      addOption(exclusions, {
+        label: "Ausgeblendete Stellen vorübergehend zeigen",
+        hint: "Zeigt die ausgeblendeten Zeilen samt Ausschlussgrund bis zum Neuladen.",
+        checked: showExcluded,
+        onChange(checked) {
+          showExcluded = checked;
+          scheduleRender();
+        }
       });
-      duplicateOption.append(duplicateCheckbox, "Bereits gematchte Arbeitgeber");
-      control.appendChild(duplicateOption);
-      const reveal = document.createElement("label");
-      const revealCheckbox = document.createElement("input");
-      revealCheckbox.type = "checkbox";
-      revealCheckbox.addEventListener("change", () => {
-        showExcluded = revealCheckbox.checked;
-        scheduleRender();
-      });
-      reveal.append(revealCheckbox, "Ausgeblendete zeigen");
-      control.appendChild(reveal);
       document.body.appendChild(control);
     }
     function renderRow(row, labelsBySource) {
