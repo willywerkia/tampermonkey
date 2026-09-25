@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.80
+// @version      1.3.82
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -4040,6 +4040,12 @@
     ten_plus: 4
   };
 
+  // ../../shared/js/admin-dom/text.js
+  var ESCAPE_HTML_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+  function escapeHtml3(text) {
+    return String(text || "").replace(/[&<>"']/g, (ch) => ESCAPE_HTML_MAP[ch]);
+  }
+
   // src/features/om-match-flags.js
   var ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
   var ROWS = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
@@ -4055,6 +4061,12 @@
     { key: "experience", label: "BE-Anforderungen markieren", hint: "Zeigt Hinweise zur geforderten Berufserfahrung." },
     { key: "area", label: "Fachbereiche markieren", hint: "Zeigt Muss- und Plus-Hinweise zum Fachbereich." },
     { key: "qualification", label: "Qualifikationen markieren", hint: "Zeigt geforderte Scheine und Zertifikate." }
+  ];
+  var HIDE_TYPES = [
+    { key: "experience", label: "Stellen bei zu wenig Berufserfahrung ausblenden", hint: "Nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen." },
+    { key: "area", label: "Stellen mit abweichendem Fachbereich ausblenden", hint: "Nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten." },
+    { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten." },
+    { key: "employerLimit", label: "Ab der vierten Stelle je Arbeitgeber ausblenden", hint: "Behält die ersten drei Stellen in AP-Reihenfolge, auch über Seitenwechsel hinweg." }
   ];
   var JOBS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
   items: allJobPositions(filter: $filter) {
@@ -4183,6 +4195,10 @@
     } catch {
     }
     let showExcluded = false;
+    let openWindow = "";
+    let draft = null;
+    const collapsedSections = /* @__PURE__ */ new Set();
+    let filterHits = Object.fromEntries(HIDE_TYPES.map((type) => [type.key, 0]));
     function ensureStyles2() {
       if (document.getElementById(STYLE_ID2)) return;
       const style = document.createElement("style");
@@ -4197,20 +4213,35 @@
       .${BADGE_CLASS}[data-source="vacancy"] { border-color:#b8d5fa;background:#e7f0ff;color:#245a9b; }
       .${EXCLUSION_BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 10px;border:1px solid #f4c2c2;border-radius:999px;background:#fbe6e6;color:#8f2b2b;font:600 12px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;vertical-align:middle; }
       .${HIDDEN_CLASS} { display:none !important; }
-      #${CONTROL_ID} { --apt-color-surface:#fff;--apt-color-bg:#f6f5f8;--apt-color-surface-muted:#f1eef7;--apt-color-border:#e2e0e8;--apt-color-text:#1c1a22;--apt-color-text-muted:#6b6775;--apt-color-primary:#6d4aff;--apt-color-primary-tint:#f1edff;--apt-color-focus:#b6a4ff;position:fixed;left:18px;bottom:18px;z-index:1200;width:min(360px,calc(100vw - 36px));box-sizing:border-box;border:1px solid var(--apt-color-border);border-radius:24px;background:var(--apt-color-surface);box-shadow:0 12px 32px #1c1a222e;color:var(--apt-color-text);font:400 13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden; }
-      #${CONTROL_ID} summary { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;box-sizing:border-box;padding:12px 16px;background:#3a3548;color:#fff;font-size:14px;font-weight:650;cursor:pointer;list-style:none; }
-      #${CONTROL_ID} summary::-webkit-details-marker { display:none; }
-      #${CONTROL_ID} summary::after { content:'⌄';font-size:20px;line-height:1;transition:transform 120ms ease; }
-      #${CONTROL_ID}[open] summary::after { transform:rotate(180deg); }
-      #${CONTROL_ID} summary:focus-visible,#${CONTROL_ID} label:has(input:focus-visible) { outline:2px solid var(--apt-color-focus);outline-offset:-3px; }
-      #${CONTROL_ID} .werkia-om-filter-body { max-height:min(70vh,520px);overflow:auto;background:var(--apt-color-bg); }
-      #${CONTROL_ID} fieldset { display:grid;gap:8px;margin:0;padding:16px;border:0;border-top:1px solid var(--apt-color-border);min-width:0; }
-      #${CONTROL_ID} legend { padding:0 0 2px;color:var(--apt-color-text);font-size:14px;font-weight:650; }
-      #${CONTROL_ID} .werkia-om-filter-option { position:relative;display:block;padding:12px;border:1px solid var(--apt-color-border);border-radius:16px;background:var(--apt-color-surface);cursor:pointer;transition:background-color 120ms ease,border-color 120ms ease; }
-      #${CONTROL_ID} .werkia-om-filter-option:hover,#${CONTROL_ID} .werkia-om-filter-option:has(input:checked) { border-color:var(--apt-color-primary);background:var(--apt-color-primary-tint); }
-      #${CONTROL_ID} .werkia-om-filter-option input { position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
-      #${CONTROL_ID} .werkia-om-filter-title { display:block;font-size:13px;font-weight:650;line-height:1.3; }
-      #${CONTROL_ID} .werkia-om-filter-hint { display:block;margin-top:3px;color:var(--apt-color-text-muted);font-size:11px;line-height:1.4; }
+      #${CONTROL_ID}{position:fixed;right:18px;top:72px;z-index:1200;display:flex;flex-direction:column;align-items:flex-end;gap:8px;font:14px/1.45 Arial,sans-serif;color:#111}
+      #${CONTROL_ID} [data-obc-filter-buttons]{display:flex;gap:8px}
+      #${CONTROL_ID} [data-obc-filter-buttons] button{border:2px solid rgba(0,0,0,.28);background:#f8f9fa;border-radius:9px;padding:10px 16px;font:900 14px Arial,sans-serif;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.24)}
+      #${CONTROL_ID} [data-obc-filter-buttons] button[data-active="true"]{background:#e7f5ff;border-color:#1c7ed6}
+      #${CONTROL_ID} [data-obc-filter-window-body]{width:min(560px,calc(100vw - 36px));max-height:78vh;overflow:auto;box-sizing:border-box;padding:14px 16px;background:#fff;border:1px solid rgba(0,0,0,.18);border-radius:9px;box-shadow:0 3px 16px rgba(0,0,0,.28)}
+      #${CONTROL_ID} [data-obc-filter-window-body][hidden]{display:none}
+      #${CONTROL_ID} button{cursor:pointer;font:700 13px Arial,sans-serif;border:1px solid rgba(0,0,0,.2);background:#f1f3f5;border-radius:6px;padding:5px 11px}
+      #${CONTROL_ID} a{color:#1864ab;font-weight:700;text-decoration:none}
+      #${CONTROL_ID} .werkia-obc-muted{color:#57606a}
+      #${CONTROL_ID} .werkia-obc-window-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px;font-size:16px}
+      #${CONTROL_ID} .werkia-obc-window-head .werkia-obc-muted{font-size:13px}
+      #${CONTROL_ID} .werkia-obc-filter-presets{display:flex;gap:8px;margin-bottom:10px}
+      #${CONTROL_ID} .werkia-obc-filter-preset{flex:1;padding:8px;font-size:14px}
+      #${CONTROL_ID} .werkia-obc-filter-preset[data-selected="true"],#${CONTROL_ID} .werkia-obc-primary{background:#1c7ed6;border-color:#1c7ed6;color:#fff}
+      #${CONTROL_ID} .werkia-obc-filter-group{border:1px solid #dee2e6;border-radius:8px;margin-bottom:8px}
+      #${CONTROL_ID} .werkia-obc-filter-group-head{display:flex;justify-content:space-between;width:100%;border:0;border-radius:8px;background:#f8f9fa;padding:8px 10px;font-size:14px;font-weight:900}
+      #${CONTROL_ID} .werkia-obc-filter-group-body{padding:6px 10px 8px}
+      #${CONTROL_ID} .werkia-obc-filter-option{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:14px}
+      #${CONTROL_ID} .werkia-obc-filter-option input[type="checkbox"]{width:17px;height:17px;margin:0}
+      #${CONTROL_ID} .werkia-obc-filter-option-label{flex:1}
+      #${CONTROL_ID} .werkia-obc-filter-count{min-width:28px;text-align:center;border-radius:11px;background:#e9ecef;padding:1px 8px;font-weight:900;font-size:13px}
+      #${CONTROL_ID} .werkia-obc-filter-note{font-size:12px;margin:8px 0}
+      #${CONTROL_ID} .werkia-obc-filter-confirm{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+      #${CONTROL_ID} .werkia-obc-filter-confirm button{padding:8px 18px;font-size:14px}
+      #${CONTROL_ID} .werkia-obc-info-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f1f3f5}
+      #${CONTROL_ID} .werkia-obc-info-main{min-width:0;flex:1}
+      #${CONTROL_ID} .werkia-obc-info-name{font-weight:900;font-size:15px}
+      #${CONTROL_ID} .werkia-obc-info-empty{padding:8px 0}
+      #${CONTROL_ID} .werkia-obc-reason{color:#57606a;margin-top:3px}
     `;
       document.head.appendChild(style);
     }
@@ -4236,98 +4267,140 @@
         (row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row).appendChild(badge);
       }
       badge.textContent = label;
-      badge.title = "Über „Match-Hinweise & Filter“ lassen sich diese Zeilen wieder anzeigen.";
+      badge.title = "Im OBC-Filter lassen sich diese Zeilen wieder anzeigen.";
+    }
+    function hiddenEntries() {
+      return [...document.querySelectorAll(ROWS)].filter((row) => row.classList.contains(HIDDEN_CLASS)).map((row) => {
+        const jobId = getJobId(row);
+        return {
+          employer: row.querySelector('a[href*="#/Employer/"]')?.textContent?.trim() || "Arbeitgeber",
+          job: row.querySelector('a[href*="#/JobPosition/"][href*="/show"]')?.textContent?.trim() || "Stelle",
+          jobId,
+          reason: row.dataset.werkiaOmExclusion || ""
+        };
+      });
+    }
+    function filterMenuHtml(hiddenCount) {
+      const selected = HIDE_TYPES.filter((type) => draft.hidden[type.key]).length;
+      const mode = selected === 0 ? "none" : selected === HIDE_TYPES.length ? "all" : "custom";
+      const preset = (id, label) => `<button type="button" class="werkia-obc-filter-preset" data-obc-filter-preset="${id}" data-selected="${mode === id}">${label}</button>`;
+      const groups = [
+        { title: "Hinweise markieren", type: "mark", options: FLAG_TYPES },
+        { title: "Stellen ausblenden", type: "hide", options: HIDE_TYPES },
+        { title: "Ansicht", type: "view", options: [{ key: "showExcluded", label: "Ausgeblendete Stellen vorübergehend zeigen", hint: "Zeigt die Zeilen mit Ausschlussgrund bis zum Neuladen." }] }
+      ];
+      return `
+      <div class="werkia-obc-window-head"><b>Filter nach</b><span class="werkia-obc-muted">${selected} ausgewählt · ${hiddenCount} aktuell ausgeblendet</span></div>
+      <div class="werkia-obc-filter-presets">${preset("none", "Kein Filter")}${preset("all", "Alles filtern")}${preset("custom", "Personalisiert")}</div>
+      ${groups.map((group) => {
+        const open = !collapsedSections.has(group.title);
+        const total = group.type === "hide" ? filterHits.total : null;
+        return `<div class="werkia-obc-filter-group" data-open="${open}">
+          <button type="button" class="werkia-obc-filter-group-head" data-obc-filter-group="${escapeHtml3(group.title)}"><span>${open ? "▾" : "▸"} ${escapeHtml3(group.title)}</span>${total === null ? "" : `<span class="werkia-obc-filter-count">${total}</span>`}</button>
+          ${open ? `<div class="werkia-obc-filter-group-body">${group.options.map((option) => {
+          const checked = group.type === "mark" ? draft.enabled[option.key] !== false : group.type === "hide" ? draft.hidden[option.key] === true : draft.showExcluded;
+          const count = group.type === "hide" ? `<span class="werkia-obc-filter-count" title="${filterHits[option.key]} auf dieser AP-Seite betroffen">${filterHits[option.key]}</span>` : "";
+          return `<label class="werkia-obc-filter-option" title="${escapeHtml3(option.hint)}"><input type="checkbox" data-obc-filter-toggle="${group.type}:${option.key}" ${checked ? "checked" : ""}><span class="werkia-obc-filter-option-label">${escapeHtml3(option.label)}</span>${count}</label>`;
+        }).join("")}</div>` : ""}
+        </div>`;
+      }).join("")}
+      <div class="werkia-obc-muted werkia-obc-filter-note">Zahlen: betroffene Matches auf dieser AP-Seite. Änderungen gelten erst nach „Anwenden“.</div>
+      <div class="werkia-obc-filter-confirm"><button type="button" data-obc-filter-cancel>Abbrechen</button><button type="button" data-obc-filter-apply class="werkia-obc-primary">Anwenden</button></div>`;
+    }
+    function infoHtml(entries) {
+      return `<div class="werkia-obc-window-head"><b>Gefilterte Matches</b><span class="werkia-obc-muted">${entries.length} auf dieser AP-Seite</span></div>
+      ${entries.length ? entries.map((entry) => `<div class="werkia-obc-info-row"><div class="werkia-obc-info-main"><div class="werkia-obc-info-name">${escapeHtml3(entry.employer)}</div><div class="werkia-obc-muted">${escapeHtml3(entry.job)}</div><div class="werkia-obc-reason">${escapeHtml3(entry.reason)}</div></div>${entry.jobId ? `<a href="#/JobPosition/${escapeHtml3(entry.jobId)}/show" target="_blank" rel="noopener" title="Vakanz öffnen">Vakanz</a>` : ""}</div>`).join("") : '<div class="werkia-obc-muted werkia-obc-info-empty">Nichts ausgeblendet.</div>'}`;
     }
     function renderControl() {
       let control = document.getElementById(CONTROL_ID);
       if (!ROUTE.test(location.hash || "")) {
         control?.remove();
+        openWindow = "";
+        draft = null;
         return;
       }
-      if (control) {
-        const count = document.querySelectorAll(`${ROWS.split(",").map((selector) => `${selector}.${HIDDEN_CLASS}`).join(",")}`).length;
-        const summary2 = control.querySelector("summary");
-        const label = `Match-Hinweise & Filter${count ? ` · ${count} ausgeblendet` : ""}`;
-        if (summary2.textContent !== label) summary2.textContent = label;
-        return;
-      }
-      ensureStyles2();
-      control = document.createElement("details");
-      control.id = CONTROL_ID;
-      const summary = document.createElement("summary");
-      summary.textContent = "Match-Hinweise & Filter";
-      control.appendChild(summary);
-      const body = document.createElement("div");
-      body.className = "werkia-om-filter-body";
-      control.appendChild(body);
-      function addGroup(title) {
-        const group = document.createElement("fieldset");
-        const heading = document.createElement("legend");
-        heading.textContent = title;
-        group.appendChild(heading);
-        body.appendChild(group);
-        return group;
-      }
-      function addOption(group, { label, hint, checked, onChange }) {
-        const option = document.createElement("label");
-        option.className = "werkia-om-filter-option";
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.checked = checked;
-        checkbox.addEventListener("change", () => onChange(checkbox.checked));
-        const title = document.createElement("span");
-        title.className = "werkia-om-filter-title";
-        title.textContent = label;
-        const description = document.createElement("span");
-        description.className = "werkia-om-filter-hint";
-        description.textContent = hint;
-        option.append(checkbox, title, description);
-        group.appendChild(option);
-      }
-      const hints = addGroup("Hinweise in der Liste");
-      FLAG_TYPES.forEach(({ key, label, hint }) => addOption(hints, {
-        label,
-        hint,
-        checked: enabled[key] !== false,
-        onChange(checked) {
-          enabled[key] = checked;
-          try {
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify(enabled));
-          } catch {
+      if (!control) {
+        ensureStyles2();
+        control = document.createElement("div");
+        control.id = CONTROL_ID;
+        control.innerHTML = "<div data-obc-filter-buttons></div><div data-obc-filter-window-body hidden></div>";
+        control.addEventListener("click", (event) => {
+          const target = event.target;
+          const windowButton = target.closest("[data-obc-filter-window]");
+          if (windowButton) {
+            const next = windowButton.dataset.obcFilterWindow;
+            openWindow = openWindow === next ? "" : next;
+            draft = openWindow === "filter" ? { enabled: { ...enabled }, hidden: { ...hiddenEnabled }, showExcluded } : null;
+            renderControl();
+            return;
           }
-          scheduleRender();
-        }
-      }));
-      const exclusions = addGroup("Stellen ausblenden");
-      const exclusionOptions = [
-        { key: "experience", label: "Stellen bei zu wenig Berufserfahrung ausblenden", hint: "Nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen." },
-        { key: "area", label: "Stellen mit abweichendem Fachbereich ausblenden", hint: "Nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten." },
-        { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten. Mehrere noch nicht gematchte Stellen desselben Arbeitgebers bleiben sichtbar." },
-        { key: "employerLimit", label: "Ab der vierten Stelle je Arbeitgeber ausblenden", hint: "Behält die ersten drei Stellen in der AP-Reihenfolge, auch über Seitenwechsel hinweg." }
-      ];
-      exclusionOptions.forEach(({ key, label, hint }) => addOption(exclusions, {
-        label,
-        hint,
-        checked: hiddenEnabled[key] === true,
-        onChange(checked) {
-          hiddenEnabled[key] = checked;
-          try {
-            localStorage.setItem(`${SETTINGS_KEY}_hide`, JSON.stringify(hiddenEnabled));
-          } catch {
+          const preset = target.closest("[data-obc-filter-preset]");
+          if (preset && draft) {
+            const mode = preset.dataset.obcFilterPreset;
+            if (mode !== "custom") HIDE_TYPES.forEach((type) => {
+              draft.hidden[type.key] = mode === "all";
+            });
+            renderControl();
+            return;
           }
-          scheduleRender();
-        }
-      }));
-      addOption(exclusions, {
-        label: "Ausgeblendete Stellen vorübergehend zeigen",
-        hint: "Zeigt die ausgeblendeten Zeilen samt Ausschlussgrund bis zum Neuladen.",
-        checked: showExcluded,
-        onChange(checked) {
-          showExcluded = checked;
-          scheduleRender();
-        }
-      });
-      document.body.appendChild(control);
+          const group = target.closest("[data-obc-filter-group]");
+          if (group) {
+            const title = group.dataset.obcFilterGroup;
+            if (collapsedSections.has(title)) collapsedSections.delete(title);
+            else collapsedSections.add(title);
+            renderControl();
+            return;
+          }
+          if (target.closest("[data-obc-filter-apply]") && draft) {
+            enabled = draft.enabled;
+            hiddenEnabled = draft.hidden;
+            showExcluded = draft.showExcluded;
+            try {
+              localStorage.setItem(SETTINGS_KEY, JSON.stringify(enabled));
+            } catch {
+            }
+            try {
+              localStorage.setItem(`${SETTINGS_KEY}_hide`, JSON.stringify(hiddenEnabled));
+            } catch {
+            }
+            draft = null;
+            openWindow = "";
+            scheduleRender();
+            renderControl();
+            return;
+          }
+          if (target.closest("[data-obc-filter-cancel]")) {
+            draft = null;
+            openWindow = "";
+            renderControl();
+          }
+        });
+        control.addEventListener("change", (event) => {
+          const toggle = event.target.closest("[data-obc-filter-toggle]");
+          if (!toggle || !draft) return;
+          const [type, key] = toggle.dataset.obcFilterToggle.split(":");
+          if (type === "mark") draft.enabled[key] = toggle.checked;
+          else if (type === "hide") draft.hidden[key] = toggle.checked;
+          else draft.showExcluded = toggle.checked;
+          renderControl();
+        });
+        document.body.appendChild(control);
+      }
+      const entries = hiddenEntries();
+      const active = HIDE_TYPES.filter((type) => hiddenEnabled[type.key]).length;
+      const buttonsHtml = `<button type="button" data-obc-filter-window="info" data-active="${openWindow === "info"}">🧹 Gefilterte Matches · ${entries.length}</button><button type="button" data-obc-filter-window="filter" data-active="${openWindow === "filter"}">Filter nach · ${active}/${HIDE_TYPES.length}</button>`;
+      const buttons = control.querySelector("[data-obc-filter-buttons]");
+      if (buttons.dataset.rendered !== buttonsHtml) {
+        buttons.dataset.rendered = buttonsHtml;
+        buttons.innerHTML = buttonsHtml;
+      }
+      const body = control.querySelector("[data-obc-filter-window-body]");
+      const html = openWindow === "filter" && draft ? filterMenuHtml(entries.length) : openWindow === "info" ? infoHtml(entries) : "";
+      if (body.dataset.rendered !== html) {
+        body.dataset.rendered = html;
+        body.innerHTML = html;
+      }
+      if (body.hidden !== !html) body.hidden = !html;
     }
     function renderRow(row, labelsBySource) {
       const sources = ["employer", "vacancy"].filter((source) => labelsBySource[source].length);
@@ -4391,6 +4464,18 @@
           reasons.push("Kandidat hat bei diesem Arbeitgeber bereits einen gesendeten Match");
         }
         prepared.push({ row, entry, reasons });
+      });
+      filterHits = { experience: 0, area: 0, sentEmployer: 0, employerLimit: 0, total: 0 };
+      prepared.forEach(({ row, entry }) => {
+        const experience = certainOmMatchExclusions(entry?.flags || [], candidateEntry?.candidate, entry?.job, { experience: true, area: false }).length > 0;
+        const area = certainOmMatchExclusions(entry?.flags || [], candidateEntry?.candidate, entry?.job, { experience: false, area: true }).length > 0;
+        const sentEmployer = row.dataset.werkiaMatchPresent === "true";
+        const employerLimit = Boolean(ranking?.overflowJobIds?.has(row.dataset.werkiaOmJobId));
+        if (experience) filterHits.experience++;
+        if (area) filterHits.area++;
+        if (sentEmployer) filterHits.sentEmployer++;
+        if (employerLimit) filterHits.employerLimit++;
+        if (experience || area || sentEmployer || employerLimit) filterHits.total++;
       });
       const overflow = hiddenEnabled.employerLimit && ranking?.overflowJobIds ? new Set(prepared.flatMap((item, index) => ranking.overflowJobIds.has(item.row.dataset.werkiaOmJobId) ? [index] : [])) : /* @__PURE__ */ new Set();
       prepared.forEach(({ row, entry, reasons }, index) => {
@@ -4491,6 +4576,18 @@
     }
     runtime.createMutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleRender);
+    runtime.addWindowListener("pointerdown", (event) => {
+      if (!openWindow || document.getElementById(CONTROL_ID)?.contains(event.target)) return;
+      openWindow = "";
+      draft = null;
+      renderControl();
+    });
+    runtime.addWindowListener("keydown", (event) => {
+      if (event.key !== "Escape" || !openWindow) return;
+      openWindow = "";
+      draft = null;
+      renderControl();
+    });
     runtime.setInterval(scheduleRender, CACHE_MS);
     scheduleRender();
   }
