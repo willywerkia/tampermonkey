@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.4.84
+// @version      1.4.85
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -1505,6 +1505,7 @@
 
   // src/help.js
   var onPotentialMatches = [ROUTES.potentialMatches];
+  var FILTER_PAGE = `${PAGES.potentialMatches} › Filter nach`;
   var OBC_HELP_TOPICS = [
     {
       id: "om-match-filter",
@@ -1519,11 +1520,118 @@
         "„Anwenden“ klicken. Vorher ändert sich nichts."
       ],
       notes: [
+        "Jede Option hat ein eigenes ?, das genau erklärt, was sie prüft.",
+        "„Kein Filter“ und „Alles filtern“ schalten nur die Optionen unter „Stellen ausblenden“ um. Die Markierungen bleiben, wie sie sind.",
         "Ausgeblendet wird nur, was eindeutig ist: zu wenig Berufserfahrung nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen, ein abweichender Fachbereich nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten.",
         "„Ab der vierten Stelle je Arbeitgeber ausblenden“ behält die ersten drei Stellen in der Reihenfolge des Adminpanels, auch über Seitenwechsel hinweg.",
         "Die Zahlen zeigen, wie viele Matches auf dieser Seite der Liste betroffen sind.",
         "Die Einstellungen gelten nur in deinem Browser. Ausgeblendete Zeilen sind nicht gelöscht: „Ausgeblendete Stellen vorübergehend zeigen“ holt sie bis zum Neuladen zurück."
       ]
+    },
+    {
+      id: "om-filter-mark-experience",
+      title: "BE-Anforderungen markieren",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Zeigt in der Zeile das Badge „Berufserfahrung erforderlich“, wenn in den OM-Notizen des Arbeitgebers oder der Vakanz [Muss: BE] steht.",
+      notes: [
+        "Beispiel: In den OM-Notizen des Arbeitgebers steht [Muss: BE]. In der Zeile erscheint „Arbeitgeber-OM: Berufserfahrung erforderlich“.",
+        "Steht in derselben Notiz zusätzlich genau ein [Muss: Fachbereich: Kältetechnik] und ist „Fachbereiche markieren“ an, wird beides zu „nur mit BE in Kältetechnik“ zusammengefasst.",
+        "Nur eine Markierung, es wird nichts ausgeblendet. Das Ausblenden steuert „Stellen bei zu wenig Berufserfahrung ausblenden“."
+      ]
+    },
+    {
+      id: "om-filter-mark-area",
+      title: "Fachbereiche markieren",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Zeigt die Fachbereichs-Hinweise aus den OM-Notizen von Arbeitgeber und Vakanz als Badge in der Zeile.",
+      notes: [
+        "[Muss: Fachbereich] wird zu „Fachbereich strikt beachten“.",
+        "[Muss: Fachbereich: Kältetechnik] wird zu „Fachbereich: Kältetechnik“.",
+        "[Plus: Fachbereich: Kältetechnik] wird zu „Fachbereich bevorzugt: Kältetechnik“. Plus heißt: wünschenswert, kein Ausschluss.",
+        "Nur eine Markierung, es wird nichts ausgeblendet."
+      ]
+    },
+    {
+      id: "om-filter-mark-qualification",
+      title: "Qualifikationen markieren",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Zeigt geforderte Scheine und Zertifikate aus den OM-Notizen als Badge in der Zeile.",
+      notes: [
+        "Beispiel: [Muss: Qualifikation: Kälteschein] wird zu „Qualifikation: Kälteschein“.",
+        "Die Toolbox prüft nicht, ob der Kandidat die Qualifikation hat. Das bitte selbst im Profil nachsehen.",
+        "Nur eine Markierung, es wird nichts ausgeblendet."
+      ]
+    },
+    {
+      id: "om-filter-hide-experience",
+      title: "Stellen bei zu wenig Berufserfahrung ausblenden",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Blendet eine Stelle aus, wenn sie Berufserfahrung verlangt und der Kandidat laut Profil eine niedrigere Erfahrungsstufe hat.",
+      notes: [
+        "Greift nur, wenn in den OM-Notizen von Arbeitgeber oder Vakanz [Muss: BE] steht. Ohne dieses Tag wird aus diesem Grund nie ausgeblendet.",
+        "Verglichen wird die „Erforderliche Berufserfahrung“ der Vakanz mit der Berufserfahrung im Kandidatenprofil, in den Stufen 0 Jahre, 1 bis 2, 3 bis 5, 6 bis 10 und mehr als 10 Jahre.",
+        "Beispiel: Die Vakanz verlangt 3 bis 5 Jahre, der Kandidat hat 1 bis 2 Jahre: ausgeblendet. Hat er 3 bis 5 Jahre oder mehr, bleibt die Stelle sichtbar.",
+        "Fehlt eine der beiden Angaben, bleibt die Stelle sichtbar.",
+        "Standardmäßig eingeschaltet."
+      ]
+    },
+    {
+      id: "om-filter-hide-area",
+      title: "Stellen mit abweichendem Fachbereich ausblenden",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Blendet eine Stelle aus, wenn sie einen strikten Fachbereich verlangt und keiner der Fachbereiche des Kandidaten dazu passt.",
+      notes: [
+        "Greift nur bei [Muss: Fachbereich] ohne Zusatz in den OM-Notizen von Arbeitgeber oder Vakanz. [Muss: Fachbereich: …] mit Zusatz und [Plus: Fachbereich: …] werden nur markiert, nie ausgeblendet.",
+        "Verglichen werden die Fachbereiche, die an der Vakanz hinterlegt sind, mit den Fachbereichen im Kandidatenprofil. Ausgeblendet wird nur, wenn beide Listen ausgefüllt sind und keinen einzigen gemeinsamen Eintrag haben.",
+        "Beispiel: Die Vakanz hat Fachbereich A, der Kandidat B und C: ausgeblendet. Hat der Kandidat A und B, bleibt die Stelle sichtbar.",
+        "Standardmäßig ausgeschaltet, weil die Fachbereiche im Kandidatenprofil oft nicht gepflegt sind. Vor dem Einschalten kurz im Profil prüfen, ob sie stimmen."
+      ]
+    },
+    {
+      id: "om-filter-hide-sent-employer",
+      title: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Blendet alle Stellen eines Arbeitgebers aus, bei dem dieser Kandidat schon einen Match mit Status „Senden“ hat.",
+      notes: [
+        "Das sind genau die rot markierten oder rot umrandeten Zeilen, egal wie lange der Versand her ist.",
+        "Gilt nur für den Kandidaten, den du gerade offen hast.",
+        "Standardmäßig ausgeschaltet."
+      ]
+    },
+    {
+      id: "om-filter-hide-employer-limit",
+      title: "Ab der vierten Stelle je Arbeitgeber ausblenden",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Zeigt pro Arbeitgeber höchstens drei Vorschläge und blendet die weiteren aus.",
+      notes: [
+        "Welche drei bleiben, entscheidet die Score-Reihenfolge des Adminpanels über alle Seiten der Liste, nicht nur über die aktuelle Seite.",
+        "Beispiel: Arbeitgeber X hat Vorschläge auf Platz 2, 7, 15, 40 und 41. Platz 40 und 41 werden ausgeblendet, auch wenn sie erst auf Seite 2 stehen.",
+        "Blendet ein anderer Filter einen der ersten drei aus, rückt kein vierter Vorschlag nach.",
+        "Standardmäßig eingeschaltet."
+      ]
+    },
+    {
+      id: "om-filter-show-excluded",
+      title: "Ausgeblendete Stellen vorübergehend zeigen",
+      page: FILTER_PAGE,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "Holt alle ausgeblendeten Zeilen zurück in die Liste, jeweils mit dem roten Badge „Ausgeschlossen: …“ und dem Grund.",
+      notes: ["Gilt nur bis zum Neuladen der Seite. Die eingestellten Filter bleiben erhalten."]
     },
     {
       id: "om-match-hidden-list",
@@ -4920,15 +5028,15 @@
   var SETTINGS_KEY = "werkia_obc_om_match_flags_v1";
   var CACHE_MS = 5 * 60 * 1e3;
   var FLAG_TYPES = [
-    { key: "experience", label: "BE-Anforderungen markieren", hint: "Zeigt Hinweise zur geforderten Berufserfahrung." },
-    { key: "area", label: "Fachbereiche markieren", hint: "Zeigt Muss- und Plus-Hinweise zum Fachbereich." },
-    { key: "qualification", label: "Qualifikationen markieren", hint: "Zeigt geforderte Scheine und Zertifikate." }
+    { key: "experience", label: "BE-Anforderungen markieren", hint: "Zeigt Hinweise zur geforderten Berufserfahrung.", helpTopic: "om-filter-mark-experience" },
+    { key: "area", label: "Fachbereiche markieren", hint: "Zeigt Muss- und Plus-Hinweise zum Fachbereich.", helpTopic: "om-filter-mark-area" },
+    { key: "qualification", label: "Qualifikationen markieren", hint: "Zeigt geforderte Scheine und Zertifikate.", helpTopic: "om-filter-mark-qualification" }
   ];
   var HIDE_TYPES = [
-    { key: "experience", label: "Stellen bei zu wenig Berufserfahrung ausblenden", hint: "Nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen." },
-    { key: "area", label: "Stellen mit abweichendem Fachbereich ausblenden", hint: "Nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten." },
-    { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten." },
-    { key: "employerLimit", label: "Ab der vierten Stelle je Arbeitgeber ausblenden", hint: "Behält die ersten drei Stellen in AP-Reihenfolge, auch über Seitenwechsel hinweg." }
+    { key: "experience", label: "Stellen bei zu wenig Berufserfahrung ausblenden", hint: "Nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen.", helpTopic: "om-filter-hide-experience" },
+    { key: "area", label: "Stellen mit abweichendem Fachbereich ausblenden", hint: "Nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten.", helpTopic: "om-filter-hide-area" },
+    { key: "sentEmployer", label: "Stellen von Arbeitgebern mit bereits gesendetem Match ausblenden", hint: "Gilt nur für diesen Kandidaten.", helpTopic: "om-filter-hide-sent-employer" },
+    { key: "employerLimit", label: "Ab der vierten Stelle je Arbeitgeber ausblenden", hint: "Behält die ersten drei Stellen in AP-Reihenfolge, auch über Seitenwechsel hinweg.", helpTopic: "om-filter-hide-employer-limit" }
   ];
   var JOBS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
   items: allJobPositions(filter: $filter) {
@@ -5162,7 +5270,7 @@
       const groups = [
         { title: "Hinweise markieren", type: "mark", options: FLAG_TYPES },
         { title: "Stellen ausblenden", type: "hide", options: HIDE_TYPES },
-        { title: "Ansicht", type: "view", options: [{ key: "showExcluded", label: "Ausgeblendete Stellen vorübergehend zeigen", hint: "Zeigt die Zeilen mit Ausschlussgrund bis zum Neuladen." }] }
+        { title: "Ansicht", type: "view", options: [{ key: "showExcluded", label: "Ausgeblendete Stellen vorübergehend zeigen", hint: "Zeigt die Zeilen mit Ausschlussgrund bis zum Neuladen.", helpTopic: "om-filter-show-excluded" }] }
       ];
       return `
       <div class="werkia-obc-window-head"><span style="display:inline-flex;align-items:center;"><b>Filter nach</b>${obcHelp.tipHtml("om-match-filter")}</span><span class="werkia-obc-muted">${selected} ausgewählt · ${hiddenCount} aktuell ausgeblendet</span></div>
@@ -5175,7 +5283,7 @@
           ${open ? `<div class="werkia-obc-filter-group-body">${group.options.map((option) => {
           const checked = group.type === "mark" ? draft.enabled[option.key] !== false : group.type === "hide" ? draft.hidden[option.key] === true : draft.showExcluded;
           const count = group.type === "hide" ? `<span class="werkia-obc-filter-count" title="${filterHits[option.key]} auf dieser AP-Seite betroffen">${filterHits[option.key]}</span>` : "";
-          return `<label class="werkia-obc-filter-option" title="${escapeHtml(option.hint)}"><input type="checkbox" data-obc-filter-toggle="${group.type}:${option.key}" ${checked ? "checked" : ""}><span class="werkia-obc-filter-option-label">${escapeHtml(option.label)}</span>${count}</label>`;
+          return `<label class="werkia-obc-filter-option" title="${escapeHtml(option.hint)}"><input type="checkbox" data-obc-filter-toggle="${group.type}:${option.key}" ${checked ? "checked" : ""}><span class="werkia-obc-filter-option-label">${escapeHtml(option.label)}${option.helpTopic ? obcHelp.tipHtml(option.helpTopic) : ""}</span>${count}</label>`;
         }).join("")}</div>` : ""}
         </div>`;
       }).join("")}
