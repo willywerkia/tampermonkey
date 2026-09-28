@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.4.86
+// @version      1.4.87
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -1807,9 +1807,15 @@
         if (badge.dataset.tone !== tone) badge.dataset.tone = tone;
       });
     }
+    const RETRY_FAILED_AFTER_MS = 30 * 1e3;
+    let retryTimer = null;
+    const isWaitingForRetry = (id) => {
+      const state = responseStates.get(id);
+      return state?.status === "error" && Date.now() - (state.failedAt || 0) < RETRY_FAILED_AFTER_MS;
+    };
     async function loadEmployerResponses({ force = false } = {}) {
       if (loadPromise) return loadPromise;
-      const employerIds = getResponseEmployerChoices().map((choice) => choice.id).filter((id) => force || !responseIndex.has(id));
+      const employerIds = getResponseEmployerChoices().map((choice) => choice.id).filter((id) => force || !responseIndex.has(id) && !isWaitingForRetry(id));
       if (!employerIds.length) return;
       for (const id of employerIds) responseStates.set(id, { status: "loading" });
       renderResponseBadges();
@@ -1819,14 +1825,20 @@
           for (const id of employerIds) {
             responseStates.delete(id);
             if (fetched.has(id)) responseIndex.set(id, fetched.get(id));
-            else responseStates.set(id, { status: "error", message: "Arbeitgeber-ID wurde nicht gefunden" });
+            else responseStates.set(id, { status: "error", message: "Arbeitgeber-ID wurde nicht gefunden", failedAt: Date.now() });
           }
         } catch (error) {
-          for (const id of employerIds) responseStates.set(id, { status: "error", message: error.message });
+          for (const id of employerIds) responseStates.set(id, { status: "error", message: error.message, failedAt: Date.now() });
           console.warn("[Werkia OBC Rückmeldung-Badges]", error);
         } finally {
           renderResponseBadges();
           loadPromise = null;
+          if (employerIds.some((id) => responseStates.get(id)?.status === "error") && retryTimer === null) {
+            retryTimer = runtime.setTimeout(() => {
+              retryTimer = null;
+              loadEmployerResponses().catch((error) => console.warn("[Werkia OBC Rückmeldung-Badges]", error));
+            }, RETRY_FAILED_AFTER_MS + 50);
+          }
         }
       })();
       return loadPromise;
@@ -4334,6 +4346,11 @@
         if (typeof GM_setValue === "function") GM_setValue(STORAGE_KEY, value);
       }
     });
+    const owner = sourcePath || routes.join(",");
+    const ownElement = (id) => {
+      const element = document.getElementById(id);
+      return element?.dataset.werkiaPresetsOwner === owner ? element : null;
+    };
     const isTargetPage2 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
@@ -4376,13 +4393,14 @@
       render();
     }
     function closeDialog() {
-      document.getElementById(IDS.dialog)?.remove();
+      ownElement(IDS.dialog)?.remove();
     }
     function renderManager() {
       closeDialog();
       const route = currentRoute();
       const overlay = document.createElement("div");
       overlay.id = IDS.dialog;
+      overlay.dataset.werkiaPresetsOwner = owner;
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) closeDialog();
       });
@@ -4460,6 +4478,7 @@
     function buildBar() {
       const bar = document.createElement("div");
       bar.id = IDS.bar;
+      bar.dataset.werkiaPresetsOwner = owner;
       const title = document.createElement("strong");
       title.textContent = label;
       const select = document.createElement("select");
@@ -4522,12 +4541,13 @@
     }
     function render() {
       if (!isTargetPage2()) {
-        document.getElementById(IDS.bar)?.remove();
+        ownElement(IDS.bar)?.remove();
         closeDialog();
         return;
       }
       ensureStyle();
       let bar = document.getElementById(IDS.bar);
+      if (bar && bar.dataset.werkiaPresetsOwner !== owner) return;
       if (!bar) {
         const anchor = findListAnchor(document);
         if (!anchor?.parentElement) return;

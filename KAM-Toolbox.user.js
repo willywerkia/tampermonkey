@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.3.86
+// @version      1.3.87
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2477,9 +2477,15 @@
         if (badge.dataset.tone !== tone) badge.dataset.tone = tone;
       });
     }
+    const RETRY_FAILED_AFTER_MS = 30 * 1e3;
+    let retryTimer = null;
+    const isWaitingForRetry = (id) => {
+      const state = contactStates.get(id);
+      return state?.status === "error" && Date.now() - (state.failedAt || 0) < RETRY_FAILED_AFTER_MS;
+    };
     async function loadEmployerContacts({ force = false } = {}) {
       if (loadPromise) return loadPromise;
-      const employerIds = getEmployerChoices().map((choice) => choice.id).filter((id) => force || !contactIndex.has(id));
+      const employerIds = getEmployerChoices().map((choice) => choice.id).filter((id) => force || !contactIndex.has(id) && !isWaitingForRetry(id));
       if (!employerIds.length) return;
       for (const id of employerIds) contactStates.set(id, { status: "loading" });
       renderContactBadges();
@@ -2489,14 +2495,20 @@
           for (const id of employerIds) {
             contactStates.delete(id);
             if (fetched.has(id)) contactIndex.set(id, fetched.get(id));
-            else contactStates.set(id, { status: "error", message: "Arbeitgeber-ID wurde nicht gefunden" });
+            else contactStates.set(id, { status: "error", message: "Arbeitgeber-ID wurde nicht gefunden", failedAt: Date.now() });
           }
         } catch (error) {
-          for (const id of employerIds) contactStates.set(id, { status: "error", message: error.message });
+          for (const id of employerIds) contactStates.set(id, { status: "error", message: error.message, failedAt: Date.now() });
           console.warn("[Werkia KAM Kontakt-Badges]", error);
         } finally {
           renderContactBadges();
           loadPromise = null;
+          if (employerIds.some((id) => contactStates.get(id)?.status === "error") && retryTimer === null) {
+            retryTimer = runtime.setTimeout(() => {
+              retryTimer = null;
+              loadEmployerContacts().catch((error) => console.warn("[Werkia KAM Kontakt-Badges]", error));
+            }, RETRY_FAILED_AFTER_MS + 50);
+          }
         }
       })();
       return loadPromise;
@@ -6441,6 +6453,11 @@
         if (typeof GM_setValue === "function") GM_setValue(STORAGE_KEY, value);
       }
     });
+    const owner = sourcePath || routes.join(",");
+    const ownElement = (id) => {
+      const element = document.getElementById(id);
+      return element?.dataset.werkiaPresetsOwner === owner ? element : null;
+    };
     const isTargetPage8 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
@@ -6483,13 +6500,14 @@
       render();
     }
     function closeDialog() {
-      document.getElementById(IDS3.dialog)?.remove();
+      ownElement(IDS3.dialog)?.remove();
     }
     function renderManager() {
       closeDialog();
       const route = currentRoute();
       const overlay = document.createElement("div");
       overlay.id = IDS3.dialog;
+      overlay.dataset.werkiaPresetsOwner = owner;
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) closeDialog();
       });
@@ -6567,6 +6585,7 @@
     function buildBar() {
       const bar = document.createElement("div");
       bar.id = IDS3.bar;
+      bar.dataset.werkiaPresetsOwner = owner;
       const title = document.createElement("strong");
       title.textContent = label;
       const select = document.createElement("select");
@@ -6629,12 +6648,13 @@
     }
     function render() {
       if (!isTargetPage8()) {
-        document.getElementById(IDS3.bar)?.remove();
+        ownElement(IDS3.bar)?.remove();
         closeDialog();
         return;
       }
       ensureStyle();
       let bar = document.getElementById(IDS3.bar);
+      if (bar && bar.dataset.werkiaPresetsOwner !== owner) return;
       if (!bar) {
         const anchor = findListAnchor(document);
         if (!anchor?.parentElement) return;
