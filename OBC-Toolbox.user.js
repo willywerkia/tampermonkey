@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.3.83
+// @version      1.4.84
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -12,6 +12,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
+// @grant        GM_registerMenuCommand
 // @connect      api.werkia.de
 // @connect      werkia.de
 // @connect      nominatim.openstreetmap.org
@@ -720,6 +721,850 @@
     return adapter;
   }
 
+  // ../../shared/js/admin-dom/text.js
+  var ESCAPE_HTML_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+  function escapeHtml(text) {
+    return String(text || "").replace(/[&<>"']/g, (ch) => ESCAPE_HTML_MAP[ch]);
+  }
+
+  // ../../shared/js/toolbox-help/core.js
+  var HELP_KINDS = {
+    view: {
+      label: "Nur Anzeige",
+      explain: "Zeigt nur etwas an. Im Adminpanel wird nichts verändert.",
+      color: "#1f9a6b",
+      tint: "#e6f7f0"
+    },
+    form: {
+      label: "Füllt Formular aus",
+      explain: "Trägt Werte in ein Formular des Adminpanels ein. Gespeichert wird erst, wenn du selbst speicherst.",
+      color: "#6d4aff",
+      tint: "#f1edff"
+    },
+    local: {
+      label: "Nur in deinem Browser",
+      explain: "Speichert Einstellungen nur lokal in deinem Browser. Andere sehen davon nichts.",
+      color: "#6b6775",
+      tint: "#f1eef7"
+    },
+    write: {
+      label: "Ändert Daten",
+      explain: "Schreibt direkt ins Adminpanel. Vor dem Speichern kommt immer eine Rückfrage.",
+      color: "#b17a12",
+      tint: "#fbf1de"
+    },
+    external: {
+      label: "Sendet nach außen",
+      explain: "Schickt eine Nachricht an ein anderes System (z. B. Slack). Vor einem zweiten Versand kommt eine Rückfrage.",
+      color: "#c23f3f",
+      tint: "#fbe6e6"
+    }
+  };
+  var REQUIRED_TEXT_FIELDS = ["id", "title", "page", "summary"];
+  function validateTopics(topics) {
+    if (!Array.isArray(topics) || !topics.length) throw new Error("Toolbox-Hilfe braucht mindestens ein Thema.");
+    const seen = /* @__PURE__ */ new Set();
+    for (const topic of topics) {
+      for (const field of REQUIRED_TEXT_FIELDS) {
+        if (typeof topic?.[field] !== "string" || !topic[field].trim()) {
+          throw new Error(`Hilfethema ${topic?.id || "(ohne id)"}: Feld "${field}" fehlt.`);
+        }
+      }
+      if (!/^[a-z0-9-]+$/.test(topic.id)) throw new Error(`Hilfethema ${topic.id}: id nur aus a-z, 0-9 und "-".`);
+      if (seen.has(topic.id)) throw new Error(`Hilfethema ${topic.id} ist doppelt.`);
+      seen.add(topic.id);
+      if (!HELP_KINDS[topic.kind]) throw new Error(`Hilfethema ${topic.id}: unbekannte Art "${topic.kind}".`);
+      for (const list of ["steps", "notes"]) {
+        if (topic[list] !== void 0 && (!Array.isArray(topic[list]) || topic[list].some((item) => typeof item !== "string"))) {
+          throw new Error(`Hilfethema ${topic.id}: "${list}" muss eine Liste von Texten sein.`);
+        }
+      }
+      for (const list of ["routes", "hosts"]) {
+        if (topic[list] !== void 0 && (!Array.isArray(topic[list]) || topic[list].some((item) => !(item instanceof RegExp)))) {
+          throw new Error(`Hilfethema ${topic.id}: "${list}" muss eine Liste regulärer Ausdrücke sein.`);
+        }
+      }
+    }
+    return topics;
+  }
+  function topicMatchesLocation(topic, { hash = "", hostname = "" } = {}) {
+    const hostOk = topic.hosts?.length ? topic.hosts.some((pattern) => pattern.test(hostname)) : null;
+    const routeOk = topic.routes?.length ? topic.routes.some((pattern) => pattern.test(hash)) : null;
+    if (hostOk === null && routeOk === null) return false;
+    return hostOk !== false && routeOk !== false;
+  }
+  function splitTopicsByLocation(topics, location2) {
+    const here = [];
+    const elsewhere = [];
+    topics.forEach((topic) => (topicMatchesLocation(topic, location2) ? here : elsewhere).push(topic));
+    return { here, elsewhere };
+  }
+  function groupTopicsByPage(topics) {
+    const groups = /* @__PURE__ */ new Map();
+    topics.forEach((topic) => {
+      if (!groups.has(topic.page)) groups.set(topic.page, []);
+      groups.get(topic.page).push(topic);
+    });
+    return [...groups].map(([page, items]) => ({ page, topics: items }));
+  }
+  function tipAttributeValue(namespace, topicId) {
+    return `${namespace}:${topicId}`;
+  }
+  function parseTipAttributeValue(value) {
+    const match = /^([a-z0-9-]+):([a-z0-9-]+)$/.exec(String(value || ""));
+    return match ? { namespace: match[1], topicId: match[2] } : null;
+  }
+  var HELP_ATTRIBUTE = "data-werkia-help";
+  var TIP_TONES = {
+    light: { background: "#f1edff", color: "#5535d6", border: "#cbbcff" },
+    dark: { background: "rgba(255,255,255,.18)", color: "#ffffff", border: "rgba(255,255,255,.55)" }
+  };
+  function tipStyle(tone = "light") {
+    const colors = TIP_TONES[tone] || TIP_TONES.light;
+    return {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flex: "0 0 auto",
+      boxSizing: "border-box",
+      width: "18px",
+      height: "18px",
+      minWidth: "18px",
+      margin: "0 0 0 6px",
+      padding: "0",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "999px",
+      background: colors.background,
+      color: colors.color,
+      font: '700 11px/1 system-ui,-apple-system,"Segoe UI",sans-serif',
+      cursor: "help",
+      verticalAlign: "middle",
+      textTransform: "none",
+      letterSpacing: "0",
+      boxShadow: "none"
+    };
+  }
+  function cssText(style) {
+    return Object.entries(style).map(([key, value]) => `${key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}:${value}`).join(";");
+  }
+  function tipLabel(topic) {
+    return `Hilfe: ${topic?.title || "Funktion"}`;
+  }
+  function buildTipHtml(namespace, topic, { tone = "light" } = {}) {
+    return `<button type="button" ${HELP_ATTRIBUTE}="${escapeHtml(tipAttributeValue(namespace, topic.id))}" aria-label="${escapeHtml(tipLabel(topic))}" title="${escapeHtml(tipLabel(topic))}" style="${escapeHtml(cssText(tipStyle(tone)))}">?</button>`;
+  }
+
+  // ../../shared/js/toolbox-help/index.js
+  var FONT = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  var COLORS = {
+    bg: "#f6f5f8",
+    surface: "#ffffff",
+    border: "#e2e0e8",
+    text: "#1c1a22",
+    muted: "#6b6775",
+    primary: "#6d4aff",
+    primaryTint: "#f1edff",
+    header: "#3a3548"
+  };
+  var DOCK_ID = "werkia-help-dock";
+  var EXTRA_STYLE_ID = "werkia-toolbox-help-style";
+  var Z_TOP = "2147483647";
+  function styled(node, styles) {
+    Object.assign(node.style, styles);
+    return node;
+  }
+  function el(tag, styles, text) {
+    const node = document.createElement(tag);
+    if (styles) styled(node, styles);
+    if (text !== void 0) node.textContent = text;
+    return node;
+  }
+  function closeIcon() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "18");
+    svg.setAttribute("height", "18");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.75");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M6 6l12 12M18 6L6 18");
+    svg.appendChild(path);
+    return svg;
+  }
+  function kindChip(kind) {
+    const info = HELP_KINDS[kind];
+    const chip = el("span", {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "2px 9px",
+      borderRadius: "999px",
+      background: info.tint,
+      color: info.color,
+      font: `650 11px/1.5 ${FONT}`,
+      whiteSpace: "nowrap"
+    }, info.label);
+    chip.title = info.explain;
+    return chip;
+  }
+  function listBlock(heading, items, ordered) {
+    if (!items?.length) return null;
+    const wrap = el("div", { marginTop: "10px" });
+    wrap.appendChild(el("div", { font: `650 11px/1.4 ${FONT}`, color: COLORS.muted, marginBottom: "3px" }, heading));
+    const list = el(ordered ? "ol" : "ul", { margin: "0", paddingLeft: "18px" });
+    items.forEach((item) => list.appendChild(el("li", { margin: "2px 0" }, item)));
+    wrap.appendChild(list);
+    return wrap;
+  }
+  function topicBody(topic) {
+    const parts = [el("p", { margin: "8px 0 0" }, topic.summary)];
+    const steps = listBlock("So geht’s", topic.steps, true);
+    const notes = listBlock("Gut zu wissen", topic.notes, false);
+    if (steps) parts.push(steps);
+    if (notes) parts.push(notes);
+    return parts;
+  }
+  function ensureExtraStyles() {
+    if (document.getElementById(EXTRA_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = EXTRA_STYLE_ID;
+    style.textContent = `
+    [${HELP_ATTRIBUTE}]:hover, [data-werkia-help-dock-button]:hover { filter:brightness(.95); }
+    [${HELP_ATTRIBUTE}]:focus-visible, [data-werkia-help-dock-button]:focus-visible, [data-werkia-help-overview] button:focus-visible { outline:2px solid #b6a4ff; outline-offset:2px; }
+    dialog[data-werkia-help-overview]::backdrop { background:rgba(28,26,34,.55); }
+  `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  function createToolboxHelp({ namespace, toolboxName, topics }) {
+    validateTopics(topics);
+    const topicsById = new Map(topics.map((topic) => [topic.id, topic]));
+    const popoverId = `werkia-help-popover-${namespace}`;
+    const overviewId = `werkia-help-overview-${namespace}`;
+    let current = null;
+    let showTimer = null;
+    let hideTimer = null;
+    let timers = { setTimeout: (fn, ms) => window.setTimeout(fn, ms), clearTimeout: (handle) => window.clearTimeout(handle) };
+    const findTopic = (topicId) => {
+      const topic = topicsById.get(topicId);
+      if (!topic) console.warn(`[${toolboxName} Hilfe] Unbekanntes Hilfethema: ${topicId}`);
+      return topic;
+    };
+    function tip(topicId, { tone = "light" } = {}) {
+      const topic = findTopic(topicId) || { id: topicId, title: topicId };
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute(HELP_ATTRIBUTE, tipAttributeValue(namespace, topic.id));
+      button.setAttribute("aria-label", tipLabel(topic));
+      button.title = tipLabel(topic);
+      button.textContent = "?";
+      return styled(button, tipStyle(tone));
+    }
+    function tipHtml(topicId, options) {
+      const topic = findTopic(topicId) || { id: topicId, title: topicId };
+      return buildTipHtml(namespace, topic, options);
+    }
+    function ownTipFrom(target) {
+      const button = target?.closest?.(`[${HELP_ATTRIBUTE}]`);
+      const parsed = parseTipAttributeValue(button?.getAttribute(HELP_ATTRIBUTE));
+      return parsed?.namespace === namespace ? { button, topicId: parsed.topicId } : null;
+    }
+    const popover = () => document.getElementById(popoverId);
+    function closePopover() {
+      timers.clearTimeout(showTimer);
+      timers.clearTimeout(hideTimer);
+      popover()?.remove();
+      current?.anchor?.setAttribute("aria-expanded", "false");
+      current = null;
+    }
+    function positionPopover(box, anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const margin = 12;
+      const width = box.offsetWidth;
+      const height = box.offsetHeight;
+      const left = Math.min(Math.max(margin, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - margin);
+      const below = rect.bottom + 8;
+      const top = below + height <= window.innerHeight - margin || rect.top - 8 - height < margin ? Math.min(below, Math.max(margin, window.innerHeight - height - margin)) : rect.top - 8 - height;
+      styled(box, { left: `${Math.round(Math.max(margin, left))}px`, top: `${Math.round(top)}px` });
+    }
+    function showPopover(anchor, topicId, pinned) {
+      const topic = findTopic(topicId);
+      if (!topic) return;
+      if (current?.anchor === anchor && popover()) {
+        current.pinned = current.pinned || pinned;
+        return;
+      }
+      closePopover();
+      const box = el("div", {
+        position: "fixed",
+        zIndex: Z_TOP,
+        left: "0",
+        top: "0",
+        boxSizing: "border-box",
+        width: "min(360px, calc(100vw - 24px))",
+        maxHeight: "min(60vh, 480px)",
+        overflowY: "auto",
+        padding: "14px 16px",
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: "16px",
+        background: COLORS.surface,
+        color: COLORS.text,
+        boxShadow: "0 12px 32px rgba(28,26,34,.22)",
+        font: `400 13px/1.55 ${FONT}`,
+        textAlign: "left",
+        whiteSpace: "normal",
+        letterSpacing: "0",
+        textTransform: "none",
+        cursor: "auto"
+      });
+      box.id = popoverId;
+      box.setAttribute("role", "tooltip");
+      box.dataset.werkiaHelpPopover = namespace;
+      box.appendChild(el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, `${toolboxName} · ${topic.page}`));
+      const head = el("div", { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" });
+      head.append(el("div", { font: `650 15px/1.3 ${FONT}` }, topic.title), kindChip(topic.kind));
+      box.appendChild(head);
+      topicBody(topic).forEach((part) => box.appendChild(part));
+      const more = el("button", {
+        display: "block",
+        marginTop: "12px",
+        padding: "0",
+        border: "0",
+        background: "transparent",
+        color: COLORS.primary,
+        font: `600 12px/1.4 ${FONT}`,
+        cursor: "pointer",
+        textAlign: "left"
+      }, `Alle Funktionen der ${toolboxName} ansehen`);
+      more.type = "button";
+      more.dataset.werkiaHelpOverviewLink = topic.id;
+      box.appendChild(more);
+      (anchor.closest("dialog[open]") || document.body).appendChild(box);
+      positionPopover(box, anchor);
+      anchor.setAttribute("aria-expanded", "true");
+      current = { anchor, pinned };
+    }
+    function scheduleShow(anchor, topicId) {
+      timers.clearTimeout(hideTimer);
+      if (current?.anchor === anchor) return;
+      timers.clearTimeout(showTimer);
+      showTimer = timers.setTimeout(() => showPopover(anchor, topicId, false), 150);
+    }
+    function scheduleHide() {
+      timers.clearTimeout(showTimer);
+      if (!current || current.pinned) return;
+      timers.clearTimeout(hideTimer);
+      hideTimer = timers.setTimeout(() => {
+        if (current && !current.pinned) closePopover();
+      }, 200);
+    }
+    function closeOverview() {
+      const dialog = document.getElementById(overviewId);
+      if (!dialog) return;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+    }
+    function topicCard(topic, focused) {
+      const card = el("article", {
+        padding: "14px 16px",
+        border: `1px solid ${focused ? COLORS.primary : COLORS.border}`,
+        borderRadius: "16px",
+        background: focused ? COLORS.primaryTint : COLORS.surface
+      });
+      card.dataset.werkiaHelpTopic = topic.id;
+      const head = el("div", { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" });
+      const titleWrap = el("div");
+      titleWrap.append(
+        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, topic.page),
+        el("h3", { margin: "1px 0 0", font: `650 15px/1.3 ${FONT}`, color: COLORS.text }, topic.title)
+      );
+      head.append(titleWrap, kindChip(topic.kind));
+      card.appendChild(head);
+      topicBody(topic).forEach((part) => card.appendChild(part));
+      return card;
+    }
+    function section(title, children) {
+      const wrap = el("section", { display: "grid", gap: "10px", marginTop: "18px" });
+      wrap.appendChild(el("h2", { margin: "0", font: `650 16px/1.3 ${FONT}`, color: COLORS.text }, title));
+      children.forEach((child) => wrap.appendChild(child));
+      return wrap;
+    }
+    function openOverview({ topicId } = {}) {
+      closePopover();
+      closeOverview();
+      ensureExtraStyles();
+      const { here, elsewhere } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
+      const dialog = el("dialog", {
+        width: "min(780px, calc(100vw - 32px))",
+        maxHeight: "86vh",
+        padding: "0",
+        border: "0",
+        borderRadius: "24px",
+        background: COLORS.bg,
+        color: COLORS.text,
+        boxShadow: "0 24px 60px rgba(28,26,34,.35)",
+        overflow: "hidden",
+        font: `400 13px/1.6 ${FONT}`
+      });
+      dialog.id = overviewId;
+      dialog.setAttribute("data-werkia-help-overview", namespace);
+      dialog.setAttribute("aria-label", `${toolboxName} – Funktionsübersicht`);
+      const frame = el("div", { display: "flex", flexDirection: "column", maxHeight: "86vh" });
+      const header = el("div", {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+        padding: "16px 20px",
+        background: COLORS.header,
+        color: "#fff"
+      });
+      const heading = el("div");
+      heading.append(
+        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: "#d9d4e6" }, "Funktionsübersicht"),
+        el("div", { font: `650 19px/1.3 ${FONT}`, letterSpacing: "-.01em" }, toolboxName)
+      );
+      const closeButton = el("button", {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "34px",
+        height: "34px",
+        padding: "0",
+        border: "1px solid rgba(255,255,255,.35)",
+        borderRadius: "10px",
+        background: "transparent",
+        color: "#fff",
+        cursor: "pointer"
+      });
+      closeButton.type = "button";
+      closeButton.setAttribute("aria-label", "Übersicht schließen");
+      closeButton.appendChild(closeIcon());
+      closeButton.addEventListener("click", () => closeOverview());
+      header.append(heading, closeButton);
+      const content = el("div", { overflowY: "auto", padding: "16px 20px 22px" });
+      content.appendChild(el(
+        "p",
+        { margin: "0", color: COLORS.text },
+        `Die ${toolboxName} ergänzt das Adminpanel. Jede Funktion ist gekennzeichnet, damit du vor dem Klick weißt, ob sie nur etwas anzeigt oder Daten verändert. An vielen Stellen findest du außerdem ein kleines ?, das die jeweilige Funktion direkt dort erklärt.`
+      ));
+      const legend = el("div", { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "12px" });
+      Object.keys(HELP_KINDS).filter((kind) => topics.some((topic) => topic.kind === kind)).forEach((kind) => {
+        const row = el("div", { display: "grid", gap: "4px", padding: "10px 12px", border: `1px solid ${COLORS.border}`, borderRadius: "10px", background: COLORS.surface });
+        row.append(kindChip(kind), el("div", { font: `400 12px/1.5 ${FONT}`, color: COLORS.muted }, HELP_KINDS[kind].explain));
+        row.firstChild.style.justifySelf = "start";
+        legend.appendChild(row);
+      });
+      content.appendChild(legend);
+      if (here.length) content.appendChild(section("Auf dieser Seite", here.map((topic) => topicCard(topic, topic.id === topicId))));
+      groupTopicsByPage(elsewhere).forEach((group) => {
+        content.appendChild(section(
+          here.length ? `Weitere Seiten · ${group.page}` : group.page,
+          group.topics.map((topic) => topicCard(topic, topic.id === topicId))
+        ));
+      });
+      frame.append(header, content);
+      dialog.appendChild(frame);
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) closeOverview();
+      });
+      dialog.addEventListener("close", () => dialog.remove());
+      document.body.appendChild(dialog);
+      dialog.showModal();
+      if (topicId) dialog.querySelector(`[data-werkia-help-topic="${topicId}"]`)?.scrollIntoView?.({ block: "center" });
+    }
+    let dockHosts = /(^|\.)werkia\.de$/i;
+    function syncDock() {
+      const onAdmin = dockHosts.test(location.hostname || "");
+      const { here } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
+      let dock = document.getElementById(DOCK_ID);
+      let button = dock?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`);
+      if (!onAdmin || !here.length) {
+        button?.remove();
+        if (dock && !dock.children.length) dock.remove();
+        return;
+      }
+      if (!dock) {
+        dock = el("div", {
+          position: "fixed",
+          left: "16px",
+          bottom: "16px",
+          zIndex: "1250",
+          display: "flex",
+          flexDirection: "column-reverse",
+          alignItems: "flex-start",
+          gap: "6px"
+        });
+        dock.id = DOCK_ID;
+        document.body.appendChild(dock);
+      }
+      if (!button) {
+        button = el("button", {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "6px",
+          height: "30px",
+          padding: "0 12px 0 5px",
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: "999px",
+          background: COLORS.surface,
+          color: COLORS.text,
+          boxShadow: "0 4px 14px rgba(28,26,34,.16)",
+          font: `600 12px/1 ${FONT}`,
+          cursor: "pointer"
+        });
+        button.type = "button";
+        button.setAttribute("data-werkia-help-dock-button", namespace);
+        button.title = `Was macht die ${toolboxName} auf dieser Seite?`;
+        const mark2 = el("span", {
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "20px",
+          height: "20px",
+          borderRadius: "999px",
+          background: COLORS.primary,
+          color: "#fff",
+          font: `700 12px/1 ${FONT}`
+        }, "?");
+        button.append(mark2, document.createTextNode(`${toolboxName}: Hilfe`));
+        button.addEventListener("click", () => openOverview());
+        dock.appendChild(button);
+      }
+    }
+    function install(runtime, { dock = true, menu = true, dockHostPattern } = {}) {
+      if (dockHostPattern) dockHosts = dockHostPattern;
+      timers = { setTimeout: (fn, ms) => runtime.setTimeout(fn, ms), clearTimeout: (handle) => runtime.clearTimeout(handle) };
+      ensureExtraStyles();
+      const swallow = (event) => {
+        const target = event.target;
+        if (!ownTipFrom(target) && !popover()?.contains(target) && !target?.closest?.(`#${overviewId}`)) return;
+        event.stopPropagation();
+      };
+      runtime.addDocumentListener("pointerdown", swallow, true);
+      runtime.addDocumentListener("mousedown", swallow, true);
+      runtime.addDocumentListener("click", (event) => {
+        const own = ownTipFrom(event.target);
+        if (own) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (current?.anchor === own.button && current.pinned) closePopover();
+          else showPopover(own.button, own.topicId, true);
+          return;
+        }
+        const overviewLink = event.target?.closest?.("[data-werkia-help-overview-link]");
+        if (overviewLink && overviewLink.closest(`#${popoverId}`)) {
+          event.preventDefault();
+          event.stopPropagation();
+          openOverview({ topicId: overviewLink.dataset.werkiaHelpOverviewLink });
+          return;
+        }
+        if (current && !popover()?.contains(event.target)) closePopover();
+      }, true);
+      runtime.addDocumentListener("mouseover", (event) => {
+        const own = ownTipFrom(event.target);
+        if (own) scheduleShow(own.button, own.topicId);
+        else if (current && popover()?.contains(event.target)) timers.clearTimeout(hideTimer);
+      }, true);
+      runtime.addDocumentListener("mouseout", (event) => {
+        const leaving = ownTipFrom(event.target) || popover()?.contains(event.target);
+        if (!leaving) return;
+        const next = event.relatedTarget;
+        if (next && (current?.anchor?.contains(next) || popover()?.contains(next))) return;
+        scheduleHide();
+      }, true);
+      runtime.addDocumentListener("focusin", (event) => {
+        const own = ownTipFrom(event.target);
+        if (own) showPopover(own.button, own.topicId, false);
+      }, true);
+      runtime.addDocumentListener("focusout", (event) => {
+        if (ownTipFrom(event.target) && !popover()?.contains(event.relatedTarget)) scheduleHide();
+      }, true);
+      runtime.addWindowListener("keydown", (event) => {
+        if (event.key !== "Escape" || !current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closePopover();
+      }, true);
+      runtime.addWindowListener("scroll", () => {
+        const box = popover();
+        if (!box || !current) return;
+        if (!current.anchor.isConnected) closePopover();
+        else positionPopover(box, current.anchor);
+      }, true);
+      runtime.addWindowListener("resize", () => {
+        if (current) closePopover();
+      });
+      if (dock) {
+        runtime.addWindowListener("hashchange", syncDock);
+        syncDock();
+      }
+      if (menu && typeof GM_registerMenuCommand === "function") {
+        try {
+          GM_registerMenuCommand(`${toolboxName}: Funktionsübersicht`, () => openOverview());
+        } catch (error) {
+          console.warn(`[${toolboxName} Hilfe] Menüeintrag konnte nicht angelegt werden:`, error);
+        }
+      }
+      runtime.addCleanup(() => {
+        closePopover();
+        closeOverview();
+        const dockEl = document.getElementById(DOCK_ID);
+        dockEl?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`)?.remove();
+        if (dockEl && !dockEl.children.length) dockEl.remove();
+      });
+    }
+    return { namespace, toolboxName, topics, tip, tipHtml, openOverview, install };
+  }
+
+  // ../../shared/js/toolbox-help/shared-topics.js
+  var ROUTES = {
+    potentialMatches: /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i,
+    createOfflineMatch: /^#\/CreateOfflineMatch(?:[/?]|$)/i,
+    kamMyMatches: /#\/KAM\/MyMatches(?:[/?]|$)/i,
+    cemMyMatches: /#\/CEM\/MyMatches(?:[/?]|$)/i,
+    cemMyCandidates: /#\/CEM\/MyCandidates(?:[/?]|$)/i,
+    obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
+    employer: /^#\/Employer\/[^/?]+/i,
+    chat: /\/chat\//i,
+    vacancyPotentialCandidates: /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i
+  };
+  var PAGES = {
+    potentialMatches: "Kandidat › Potenzielle Matches",
+    questionnaire: "OM-Fragebogen (Potenzielle Matches)"
+  };
+  function filterPresetsTopic({ page, routes }) {
+    return {
+      id: "filter-presets",
+      title: "Filtervorlagen",
+      page,
+      routes,
+      kind: "local",
+      summary: "Die Leiste über der Liste speichert Filter, die du oft brauchst, und stellt sie mit einem Klick wieder her.",
+      steps: [
+        "Filter, Sortierung und Seitengröße wie gewohnt im Adminpanel einstellen.",
+        "„Aktuellen Filter speichern“ klicken und einen Namen vergeben.",
+        "Später die Vorlage im Dropdown auswählen. Die Liste springt direkt auf diesen Filter."
+      ],
+      notes: [
+        "Vorlagen liegen nur in deinem Browser und bleiben bei Toolbox-Updates erhalten. Kolleg:innen sehen sie nicht.",
+        "„Verwalten“ zum Umbenennen und Löschen. Zum Übertragen auf einen anderen Rechner den Text dort kopieren und im anderen Browser mit „Aus Textfeld importieren“ einfügen. Der Import ergänzt nur und überschreibt nichts.",
+        "„Filter zurücksetzen“ leert nur den Filter der Ansicht. Deine Vorlagen bleiben."
+      ]
+    };
+  }
+  function offlineMatchBulkTopic() {
+    return {
+      id: "offline-match-bulk",
+      title: "Mehrere Offline Matches auf einmal",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches, ROUTES.createOfflineMatch],
+      kind: "form",
+      summary: "Vor jedem Pfeil „Offline Match erstellen“ steht eine Checkbox. Damit öffnest du ein gemeinsames Offline-Match-Formular für mehrere Arbeitgeber und Stellen, statt jedes einzeln anzulegen.",
+      steps: [
+        "Die Checkboxen der gewünschten Stellen anhaken.",
+        "Auf den Pfeil einer markierten Zeile klicken. Das gemeinsame Formular öffnet sich in einem neuen Tab.",
+        "Im Formular alles prüfen und wie gewohnt speichern. Erst dann entstehen die Offline Matches."
+      ],
+      notes: [
+        "Ohne Häkchen oder mit nur einem Häkchen funktioniert der Pfeil wie gewohnt für diese eine Stelle.",
+        "Klickst du bei bestehender Auswahl auf den Pfeil einer nicht markierten Zeile, passiert nichts. Die Auswahl bleibt erhalten.",
+        "Hat der Kandidat bei einem ausgewählten Arbeitgeber schon einen gesendeten Match, fragt die Toolbox vorher nach.",
+        "Lädt das Adminpanel nicht alle ausgewählten Blöcke ins Formular, blockiert die Toolbox das Speichern und zeigt einen roten Hinweis.",
+        "„Alle Terminvorschläge löschen“ im Formular entfernt nach Rückfrage die Termine aus allen Blöcken. Gespeichert wird auch das erst mit deinem Klick."
+      ]
+    };
+  }
+  function noGoCheckTopic() {
+    return {
+      id: "no-go-check",
+      title: "No-Go-Warnung",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches],
+      kind: "view",
+      summary: "Warnt, wenn ein vorgeschlagener Arbeitgeber beim Kandidaten als No-Go hinterlegt ist. Das Adminpanel schlägt solche Arbeitgeber trotzdem vor.",
+      notes: [
+        "Dunkelrot: Genau dieses Arbeitgeberprofil ist als No-Go hinterlegt. Nicht senden.",
+        "Rot: Das No-Go hat denselben Webauftritt, also dieselbe Firma oder Firmengruppe. Vor dem Senden klären.",
+        "Gelb: Nur der Name passt zu einem No-Go-Eintrag ohne eigenes Profil. Bitte selbst prüfen.",
+        "Die Warnung blendet nichts aus und blockiert nichts. Die Entscheidung liegt bei dir."
+      ]
+    };
+  }
+  function urgentVacancyTopic() {
+    return {
+      id: "urgent-vacancy-highlight",
+      title: "Dringende Vakanzen",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches],
+      kind: "view",
+      summary: "Hebt Stellen hervor, die der KAM als dringend markiert hat. Erkannt wird das am Tag „[dringende Suche]“ in den Notizen der Vakanz.",
+      notes: ["Nur eine Markierung in der Liste. Es wird nichts gespeichert."]
+    };
+  }
+  function vacancyPanelTopic({ routes, page = PAGES.questionnaire }) {
+    return {
+      id: "vacancy-panel",
+      title: "Stellenanzeige neben dem Fragebogen",
+      page,
+      routes,
+      kind: "view",
+      summary: "Wenn du einen OM-Fragebogen öffnest, zeigt ein Panel daneben die Angaben aus der öffentlichen Stellenanzeige: „Zuständigkeiten“ und „Dein Profil“.",
+      notes: [
+        "Ein Klick auf den Titel öffnet die Stellenanzeige in einem neuen Tab.",
+        "Steht dort „Keine Informationen gefunden“, hat die öffentliche Anzeige diese Abschnitte nicht."
+      ]
+    };
+  }
+  function questionnaireEvaluationTopic({ routes, page = PAGES.questionnaire }) {
+    return {
+      id: "questionnaire-evaluation",
+      title: "Match-Empfehlung im Fragebogen",
+      page,
+      routes,
+      kind: "view",
+      summary: "Vergleicht im OM-Fragebogen die Angaben des Kandidaten mit den Anforderungen der Vakanz und zeigt oben ein farbiges Banner.",
+      notes: [
+        "Grün: Nichts spricht dagegen. Gelb: Mindestens ein Punkt ist unklar, bitte selbst prüfen. Rot: Mindestens eine Anforderung ist nicht erfüllt.",
+        "Verglichen werden Montagebereitschaft, Sprachkenntnisse, Berufserfahrung, Anerkennung, Führerschein, Gehalt und Position. Die betroffenen Felder im Fragebogen werden mit derselben Farbe markiert, die Gründe stehen im Banner.",
+        "Das Banner ist nur eine Empfehlung. Es sendet nichts und ändert keinen Status."
+      ]
+    };
+  }
+  function omNotesBoxTopic({ routes, page = PAGES.questionnaire, translatesTags = true }) {
+    return {
+      id: "om-notes-box",
+      title: "OM-Notizen neben dem Fragebogen",
+      page,
+      routes,
+      kind: "view",
+      summary: "Links neben dem OM-Fragebogen erscheinen die OM-Notizen des Arbeitgebers als gut lesbare Liste, damit du sie beim Prüfen nicht übersiehst.",
+      notes: [
+        translatesTags ? "Steuer-Tags wie [NUR OFFEN] oder [CV] werden in Klartext übersetzt." : "",
+        "Arbeitgeber mit „[Absprache vor OFM]“ werden in der Box extra hervorgehoben."
+      ].filter(Boolean)
+    };
+  }
+  function routeCalculationTopic({ routes, page = PAGES.questionnaire }) {
+    return {
+      id: "route-calculation",
+      title: "Distanz & Fahrzeit",
+      page,
+      routes,
+      kind: "view",
+      summary: "Berechnet beim offenen Fragebogen Strecke und Fahrzeit mit dem Auto zwischen Wohnort des Kandidaten und Arbeitsort.",
+      notes: [
+        "Ein Klick auf die Box öffnet die Route in OpenStreetMap.",
+        "„Route nicht verfügbar“ heißt meist: Eine der beiden Adressen fehlt oder ließ sich nicht finden. Dann bitte selbst nachsehen.",
+        "Berechnete Routen werden eine Woche im Browser zwischengespeichert."
+      ]
+    };
+  }
+  function companyFlagTopic() {
+    return {
+      id: "company-flag",
+      title: "Absprache vor OFM",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches],
+      kind: "view",
+      summary: "Markiert Arbeitgeber mit besonderer Absprache (aktuell GA-TEC) farbig mit „[Absprache vor OFM]“.",
+      notes: ["Bei diesen Arbeitgebern vor einem Offline Match erst die Absprache klären."]
+    };
+  }
+  function matchSentMarkerTopic({ extra }) {
+    return {
+      id: "match-sent-marker",
+      title: "Match beim Arbeitgeber schon gesendet",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches],
+      kind: "view",
+      summary: "Markiert Vorschläge, wenn der Kandidat bei diesem Arbeitgeber schon einen Match mit Status „Senden“ hat.",
+      notes: [
+        "Bis 90 Tage nach der Statusänderung ist die Zeile rot gefüllt, danach nur noch rot umrandet.",
+        "Der Hinweis in der Zeile nennt das Datum der Statusänderung.",
+        extra
+      ].filter(Boolean)
+    };
+  }
+  function responseSpeedBadgesTopic({ routes, page = PAGES.potentialMatches }) {
+    return {
+      id: "response-speed-badges",
+      title: "Rückmeldegeschwindigkeit",
+      page,
+      routes,
+      kind: "view",
+      summary: "Zeigt bei jedem Arbeitgeber, wie schnell er erfahrungsgemäß auf Kandidaten reagiert.",
+      notes: [
+        "⚡ Schnelle Rückmeldung, 🕒 Verzögerte Rückmeldung, Unzuverlässige Rückmeldung, ⏳ Keine Rückmeldung. „Nicht angegeben“ heißt, dass beim Arbeitgeber nichts hinterlegt ist.",
+        "Der Wert wird alle 5 Minuten automatisch nachgeladen."
+      ]
+    };
+  }
+
+  // src/help.js
+  var onPotentialMatches = [ROUTES.potentialMatches];
+  var OBC_HELP_TOPICS = [
+    {
+      id: "om-match-filter",
+      title: "Filter nach",
+      page: PAGES.potentialMatches,
+      routes: onPotentialMatches,
+      kind: "local",
+      summary: "„Filter nach“ oben rechts legt fest, welche OM-Hinweise in der Liste markiert und welche Stellen ausgeblendet werden.",
+      steps: [
+        "„Filter nach“ öffnen.",
+        "Häkchen setzen oder eine Voreinstellung wählen: „Kein Filter“, „Alles filtern“ oder „Personalisiert“.",
+        "„Anwenden“ klicken. Vorher ändert sich nichts."
+      ],
+      notes: [
+        "Ausgeblendet wird nur, was eindeutig ist: zu wenig Berufserfahrung nur bei [Muss: BE] und zwei bekannten Erfahrungsstufen, ein abweichender Fachbereich nur bei [Muss: Fachbereich] und zwei ausgefüllten Fachbereichslisten.",
+        "„Ab der vierten Stelle je Arbeitgeber ausblenden“ behält die ersten drei Stellen in der Reihenfolge des Adminpanels, auch über Seitenwechsel hinweg.",
+        "Die Zahlen zeigen, wie viele Matches auf dieser Seite der Liste betroffen sind.",
+        "Die Einstellungen gelten nur in deinem Browser. Ausgeblendete Zeilen sind nicht gelöscht: „Ausgeblendete Stellen vorübergehend zeigen“ holt sie bis zum Neuladen zurück."
+      ]
+    },
+    {
+      id: "om-match-hidden-list",
+      title: "Gefilterte Matches",
+      page: PAGES.potentialMatches,
+      routes: onPotentialMatches,
+      kind: "view",
+      summary: "„Gefilterte Matches“ oben rechts listet alle Stellen, die auf dieser Seite gerade ausgeblendet sind, mit Grund und Link zur Vakanz.",
+      notes: ["Nichts davon ist gelöscht. Welche Stellen ausgeblendet werden, stellst du unter „Filter nach“ ein."]
+    },
+    {
+      id: "om-match-flags",
+      title: "OM-Hinweise in der Liste",
+      page: PAGES.potentialMatches,
+      routes: onPotentialMatches,
+      kind: "view",
+      summary: "Zeigt in jeder Zeile die Muss- und Plus-Anforderungen aus den OM-Notizen: das lila Badge „Arbeitgeber-OM“ für Notizen des Arbeitgebers, das blaue Badge „Vakanz“ für Notizen der Stelle.",
+      notes: [
+        "Erkannt werden [Muss: BE], [Muss: Fachbereich], [Muss: Fachbereich: …], [Plus: Fachbereich: …] und [Muss: Qualifikation: …].",
+        "Ein rotes Badge „Ausgeschlossen: …“ nennt den Grund, warum eine Zeile ausgeblendet ist.",
+        "Zeilen mit gesendetem Match oder No-Go behalten ihre stärkere Warnfarbe."
+      ]
+    },
+    responseSpeedBadgesTopic({ routes: onPotentialMatches }),
+    matchSentMarkerTopic({ extra: "Bei Reverse Matches zeigt der Hinweis zusätzlich den KAM Status, bei „Out“ auch den Grund." }),
+    noGoCheckTopic(),
+    companyFlagTopic(),
+    urgentVacancyTopic(),
+    offlineMatchBulkTopic(),
+    vacancyPanelTopic({ routes: onPotentialMatches }),
+    questionnaireEvaluationTopic({ routes: onPotentialMatches }),
+    omNotesBoxTopic({ routes: onPotentialMatches }),
+    routeCalculationTopic({ routes: onPotentialMatches }),
+    filterPresetsTopic({ page: "OBC › Kandidaten", routes: [ROUTES.obcCandidates] })
+  ];
+  var obcHelp = createToolboxHelp({ namespace: "obc", toolboxName: "OBC-Toolbox", topics: OBC_HELP_TOPICS });
+  function executeToolboxHelp(runtime) {
+    runtime.registerSource("obc/toolbox/src/help.js");
+    obcHelp.install(runtime);
+  }
+
   // ../../shared/js/werkia-graphql/employer-contact-provider.js
   var EMPLOYER_CONTACT_QUERY = `query allEmployers($filter: EmployerFilter) {
   items: allEmployers(filter: $filter) {
@@ -1156,7 +2001,7 @@
   }
   function getDialogLabelTexts(dialog) {
     if (!dialog) return [];
-    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el) => (el.innerText || el.textContent || "").trim()).filter(Boolean);
+    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || el2.textContent || "").trim()).filter(Boolean);
   }
   function isQuestionnaireDialog(dialog, { strictMode = true, fold = false, labels = QUESTIONNAIRE_LABELS } = {}) {
     if (!dialog) return false;
@@ -1193,7 +2038,7 @@
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return null;
     const field = mode === "last" ? fields[fields.length - 1] : fields[0];
-    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el) => (el.innerText || el.textContent || "").trim()) || null;
+    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el2) => (el2.innerText || el2.textContent || "").trim()) || null;
   }
   function findValueAllowEmpty(dialog, labelText, mode = "first", { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
@@ -1211,11 +2056,11 @@
   function getPositionEls(dialog, labelText, { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return [];
-    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el) => (el.innerText || el.textContent || "").trim() && normalize2(el.innerText || el.textContent, fold) !== "berufsausbildung");
+    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize2(el2.innerText || el2.textContent, fold) !== "berufsausbildung");
   }
   function getQuestionnaireHeaderValue(dialog, labelText, { fold = false } = {}) {
     const field = getFieldsByLabel(dialog, labelText, { fold })[0];
-    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el) => el.textContent?.trim() && normalize2(el.textContent, fold) !== normalize2(labelText, fold)) : null;
+    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize2(el2.textContent, fold) !== normalize2(labelText, fold)) : null;
     if (value?.textContent?.trim()) return value.textContent.trim();
     const lines = (dialog.innerText || dialog.textContent || "").split("\n").map((line) => line.trim()).filter(Boolean);
     const labelIndex = lines.findIndex((line) => normalize2(line, fold) === normalize2(labelText, fold));
@@ -1256,7 +2101,7 @@
   function executeCompanyFlag(runtime) {
     runtime.registerSource("obc/toolbox/src/features/obc-fragebogen/company-flag.js");
     function removeCompanyFlags() {
-      document.querySelectorAll(`.${COMPANY_FLAG_CLASS}`).forEach((el) => el.remove());
+      document.querySelectorAll(`.${COMPANY_FLAG_CLASS}`).forEach((el2) => el2.remove());
       document.querySelectorAll(`.${COMPANY_ROW_CLASS}`).forEach((row) => row.classList.remove(COMPANY_ROW_CLASS));
       document.getElementById(COMPANY_STYLE_ID)?.remove();
     }
@@ -1692,7 +2537,7 @@
       if (/Matchkommentare/i.test(text)) return false;
       if (/Kandidat Dateien/i.test(text)) return false;
       const labels = new Set(
-        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el) => (el.innerText || "").trim())
+        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || "").trim())
       );
       const count = QUESTIONNAIRE_LABELS2.filter((l) => labels.has(l)).length;
       const hasHeader = labels.has("Kandidat") && labels.has("Job");
@@ -1972,7 +2817,7 @@
     if (!prefixByColor) return false;
     return Object.values(prefixByColor).some((prefix) => value === `${prefix}${original}`);
   }
-  function mark(el, color, title = "", options = {}) {
+  function mark(el2, color, title = "", options = {}) {
     const {
       markAttr = DEFAULT_MARK_ATTR,
       originalAttr = DEFAULT_ORIGINAL_ATTR,
@@ -1981,24 +2826,24 @@
       prefixByColor = null,
       dedupeAttr = null
     } = options;
-    if (!el) return;
+    if (!el2) return;
     if (dedupeAttr) {
       const signature = `${color}|${title}`;
-      if (el.dataset[dedupeAttr] === signature) return;
-      el.dataset[dedupeAttr] = signature;
+      if (el2.dataset[dedupeAttr] === signature) return;
+      el2.dataset[dedupeAttr] = signature;
     }
-    if (!el.dataset[originalAttr]) el.dataset[originalAttr] = el.innerText || "";
-    el.dataset[markAttr] = "true";
-    el.style.background = color;
-    el.style.color = "#000";
-    el.style.padding = "4px 6px";
-    el.style.borderRadius = "4px";
-    el.style.fontWeight = fontWeight;
-    el.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
-    if (title) el.title = title;
-    const original = el.dataset[originalAttr];
+    if (!el2.dataset[originalAttr]) el2.dataset[originalAttr] = el2.innerText || "";
+    el2.dataset[markAttr] = "true";
+    el2.style.background = color;
+    el2.style.color = "#000";
+    el2.style.padding = "4px 6px";
+    el2.style.borderRadius = "4px";
+    el2.style.fontWeight = fontWeight;
+    el2.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
+    if (title) el2.title = title;
+    const original = el2.dataset[originalAttr];
     const prefix = prefixByColor?.[color];
-    el.innerText = prefix ? `${prefix}${original}` : original;
+    el2.innerText = prefix ? `${prefix}${original}` : original;
   }
   function clearMarks(root = document, options = {}) {
     const {
@@ -2006,19 +2851,19 @@
       originalAttr = DEFAULT_ORIGINAL_ATTR,
       dedupeAttr = null
     } = options;
-    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el) => {
-      const original = el.dataset[originalAttr];
-      if (original && isOwnMarkedValue(el.innerText || "", original, options)) el.innerText = original;
-      el.style.background = "";
-      el.style.color = "";
-      el.style.padding = "";
-      el.style.borderRadius = "";
-      el.style.fontWeight = "";
-      el.style.boxShadow = "";
-      el.title = "";
-      delete el.dataset[markAttr];
-      delete el.dataset[originalAttr];
-      if (dedupeAttr) delete el.dataset[dedupeAttr];
+    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el2) => {
+      const original = el2.dataset[originalAttr];
+      if (original && isOwnMarkedValue(el2.innerText || "", original, options)) el2.innerText = original;
+      el2.style.background = "";
+      el2.style.color = "";
+      el2.style.padding = "";
+      el2.style.borderRadius = "";
+      el2.style.fontWeight = "";
+      el2.style.boxShadow = "";
+      el2.title = "";
+      delete el2.dataset[markAttr];
+      delete el2.dataset[originalAttr];
+      if (dedupeAttr) delete el2.dataset[dedupeAttr];
     });
   }
 
@@ -2044,8 +2889,8 @@
   function executeQuestionnaireEvaluation(runtime) {
     runtime.registerSource("obc/toolbox/src/features/obc-fragebogen/questionnaire-evaluation.js");
     const MARK_OPTIONS = { prefixByColor: { [RED]: "❌ ", [YELLOW]: "⚠️ " } };
-    function mark2(el, color, title = "") {
-      mark(el, color, title, MARK_OPTIONS);
+    function mark2(el2, color, title = "") {
+      mark(el2, color, title, MARK_OPTIONS);
     }
     function clearMarks2() {
       clearMarks(document, MARK_OPTIONS);
@@ -2093,20 +2938,20 @@
       return { status: "send" };
     }
     function compareRecognition(dialog) {
-      const el = findValue(dialog, "Recognition status");
-      if (!el) return { status: "send" };
-      const v = clean(el.innerText);
+      const el2 = findValue(dialog, "Recognition status");
+      if (!el2) return { status: "send" };
+      const v = clean(el2.innerText);
       if (v.includes("ja, ist anerkannt")) {
-        mark2(el, GREEN, "Anerkennung: Ja");
+        mark2(el2, GREEN, "Anerkennung: Ja");
         return { status: "send" };
       }
       if (v.includes("in anerkennung")) {
-        mark2(el, YELLOW, "In Anerkennung");
-        return { status: "unclear", detail: `Recognition status: ${el.innerText}` };
+        mark2(el2, YELLOW, "In Anerkennung");
+        return { status: "unclear", detail: `Recognition status: ${el2.innerText}` };
       }
       if (v.includes("noch nicht beantragt")) {
-        mark2(el, RED, "Noch nicht beantragt");
-        return { status: "no-send", detail: `Recognition status: ${el.innerText}` };
+        mark2(el2, RED, "Noch nicht beantragt");
+        return { status: "no-send", detail: `Recognition status: ${el2.innerText}` };
       }
       return { status: "send" };
     }
@@ -2155,8 +3000,8 @@
       return { status: "send" };
     }
     function comparePositions(dialog) {
-      const empEls = getPositionEls(dialog, "Position").map((el) => ({ el, value: clean(el.innerText) }));
-      const candEls = getPositionEls(dialog, "Positionen").map((el) => ({ el, value: clean(el.innerText) }));
+      const empEls = getPositionEls(dialog, "Position").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
+      const candEls = getPositionEls(dialog, "Positionen").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
       if (!empEls.length) return { status: "send" };
       if (!candEls.length) return { status: "unclear", detail: `Positionen: ${empEls.map((p) => p.value).join(", ")} → leer` };
       let anyGreen = false;
@@ -2218,14 +3063,14 @@
       }
       banner.style.background = evaluation.color;
       banner.innerHTML = `
-      <div>${evaluation.title}</div>
+      <div style="display:flex;align-items:center;">${evaluation.title}${obcHelp.tipHtml("questionnaire-evaluation")}</div>
       ${evaluation.details.length ? `<div style="margin-top:6px;font-weight:500;font-size:13px;line-height:1.4;">${evaluation.details.join("<br>")}</div>` : ""}
     `;
     }
     function currentFieldSignature(dialog) {
       return [...dialog.querySelectorAll("span.ra-field")].map((field) => {
         const label = field.querySelector("p span")?.innerText?.trim() || "";
-        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el) => el.dataset[ORIGINAL_TEXT] ?? el.innerText ?? el.textContent ?? "").join("|");
+        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el2) => el2.dataset[ORIGINAL_TEXT] ?? el2.innerText ?? el2.textContent ?? "").join("|");
         return `${label}=${values}`;
       }).join(";");
     }
@@ -2294,7 +3139,7 @@
   function isCandidatePotentialMatchesPage5(hash = location.hash) {
     return CANDIDATE_POTENTIAL_MATCHES_RE6.test(hash || "");
   }
-  function escapeHtml(str) {
+  function escapeHtml2(str) {
     return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
   function executeOmNotesBox(runtime) {
@@ -2395,7 +3240,7 @@
       bullets.forEach((point) => {
         const li = document.createElement("li");
         li.style.cssText = "display:flex;gap:8px;margin-bottom:8px;align-items:flex-start;font-size:15px;line-height:1.6;";
-        li.innerHTML = `<span style="color:#e67700;flex-shrink:0;font-weight:900;margin-top:1px;">•</span><span>${escapeHtml(point)}</span>`;
+        li.innerHTML = `<span style="color:#e67700;flex-shrink:0;font-weight:900;margin-top:1px;">•</span><span>${escapeHtml2(point)}</span>`;
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -2467,7 +3312,7 @@
     const distance = `${(distanceMeters / 1e3).toFixed(1).replace(".", ",")} km`;
     return `🚗 ${duration} (${distance})`;
   }
-  function escapeHtml2(str) {
+  function escapeHtml3(str) {
     return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
   function executeRouteCalculation(runtime) {
@@ -2480,7 +3325,7 @@
       if (/Matchkommentare/i.test(text)) return false;
       if (/Kandidat Dateien/i.test(text)) return false;
       const labels = new Set(
-        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el) => (el.innerText || "").trim())
+        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || "").trim())
       );
       const count = QUESTIONNAIRE_LABELS3.filter((l) => labels.has(l)).length;
       const hasHeader = labels.has("Kandidat") && labels.has("Job");
@@ -2661,13 +3506,13 @@
           <foreignObject x="${startLabel.x}" y="${startLabel.y}" width="${labelWidth}" height="${labelHeight}">
             <div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;box-sizing:border-box;padding:7px 9px;border:2px solid #2f9e44;border-radius:8px;background:rgba(255,255,255,.96);color:#1b1b1b;font:600 12px/1.3 sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.16);overflow:hidden;">
               <div style="font-size:13px;font-weight:900;color:#2b8a3e;margin-bottom:2px;">Kandidat</div>
-              <div>${escapeHtml2(candidateAddress)}</div>
+              <div>${escapeHtml3(candidateAddress)}</div>
             </div>
           </foreignObject>
           <foreignObject x="${endLabel.x}" y="${endLabel.y}" width="${labelWidth}" height="${labelHeight}">
             <div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;box-sizing:border-box;padding:7px 9px;border:2px solid #e03131;border-radius:8px;background:rgba(255,255,255,.96);color:#1b1b1b;font:600 12px/1.3 sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.16);overflow:hidden;">
               <div style="font-size:13px;font-weight:900;color:#c92a2a;margin-bottom:2px;">Vakanz</div>
-              <div>${escapeHtml2(jobPositionAddress)}</div>
+              <div>${escapeHtml3(jobPositionAddress)}</div>
             </div>
           </foreignObject>
         </svg>
@@ -2732,7 +3577,7 @@
       box.style.borderColor = "rgba(25,113,194,.38)";
       box.innerHTML = `
       <strong>🗺️ Distanz & Fahrzeit</strong>
-      <div style="margin-top:4px;font-size:15px;font-weight:800;">${escapeHtml2(data.displayText)}</div>
+      <div style="margin-top:4px;font-size:15px;font-weight:800;">${escapeHtml3(data.displayText)}</div>
       ${createRoutePreviewSvg(data.previewCoordinates, data.candidateAddress, data.jobPositionAddress)}
     `;
       box.title = `${data.candidateAddress} → ${data.jobPositionAddress}`;
@@ -2841,6 +3686,7 @@
   var DATE_REMOVE_SELECTOR = 'button.button-remove[class*="button-remove-employers."][class*=".interview.dates-"][aria-label="Entfernen"]';
   var OFFLINE_MATCH_FORM_SELECTOR = '[data-testid="create-offline-match-form"]';
   var MATCH_PRESENT_ROW_CLASS2 = "werkia-cem-match-present-row";
+  var HELP_TIP_CLASS = "werkia-bulk-ofm-help";
   function isCreateOfflineMatchRoute(hash = window.location.hash) {
     return CREATE_OFFLINE_MATCH_ROUTE.test(hash || "");
   }
@@ -2927,7 +3773,7 @@
     document.head.appendChild(style);
   }
   function removeInjectedUi() {
-    document.querySelectorAll(`.${BULK_CHECKBOX_CLASS}`).forEach((element) => element.remove());
+    document.querySelectorAll(`.${BULK_CHECKBOX_CLASS}, .${HELP_TIP_CLASS}`).forEach((element) => element.remove());
     document.getElementById(CANDIDATE_STATUS_ID)?.remove();
     document.getElementById(FORM_CONTROLS_ID)?.remove();
     document.getElementById(FORM_STATUS_ID)?.remove();
@@ -2957,6 +3803,15 @@
     const surface = root.querySelector(OFFLINE_MATCH_FORM_SELECTOR);
     const form = surface?.closest("form");
     return surface && form ? { form, surface } : null;
+  }
+  function addHeaderHelpTip(helpTip) {
+    const cell = document.querySelector(`.${BULK_CHECKBOX_CLASS}`)?.closest("td");
+    const header = cell?.closest("table")?.tHead?.rows?.[0]?.cells?.[cell.cellIndex];
+    if (!header || header.querySelector(`.${HELP_TIP_CLASS}`)) return;
+    const tip = helpTip();
+    if (!tip) return;
+    tip.classList.add(HELP_TIP_CLASS);
+    header.appendChild(tip);
   }
   function addCandidateCheckboxes(selectedMatches) {
     document.querySelectorAll(MATCH_LINK_SELECTOR).forEach((link) => {
@@ -3058,7 +3913,7 @@
     };
     removeNext();
   }
-  function ensureFormControls(form, surface, source, runtime) {
+  function ensureFormControls(form, surface, source, runtime, helpTip) {
     ensureStyles();
     if (!form.werkiaBulkOfmSource) form.werkiaBulkOfmSource = source;
     let controls = document.getElementById(FORM_CONTROLS_ID);
@@ -3070,6 +3925,11 @@
       button.textContent = "Alle Terminvorschläge löschen";
       button.addEventListener("click", () => removeAllAppointmentSuggestions(form, runtime, button));
       controls.appendChild(button);
+      const tip = helpTip?.();
+      if (tip) {
+        tip.style.alignSelf = "center";
+        controls.appendChild(tip);
+      }
       surface.prepend(controls);
     }
     if (form.dataset.werkiaBulkOfmSubmitGuard !== "true") {
@@ -3088,7 +3948,7 @@
     }
     updateBulkFormStatus(form, form.werkiaBulkOfmSource);
   }
-  function executeBulkOfflineMatches(runtime, sourcePath) {
+  function executeBulkOfflineMatches(runtime, sourcePath, { helpTip } = {}) {
     runtime.registerSource(sourcePath);
     const selectedMatches = /* @__PURE__ */ new Map();
     let scheduled = false;
@@ -3103,12 +3963,13 @@
       if (document.querySelector(MATCH_LINK_SELECTOR)) {
         ensureStyles();
         addCandidateCheckboxes(selectedMatches);
+        if (helpTip) addHeaderHelpTip(helpTip);
         return;
       }
       const offlineMatchForm = resolveOfflineMatchForm();
       if (offlineMatchForm) {
         const source = isCreateOfflineMatchRoute() ? parseOfflineMatchSource(window.location.href) : null;
-        ensureFormControls(offlineMatchForm.form, offlineMatchForm.surface, source, runtime);
+        ensureFormControls(offlineMatchForm.form, offlineMatchForm.surface, source, runtime, helpTip);
         return;
       }
       removeInjectedUi();
@@ -3164,7 +4025,9 @@
 
   // src/features/offline-match-bulk.js
   function executeOfflineMatchBulk(runtime) {
-    executeBulkOfflineMatches(runtime, "obc/toolbox/src/features/offline-match-bulk.js");
+    executeBulkOfflineMatches(runtime, "obc/toolbox/src/features/offline-match-bulk.js", {
+      helpTip: () => obcHelp.tip("offline-match-bulk")
+    });
   }
 
   // ../../shared/js/list-filter-presets/core.js
@@ -3347,7 +4210,10 @@
     sourcePath,
     label = "Filtervorlagen",
     builtInPresets = [],
-    storage
+    storage,
+    // Optional: liefert den ?-Knopf der jeweiligen Toolbox-Hilfe
+    // (shared/js/toolbox-help/). Ohne ihn bleibt die Leiste wie bisher.
+    helpTip
   } = {}) {
     runtime.registerSource(sourcePath);
     const presetStorage = storage || createPresetStorage({
@@ -3507,7 +4373,8 @@
       resetButton.className = "werkia-filter-presets-secondary";
       resetButton.textContent = "Filter zuruecksetzen";
       resetButton.addEventListener("click", () => applyPreset({ filter: {} }));
-      bar.append(title, select, saveButton, manageButton, resetButton);
+      const tip = helpTip?.();
+      bar.append(...[title, tip, select, saveButton, manageButton, resetButton].filter(Boolean));
       return bar;
     }
     function fillSelect(select) {
@@ -3573,6 +4440,7 @@
     executeListFilterPresets(runtime, {
       routes: OBC_ROUTES,
       builtInPresets: OBC_BUILT_IN_PRESETS,
+      helpTip: () => obcHelp.tip("filter-presets"),
       sourcePath: "obc/toolbox/src/features/filter-presets.js"
     });
   }
@@ -4040,12 +4908,6 @@
     ten_plus: 4
   };
 
-  // ../../shared/js/admin-dom/text.js
-  var ESCAPE_HTML_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
-  function escapeHtml3(text) {
-    return String(text || "").replace(/[&<>"']/g, (ch) => ESCAPE_HTML_MAP[ch]);
-  }
-
   // src/features/om-match-flags.js
   var ROUTE = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
   var ROWS = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
@@ -4303,17 +5165,17 @@
         { title: "Ansicht", type: "view", options: [{ key: "showExcluded", label: "Ausgeblendete Stellen vorübergehend zeigen", hint: "Zeigt die Zeilen mit Ausschlussgrund bis zum Neuladen." }] }
       ];
       return `
-      <div class="werkia-obc-window-head"><b>Filter nach</b><span class="werkia-obc-muted">${selected} ausgewählt · ${hiddenCount} aktuell ausgeblendet</span></div>
+      <div class="werkia-obc-window-head"><span style="display:inline-flex;align-items:center;"><b>Filter nach</b>${obcHelp.tipHtml("om-match-filter")}</span><span class="werkia-obc-muted">${selected} ausgewählt · ${hiddenCount} aktuell ausgeblendet</span></div>
       <div class="werkia-obc-filter-presets">${preset("none", "Kein Filter")}${preset("all", "Alles filtern")}${preset("custom", "Personalisiert")}</div>
       ${groups.map((group) => {
         const open = !collapsedSections.has(group.title);
         const total = group.type === "hide" ? filterHits.total : null;
         return `<div class="werkia-obc-filter-group" data-open="${open}">
-          <button type="button" class="werkia-obc-filter-group-head" data-obc-filter-group="${escapeHtml3(group.title)}"><span>${open ? "▾" : "▸"} ${escapeHtml3(group.title)}</span>${total === null ? "" : `<span class="werkia-obc-filter-count">${total}</span>`}</button>
+          <button type="button" class="werkia-obc-filter-group-head" data-obc-filter-group="${escapeHtml(group.title)}"><span>${open ? "▾" : "▸"} ${escapeHtml(group.title)}</span>${total === null ? "" : `<span class="werkia-obc-filter-count">${total}</span>`}</button>
           ${open ? `<div class="werkia-obc-filter-group-body">${group.options.map((option) => {
           const checked = group.type === "mark" ? draft.enabled[option.key] !== false : group.type === "hide" ? draft.hidden[option.key] === true : draft.showExcluded;
           const count = group.type === "hide" ? `<span class="werkia-obc-filter-count" title="${filterHits[option.key]} auf dieser AP-Seite betroffen">${filterHits[option.key]}</span>` : "";
-          return `<label class="werkia-obc-filter-option" title="${escapeHtml3(option.hint)}"><input type="checkbox" data-obc-filter-toggle="${group.type}:${option.key}" ${checked ? "checked" : ""}><span class="werkia-obc-filter-option-label">${escapeHtml3(option.label)}</span>${count}</label>`;
+          return `<label class="werkia-obc-filter-option" title="${escapeHtml(option.hint)}"><input type="checkbox" data-obc-filter-toggle="${group.type}:${option.key}" ${checked ? "checked" : ""}><span class="werkia-obc-filter-option-label">${escapeHtml(option.label)}</span>${count}</label>`;
         }).join("")}</div>` : ""}
         </div>`;
       }).join("")}
@@ -4321,8 +5183,8 @@
       <div class="werkia-obc-filter-confirm"><button type="button" data-obc-filter-cancel>Abbrechen</button><button type="button" data-obc-filter-apply class="werkia-obc-primary">Anwenden</button></div>`;
     }
     function infoHtml(entries) {
-      return `<div class="werkia-obc-window-head"><b>Gefilterte Matches</b><span class="werkia-obc-muted">${entries.length} auf dieser AP-Seite</span></div>
-      ${entries.length ? entries.map((entry) => `<div class="werkia-obc-info-row"><div class="werkia-obc-info-main"><div class="werkia-obc-info-name">${escapeHtml3(entry.employer)}</div><div class="werkia-obc-muted">${escapeHtml3(entry.job)}</div><div class="werkia-obc-reason">${escapeHtml3(entry.reason)}</div></div>${entry.jobId ? `<a href="#/JobPosition/${escapeHtml3(entry.jobId)}/show" target="_blank" rel="noopener" title="Vakanz öffnen">Vakanz</a>` : ""}</div>`).join("") : '<div class="werkia-obc-muted werkia-obc-info-empty">Nichts ausgeblendet.</div>'}`;
+      return `<div class="werkia-obc-window-head"><span style="display:inline-flex;align-items:center;"><b>Gefilterte Matches</b>${obcHelp.tipHtml("om-match-hidden-list")}</span><span class="werkia-obc-muted">${entries.length} auf dieser AP-Seite</span></div>
+      ${entries.length ? entries.map((entry) => `<div class="werkia-obc-info-row"><div class="werkia-obc-info-main"><div class="werkia-obc-info-name">${escapeHtml(entry.employer)}</div><div class="werkia-obc-muted">${escapeHtml(entry.job)}</div><div class="werkia-obc-reason">${escapeHtml(entry.reason)}</div></div>${entry.jobId ? `<a href="#/JobPosition/${escapeHtml(entry.jobId)}/show" target="_blank" rel="noopener" title="Vakanz öffnen">Vakanz</a>` : ""}</div>`).join("") : '<div class="werkia-obc-muted werkia-obc-info-empty">Nichts ausgeblendet.</div>'}`;
     }
     function renderControl() {
       let control = document.getElementById(CONTROL_ID);
@@ -4454,7 +5316,7 @@
     function render() {
       renderControl();
       if (!ROUTE.test(location.hash || "")) {
-        document.querySelectorAll(`.${ROW_CLASS}, .${HIDDEN_CLASS}, .${BADGE_CLASS}, .${EXCLUSION_BADGE_CLASS}`).forEach((el) => el.matches("tr") ? clearRow(el) : el.remove());
+        document.querySelectorAll(`.${ROW_CLASS}, .${HIDDEN_CLASS}, .${BADGE_CLASS}, .${EXCLUSION_BADGE_CLASS}`).forEach((el2) => el2.matches("tr") ? clearRow(el2) : el2.remove());
         return;
       }
       const candidateId = location.hash.match(ROUTE)?.[0]?.match(/Candidate\/([a-f0-9-]{36})/i)?.[1]?.toLowerCase();
@@ -4852,6 +5714,8 @@
   // src/main.js
   initObcGraphqlAdapter();
   bootstrapToolbox({ label: "OBC", marker: "data-werkia-obc-toolbox-loaded" }, [
+    // First: installs the delegated ?-button handling the features below use.
+    { id: "toolbox-help", execute: executeToolboxHelp },
     { id: "obc-fragebogen-response-time-badges", execute: executeResponseTimeBadges },
     { id: "obc-fragebogen-company-flag", execute: executeCompanyFlag },
     { id: "obc-fragebogen-kam-status-lookup", execute: executeKamStatusLookup },

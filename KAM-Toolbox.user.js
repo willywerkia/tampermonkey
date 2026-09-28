@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.2.83
+// @version      1.3.84
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -13,6 +13,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
+// @grant        GM_registerMenuCommand
 // @connect      api.werkia.de
 // @connect      werkia.de
 // @connect      nominatim.openstreetmap.org
@@ -631,6 +632,924 @@
     return String(getValue(BEARER_STORAGE_KEY, "") || "");
   }
 
+  // ../../shared/js/admin-dom/text.js
+  var ESCAPE_HTML_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+  function escapeHtml(text) {
+    return String(text || "").replace(/[&<>"']/g, (ch) => ESCAPE_HTML_MAP[ch]);
+  }
+
+  // ../../shared/js/toolbox-help/core.js
+  var HELP_KINDS = {
+    view: {
+      label: "Nur Anzeige",
+      explain: "Zeigt nur etwas an. Im Adminpanel wird nichts verändert.",
+      color: "#1f9a6b",
+      tint: "#e6f7f0"
+    },
+    form: {
+      label: "Füllt Formular aus",
+      explain: "Trägt Werte in ein Formular des Adminpanels ein. Gespeichert wird erst, wenn du selbst speicherst.",
+      color: "#6d4aff",
+      tint: "#f1edff"
+    },
+    local: {
+      label: "Nur in deinem Browser",
+      explain: "Speichert Einstellungen nur lokal in deinem Browser. Andere sehen davon nichts.",
+      color: "#6b6775",
+      tint: "#f1eef7"
+    },
+    write: {
+      label: "Ändert Daten",
+      explain: "Schreibt direkt ins Adminpanel. Vor dem Speichern kommt immer eine Rückfrage.",
+      color: "#b17a12",
+      tint: "#fbf1de"
+    },
+    external: {
+      label: "Sendet nach außen",
+      explain: "Schickt eine Nachricht an ein anderes System (z. B. Slack). Vor einem zweiten Versand kommt eine Rückfrage.",
+      color: "#c23f3f",
+      tint: "#fbe6e6"
+    }
+  };
+  var REQUIRED_TEXT_FIELDS = ["id", "title", "page", "summary"];
+  function validateTopics(topics) {
+    if (!Array.isArray(topics) || !topics.length) throw new Error("Toolbox-Hilfe braucht mindestens ein Thema.");
+    const seen = /* @__PURE__ */ new Set();
+    for (const topic of topics) {
+      for (const field of REQUIRED_TEXT_FIELDS) {
+        if (typeof topic?.[field] !== "string" || !topic[field].trim()) {
+          throw new Error(`Hilfethema ${topic?.id || "(ohne id)"}: Feld "${field}" fehlt.`);
+        }
+      }
+      if (!/^[a-z0-9-]+$/.test(topic.id)) throw new Error(`Hilfethema ${topic.id}: id nur aus a-z, 0-9 und "-".`);
+      if (seen.has(topic.id)) throw new Error(`Hilfethema ${topic.id} ist doppelt.`);
+      seen.add(topic.id);
+      if (!HELP_KINDS[topic.kind]) throw new Error(`Hilfethema ${topic.id}: unbekannte Art "${topic.kind}".`);
+      for (const list of ["steps", "notes"]) {
+        if (topic[list] !== void 0 && (!Array.isArray(topic[list]) || topic[list].some((item) => typeof item !== "string"))) {
+          throw new Error(`Hilfethema ${topic.id}: "${list}" muss eine Liste von Texten sein.`);
+        }
+      }
+      for (const list of ["routes", "hosts"]) {
+        if (topic[list] !== void 0 && (!Array.isArray(topic[list]) || topic[list].some((item) => !(item instanceof RegExp)))) {
+          throw new Error(`Hilfethema ${topic.id}: "${list}" muss eine Liste regulärer Ausdrücke sein.`);
+        }
+      }
+    }
+    return topics;
+  }
+  function topicMatchesLocation(topic, { hash = "", hostname = "" } = {}) {
+    const hostOk = topic.hosts?.length ? topic.hosts.some((pattern) => pattern.test(hostname)) : null;
+    const routeOk = topic.routes?.length ? topic.routes.some((pattern) => pattern.test(hash)) : null;
+    if (hostOk === null && routeOk === null) return false;
+    return hostOk !== false && routeOk !== false;
+  }
+  function splitTopicsByLocation(topics, location2) {
+    const here = [];
+    const elsewhere = [];
+    topics.forEach((topic) => (topicMatchesLocation(topic, location2) ? here : elsewhere).push(topic));
+    return { here, elsewhere };
+  }
+  function groupTopicsByPage(topics) {
+    const groups = /* @__PURE__ */ new Map();
+    topics.forEach((topic) => {
+      if (!groups.has(topic.page)) groups.set(topic.page, []);
+      groups.get(topic.page).push(topic);
+    });
+    return [...groups].map(([page, items]) => ({ page, topics: items }));
+  }
+  function tipAttributeValue(namespace, topicId) {
+    return `${namespace}:${topicId}`;
+  }
+  function parseTipAttributeValue(value) {
+    const match = /^([a-z0-9-]+):([a-z0-9-]+)$/.exec(String(value || ""));
+    return match ? { namespace: match[1], topicId: match[2] } : null;
+  }
+  var HELP_ATTRIBUTE = "data-werkia-help";
+  var TIP_TONES = {
+    light: { background: "#f1edff", color: "#5535d6", border: "#cbbcff" },
+    dark: { background: "rgba(255,255,255,.18)", color: "#ffffff", border: "rgba(255,255,255,.55)" }
+  };
+  function tipStyle(tone = "light") {
+    const colors = TIP_TONES[tone] || TIP_TONES.light;
+    return {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flex: "0 0 auto",
+      boxSizing: "border-box",
+      width: "18px",
+      height: "18px",
+      minWidth: "18px",
+      margin: "0 0 0 6px",
+      padding: "0",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "999px",
+      background: colors.background,
+      color: colors.color,
+      font: '700 11px/1 system-ui,-apple-system,"Segoe UI",sans-serif',
+      cursor: "help",
+      verticalAlign: "middle",
+      textTransform: "none",
+      letterSpacing: "0",
+      boxShadow: "none"
+    };
+  }
+  function cssText(style) {
+    return Object.entries(style).map(([key, value]) => `${key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}:${value}`).join(";");
+  }
+  function tipLabel(topic) {
+    return `Hilfe: ${topic?.title || "Funktion"}`;
+  }
+  function buildTipHtml(namespace, topic, { tone = "light" } = {}) {
+    return `<button type="button" ${HELP_ATTRIBUTE}="${escapeHtml(tipAttributeValue(namespace, topic.id))}" aria-label="${escapeHtml(tipLabel(topic))}" title="${escapeHtml(tipLabel(topic))}" style="${escapeHtml(cssText(tipStyle(tone)))}">?</button>`;
+  }
+
+  // ../../shared/js/toolbox-help/index.js
+  var FONT = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  var COLORS = {
+    bg: "#f6f5f8",
+    surface: "#ffffff",
+    border: "#e2e0e8",
+    text: "#1c1a22",
+    muted: "#6b6775",
+    primary: "#6d4aff",
+    primaryTint: "#f1edff",
+    header: "#3a3548"
+  };
+  var DOCK_ID = "werkia-help-dock";
+  var EXTRA_STYLE_ID = "werkia-toolbox-help-style";
+  var Z_TOP = "2147483647";
+  function styled(node, styles) {
+    Object.assign(node.style, styles);
+    return node;
+  }
+  function el(tag, styles, text) {
+    const node = document.createElement(tag);
+    if (styles) styled(node, styles);
+    if (text !== void 0) node.textContent = text;
+    return node;
+  }
+  function closeIcon() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "18");
+    svg.setAttribute("height", "18");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.75");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M6 6l12 12M18 6L6 18");
+    svg.appendChild(path);
+    return svg;
+  }
+  function kindChip(kind) {
+    const info = HELP_KINDS[kind];
+    const chip = el("span", {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "2px 9px",
+      borderRadius: "999px",
+      background: info.tint,
+      color: info.color,
+      font: `650 11px/1.5 ${FONT}`,
+      whiteSpace: "nowrap"
+    }, info.label);
+    chip.title = info.explain;
+    return chip;
+  }
+  function listBlock(heading, items, ordered) {
+    if (!items?.length) return null;
+    const wrap = el("div", { marginTop: "10px" });
+    wrap.appendChild(el("div", { font: `650 11px/1.4 ${FONT}`, color: COLORS.muted, marginBottom: "3px" }, heading));
+    const list = el(ordered ? "ol" : "ul", { margin: "0", paddingLeft: "18px" });
+    items.forEach((item) => list.appendChild(el("li", { margin: "2px 0" }, item)));
+    wrap.appendChild(list);
+    return wrap;
+  }
+  function topicBody(topic) {
+    const parts = [el("p", { margin: "8px 0 0" }, topic.summary)];
+    const steps = listBlock("So geht’s", topic.steps, true);
+    const notes = listBlock("Gut zu wissen", topic.notes, false);
+    if (steps) parts.push(steps);
+    if (notes) parts.push(notes);
+    return parts;
+  }
+  function ensureExtraStyles() {
+    if (document.getElementById(EXTRA_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = EXTRA_STYLE_ID;
+    style.textContent = `
+    [${HELP_ATTRIBUTE}]:hover, [data-werkia-help-dock-button]:hover { filter:brightness(.95); }
+    [${HELP_ATTRIBUTE}]:focus-visible, [data-werkia-help-dock-button]:focus-visible, [data-werkia-help-overview] button:focus-visible { outline:2px solid #b6a4ff; outline-offset:2px; }
+    dialog[data-werkia-help-overview]::backdrop { background:rgba(28,26,34,.55); }
+  `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  function createToolboxHelp({ namespace, toolboxName, topics }) {
+    validateTopics(topics);
+    const topicsById = new Map(topics.map((topic) => [topic.id, topic]));
+    const popoverId = `werkia-help-popover-${namespace}`;
+    const overviewId = `werkia-help-overview-${namespace}`;
+    let current = null;
+    let showTimer = null;
+    let hideTimer = null;
+    let timers = { setTimeout: (fn, ms) => window.setTimeout(fn, ms), clearTimeout: (handle) => window.clearTimeout(handle) };
+    const findTopic = (topicId) => {
+      const topic = topicsById.get(topicId);
+      if (!topic) console.warn(`[${toolboxName} Hilfe] Unbekanntes Hilfethema: ${topicId}`);
+      return topic;
+    };
+    function tip(topicId, { tone = "light" } = {}) {
+      const topic = findTopic(topicId) || { id: topicId, title: topicId };
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute(HELP_ATTRIBUTE, tipAttributeValue(namespace, topic.id));
+      button.setAttribute("aria-label", tipLabel(topic));
+      button.title = tipLabel(topic);
+      button.textContent = "?";
+      return styled(button, tipStyle(tone));
+    }
+    function tipHtml(topicId, options) {
+      const topic = findTopic(topicId) || { id: topicId, title: topicId };
+      return buildTipHtml(namespace, topic, options);
+    }
+    function ownTipFrom(target) {
+      const button = target?.closest?.(`[${HELP_ATTRIBUTE}]`);
+      const parsed = parseTipAttributeValue(button?.getAttribute(HELP_ATTRIBUTE));
+      return parsed?.namespace === namespace ? { button, topicId: parsed.topicId } : null;
+    }
+    const popover = () => document.getElementById(popoverId);
+    function closePopover() {
+      timers.clearTimeout(showTimer);
+      timers.clearTimeout(hideTimer);
+      popover()?.remove();
+      current?.anchor?.setAttribute("aria-expanded", "false");
+      current = null;
+    }
+    function positionPopover(box, anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const margin = 12;
+      const width = box.offsetWidth;
+      const height = box.offsetHeight;
+      const left = Math.min(Math.max(margin, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - margin);
+      const below = rect.bottom + 8;
+      const top = below + height <= window.innerHeight - margin || rect.top - 8 - height < margin ? Math.min(below, Math.max(margin, window.innerHeight - height - margin)) : rect.top - 8 - height;
+      styled(box, { left: `${Math.round(Math.max(margin, left))}px`, top: `${Math.round(top)}px` });
+    }
+    function showPopover(anchor, topicId, pinned) {
+      const topic = findTopic(topicId);
+      if (!topic) return;
+      if (current?.anchor === anchor && popover()) {
+        current.pinned = current.pinned || pinned;
+        return;
+      }
+      closePopover();
+      const box = el("div", {
+        position: "fixed",
+        zIndex: Z_TOP,
+        left: "0",
+        top: "0",
+        boxSizing: "border-box",
+        width: "min(360px, calc(100vw - 24px))",
+        maxHeight: "min(60vh, 480px)",
+        overflowY: "auto",
+        padding: "14px 16px",
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: "16px",
+        background: COLORS.surface,
+        color: COLORS.text,
+        boxShadow: "0 12px 32px rgba(28,26,34,.22)",
+        font: `400 13px/1.55 ${FONT}`,
+        textAlign: "left",
+        whiteSpace: "normal",
+        letterSpacing: "0",
+        textTransform: "none",
+        cursor: "auto"
+      });
+      box.id = popoverId;
+      box.setAttribute("role", "tooltip");
+      box.dataset.werkiaHelpPopover = namespace;
+      box.appendChild(el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, `${toolboxName} · ${topic.page}`));
+      const head = el("div", { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" });
+      head.append(el("div", { font: `650 15px/1.3 ${FONT}` }, topic.title), kindChip(topic.kind));
+      box.appendChild(head);
+      topicBody(topic).forEach((part) => box.appendChild(part));
+      const more = el("button", {
+        display: "block",
+        marginTop: "12px",
+        padding: "0",
+        border: "0",
+        background: "transparent",
+        color: COLORS.primary,
+        font: `600 12px/1.4 ${FONT}`,
+        cursor: "pointer",
+        textAlign: "left"
+      }, `Alle Funktionen der ${toolboxName} ansehen`);
+      more.type = "button";
+      more.dataset.werkiaHelpOverviewLink = topic.id;
+      box.appendChild(more);
+      (anchor.closest("dialog[open]") || document.body).appendChild(box);
+      positionPopover(box, anchor);
+      anchor.setAttribute("aria-expanded", "true");
+      current = { anchor, pinned };
+    }
+    function scheduleShow(anchor, topicId) {
+      timers.clearTimeout(hideTimer);
+      if (current?.anchor === anchor) return;
+      timers.clearTimeout(showTimer);
+      showTimer = timers.setTimeout(() => showPopover(anchor, topicId, false), 150);
+    }
+    function scheduleHide() {
+      timers.clearTimeout(showTimer);
+      if (!current || current.pinned) return;
+      timers.clearTimeout(hideTimer);
+      hideTimer = timers.setTimeout(() => {
+        if (current && !current.pinned) closePopover();
+      }, 200);
+    }
+    function closeOverview() {
+      const dialog = document.getElementById(overviewId);
+      if (!dialog) return;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+    }
+    function topicCard(topic, focused) {
+      const card = el("article", {
+        padding: "14px 16px",
+        border: `1px solid ${focused ? COLORS.primary : COLORS.border}`,
+        borderRadius: "16px",
+        background: focused ? COLORS.primaryTint : COLORS.surface
+      });
+      card.dataset.werkiaHelpTopic = topic.id;
+      const head = el("div", { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" });
+      const titleWrap = el("div");
+      titleWrap.append(
+        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, topic.page),
+        el("h3", { margin: "1px 0 0", font: `650 15px/1.3 ${FONT}`, color: COLORS.text }, topic.title)
+      );
+      head.append(titleWrap, kindChip(topic.kind));
+      card.appendChild(head);
+      topicBody(topic).forEach((part) => card.appendChild(part));
+      return card;
+    }
+    function section(title, children) {
+      const wrap = el("section", { display: "grid", gap: "10px", marginTop: "18px" });
+      wrap.appendChild(el("h2", { margin: "0", font: `650 16px/1.3 ${FONT}`, color: COLORS.text }, title));
+      children.forEach((child) => wrap.appendChild(child));
+      return wrap;
+    }
+    function openOverview({ topicId } = {}) {
+      closePopover();
+      closeOverview();
+      ensureExtraStyles();
+      const { here, elsewhere } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
+      const dialog = el("dialog", {
+        width: "min(780px, calc(100vw - 32px))",
+        maxHeight: "86vh",
+        padding: "0",
+        border: "0",
+        borderRadius: "24px",
+        background: COLORS.bg,
+        color: COLORS.text,
+        boxShadow: "0 24px 60px rgba(28,26,34,.35)",
+        overflow: "hidden",
+        font: `400 13px/1.6 ${FONT}`
+      });
+      dialog.id = overviewId;
+      dialog.setAttribute("data-werkia-help-overview", namespace);
+      dialog.setAttribute("aria-label", `${toolboxName} – Funktionsübersicht`);
+      const frame = el("div", { display: "flex", flexDirection: "column", maxHeight: "86vh" });
+      const header = el("div", {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+        padding: "16px 20px",
+        background: COLORS.header,
+        color: "#fff"
+      });
+      const heading = el("div");
+      heading.append(
+        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: "#d9d4e6" }, "Funktionsübersicht"),
+        el("div", { font: `650 19px/1.3 ${FONT}`, letterSpacing: "-.01em" }, toolboxName)
+      );
+      const closeButton = el("button", {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "34px",
+        height: "34px",
+        padding: "0",
+        border: "1px solid rgba(255,255,255,.35)",
+        borderRadius: "10px",
+        background: "transparent",
+        color: "#fff",
+        cursor: "pointer"
+      });
+      closeButton.type = "button";
+      closeButton.setAttribute("aria-label", "Übersicht schließen");
+      closeButton.appendChild(closeIcon());
+      closeButton.addEventListener("click", () => closeOverview());
+      header.append(heading, closeButton);
+      const content = el("div", { overflowY: "auto", padding: "16px 20px 22px" });
+      content.appendChild(el(
+        "p",
+        { margin: "0", color: COLORS.text },
+        `Die ${toolboxName} ergänzt das Adminpanel. Jede Funktion ist gekennzeichnet, damit du vor dem Klick weißt, ob sie nur etwas anzeigt oder Daten verändert. An vielen Stellen findest du außerdem ein kleines ?, das die jeweilige Funktion direkt dort erklärt.`
+      ));
+      const legend = el("div", { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "12px" });
+      Object.keys(HELP_KINDS).filter((kind) => topics.some((topic) => topic.kind === kind)).forEach((kind) => {
+        const row = el("div", { display: "grid", gap: "4px", padding: "10px 12px", border: `1px solid ${COLORS.border}`, borderRadius: "10px", background: COLORS.surface });
+        row.append(kindChip(kind), el("div", { font: `400 12px/1.5 ${FONT}`, color: COLORS.muted }, HELP_KINDS[kind].explain));
+        row.firstChild.style.justifySelf = "start";
+        legend.appendChild(row);
+      });
+      content.appendChild(legend);
+      if (here.length) content.appendChild(section("Auf dieser Seite", here.map((topic) => topicCard(topic, topic.id === topicId))));
+      groupTopicsByPage(elsewhere).forEach((group) => {
+        content.appendChild(section(
+          here.length ? `Weitere Seiten · ${group.page}` : group.page,
+          group.topics.map((topic) => topicCard(topic, topic.id === topicId))
+        ));
+      });
+      frame.append(header, content);
+      dialog.appendChild(frame);
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) closeOverview();
+      });
+      dialog.addEventListener("close", () => dialog.remove());
+      document.body.appendChild(dialog);
+      dialog.showModal();
+      if (topicId) dialog.querySelector(`[data-werkia-help-topic="${topicId}"]`)?.scrollIntoView?.({ block: "center" });
+    }
+    let dockHosts = /(^|\.)werkia\.de$/i;
+    function syncDock() {
+      const onAdmin = dockHosts.test(location.hostname || "");
+      const { here } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
+      let dock = document.getElementById(DOCK_ID);
+      let button = dock?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`);
+      if (!onAdmin || !here.length) {
+        button?.remove();
+        if (dock && !dock.children.length) dock.remove();
+        return;
+      }
+      if (!dock) {
+        dock = el("div", {
+          position: "fixed",
+          left: "16px",
+          bottom: "16px",
+          zIndex: "1250",
+          display: "flex",
+          flexDirection: "column-reverse",
+          alignItems: "flex-start",
+          gap: "6px"
+        });
+        dock.id = DOCK_ID;
+        document.body.appendChild(dock);
+      }
+      if (!button) {
+        button = el("button", {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "6px",
+          height: "30px",
+          padding: "0 12px 0 5px",
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: "999px",
+          background: COLORS.surface,
+          color: COLORS.text,
+          boxShadow: "0 4px 14px rgba(28,26,34,.16)",
+          font: `600 12px/1 ${FONT}`,
+          cursor: "pointer"
+        });
+        button.type = "button";
+        button.setAttribute("data-werkia-help-dock-button", namespace);
+        button.title = `Was macht die ${toolboxName} auf dieser Seite?`;
+        const mark2 = el("span", {
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "20px",
+          height: "20px",
+          borderRadius: "999px",
+          background: COLORS.primary,
+          color: "#fff",
+          font: `700 12px/1 ${FONT}`
+        }, "?");
+        button.append(mark2, document.createTextNode(`${toolboxName}: Hilfe`));
+        button.addEventListener("click", () => openOverview());
+        dock.appendChild(button);
+      }
+    }
+    function install(runtime, { dock = true, menu = true, dockHostPattern } = {}) {
+      if (dockHostPattern) dockHosts = dockHostPattern;
+      timers = { setTimeout: (fn, ms) => runtime.setTimeout(fn, ms), clearTimeout: (handle) => runtime.clearTimeout(handle) };
+      ensureExtraStyles();
+      const swallow = (event) => {
+        const target = event.target;
+        if (!ownTipFrom(target) && !popover()?.contains(target) && !target?.closest?.(`#${overviewId}`)) return;
+        event.stopPropagation();
+      };
+      runtime.addDocumentListener("pointerdown", swallow, true);
+      runtime.addDocumentListener("mousedown", swallow, true);
+      runtime.addDocumentListener("click", (event) => {
+        const own = ownTipFrom(event.target);
+        if (own) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (current?.anchor === own.button && current.pinned) closePopover();
+          else showPopover(own.button, own.topicId, true);
+          return;
+        }
+        const overviewLink = event.target?.closest?.("[data-werkia-help-overview-link]");
+        if (overviewLink && overviewLink.closest(`#${popoverId}`)) {
+          event.preventDefault();
+          event.stopPropagation();
+          openOverview({ topicId: overviewLink.dataset.werkiaHelpOverviewLink });
+          return;
+        }
+        if (current && !popover()?.contains(event.target)) closePopover();
+      }, true);
+      runtime.addDocumentListener("mouseover", (event) => {
+        const own = ownTipFrom(event.target);
+        if (own) scheduleShow(own.button, own.topicId);
+        else if (current && popover()?.contains(event.target)) timers.clearTimeout(hideTimer);
+      }, true);
+      runtime.addDocumentListener("mouseout", (event) => {
+        const leaving = ownTipFrom(event.target) || popover()?.contains(event.target);
+        if (!leaving) return;
+        const next = event.relatedTarget;
+        if (next && (current?.anchor?.contains(next) || popover()?.contains(next))) return;
+        scheduleHide();
+      }, true);
+      runtime.addDocumentListener("focusin", (event) => {
+        const own = ownTipFrom(event.target);
+        if (own) showPopover(own.button, own.topicId, false);
+      }, true);
+      runtime.addDocumentListener("focusout", (event) => {
+        if (ownTipFrom(event.target) && !popover()?.contains(event.relatedTarget)) scheduleHide();
+      }, true);
+      runtime.addWindowListener("keydown", (event) => {
+        if (event.key !== "Escape" || !current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closePopover();
+      }, true);
+      runtime.addWindowListener("scroll", () => {
+        const box = popover();
+        if (!box || !current) return;
+        if (!current.anchor.isConnected) closePopover();
+        else positionPopover(box, current.anchor);
+      }, true);
+      runtime.addWindowListener("resize", () => {
+        if (current) closePopover();
+      });
+      if (dock) {
+        runtime.addWindowListener("hashchange", syncDock);
+        syncDock();
+      }
+      if (menu && typeof GM_registerMenuCommand === "function") {
+        try {
+          GM_registerMenuCommand(`${toolboxName}: Funktionsübersicht`, () => openOverview());
+        } catch (error) {
+          console.warn(`[${toolboxName} Hilfe] Menüeintrag konnte nicht angelegt werden:`, error);
+        }
+      }
+      runtime.addCleanup(() => {
+        closePopover();
+        closeOverview();
+        const dockEl = document.getElementById(DOCK_ID);
+        dockEl?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`)?.remove();
+        if (dockEl && !dockEl.children.length) dockEl.remove();
+      });
+    }
+    return { namespace, toolboxName, topics, tip, tipHtml, openOverview, install };
+  }
+
+  // ../../shared/js/toolbox-help/shared-topics.js
+  var ROUTES = {
+    potentialMatches: /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i,
+    createOfflineMatch: /^#\/CreateOfflineMatch(?:[/?]|$)/i,
+    kamMyMatches: /#\/KAM\/MyMatches(?:[/?]|$)/i,
+    cemMyMatches: /#\/CEM\/MyMatches(?:[/?]|$)/i,
+    cemMyCandidates: /#\/CEM\/MyCandidates(?:[/?]|$)/i,
+    obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
+    employer: /^#\/Employer\/[^/?]+/i,
+    chat: /\/chat\//i,
+    vacancyPotentialCandidates: /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i
+  };
+  var PAGES = {
+    potentialMatches: "Kandidat › Potenzielle Matches",
+    questionnaire: "OM-Fragebogen (Potenzielle Matches)"
+  };
+  function filterPresetsTopic({ page, routes }) {
+    return {
+      id: "filter-presets",
+      title: "Filtervorlagen",
+      page,
+      routes,
+      kind: "local",
+      summary: "Die Leiste über der Liste speichert Filter, die du oft brauchst, und stellt sie mit einem Klick wieder her.",
+      steps: [
+        "Filter, Sortierung und Seitengröße wie gewohnt im Adminpanel einstellen.",
+        "„Aktuellen Filter speichern“ klicken und einen Namen vergeben.",
+        "Später die Vorlage im Dropdown auswählen. Die Liste springt direkt auf diesen Filter."
+      ],
+      notes: [
+        "Vorlagen liegen nur in deinem Browser und bleiben bei Toolbox-Updates erhalten. Kolleg:innen sehen sie nicht.",
+        "„Verwalten“ zum Umbenennen und Löschen. Zum Übertragen auf einen anderen Rechner den Text dort kopieren und im anderen Browser mit „Aus Textfeld importieren“ einfügen. Der Import ergänzt nur und überschreibt nichts.",
+        "„Filter zurücksetzen“ leert nur den Filter der Ansicht. Deine Vorlagen bleiben."
+      ]
+    };
+  }
+  function urgentVacancyTopic() {
+    return {
+      id: "urgent-vacancy-highlight",
+      title: "Dringende Vakanzen",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches],
+      kind: "view",
+      summary: "Hebt Stellen hervor, die der KAM als dringend markiert hat. Erkannt wird das am Tag „[dringende Suche]“ in den Notizen der Vakanz.",
+      notes: ["Nur eine Markierung in der Liste. Es wird nichts gespeichert."]
+    };
+  }
+  function vacancyPanelTopic({ routes, page = PAGES.questionnaire }) {
+    return {
+      id: "vacancy-panel",
+      title: "Stellenanzeige neben dem Fragebogen",
+      page,
+      routes,
+      kind: "view",
+      summary: "Wenn du einen OM-Fragebogen öffnest, zeigt ein Panel daneben die Angaben aus der öffentlichen Stellenanzeige: „Zuständigkeiten“ und „Dein Profil“.",
+      notes: [
+        "Ein Klick auf den Titel öffnet die Stellenanzeige in einem neuen Tab.",
+        "Steht dort „Keine Informationen gefunden“, hat die öffentliche Anzeige diese Abschnitte nicht."
+      ]
+    };
+  }
+  function questionnaireEvaluationTopic({ routes, page = PAGES.questionnaire }) {
+    return {
+      id: "questionnaire-evaluation",
+      title: "Match-Empfehlung im Fragebogen",
+      page,
+      routes,
+      kind: "view",
+      summary: "Vergleicht im OM-Fragebogen die Angaben des Kandidaten mit den Anforderungen der Vakanz und zeigt oben ein farbiges Banner.",
+      notes: [
+        "Grün: Nichts spricht dagegen. Gelb: Mindestens ein Punkt ist unklar, bitte selbst prüfen. Rot: Mindestens eine Anforderung ist nicht erfüllt.",
+        "Verglichen werden Montagebereitschaft, Sprachkenntnisse, Berufserfahrung, Anerkennung, Führerschein, Gehalt und Position. Die betroffenen Felder im Fragebogen werden mit derselben Farbe markiert, die Gründe stehen im Banner.",
+        "Das Banner ist nur eine Empfehlung. Es sendet nichts und ändert keinen Status."
+      ]
+    };
+  }
+  function omNotesBoxTopic({ routes, page = PAGES.questionnaire, translatesTags = true }) {
+    return {
+      id: "om-notes-box",
+      title: "OM-Notizen neben dem Fragebogen",
+      page,
+      routes,
+      kind: "view",
+      summary: "Links neben dem OM-Fragebogen erscheinen die OM-Notizen des Arbeitgebers als gut lesbare Liste, damit du sie beim Prüfen nicht übersiehst.",
+      notes: [
+        translatesTags ? "Steuer-Tags wie [NUR OFFEN] oder [CV] werden in Klartext übersetzt." : "",
+        "Arbeitgeber mit „[Absprache vor OFM]“ werden in der Box extra hervorgehoben."
+      ].filter(Boolean)
+    };
+  }
+  function routeCalculationTopic({ routes, page = PAGES.questionnaire }) {
+    return {
+      id: "route-calculation",
+      title: "Distanz & Fahrzeit",
+      page,
+      routes,
+      kind: "view",
+      summary: "Berechnet beim offenen Fragebogen Strecke und Fahrzeit mit dem Auto zwischen Wohnort des Kandidaten und Arbeitsort.",
+      notes: [
+        "Ein Klick auf die Box öffnet die Route in OpenStreetMap.",
+        "„Route nicht verfügbar“ heißt meist: Eine der beiden Adressen fehlt oder ließ sich nicht finden. Dann bitte selbst nachsehen.",
+        "Berechnete Routen werden eine Woche im Browser zwischengespeichert."
+      ]
+    };
+  }
+
+  // src/help.js
+  var MY_MATCHES = "KAM › Meine Matches";
+  var QUESTIONNAIRE = "OM-Fragebogen (Meine Matches)";
+  var onMyMatches = [ROUTES.kamMyMatches];
+  var KAM_HELP_TOPICS = [
+    {
+      id: "bulk-wvl",
+      title: "KAM WVL gesammelt ändern",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "write",
+      summary: "„Alle ändern“ im Spaltenkopf KAM WVL setzt oder entfernt das Wiedervorlagedatum für viele Matches auf einmal.",
+      steps: [
+        "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
+        "„Alle ändern“ klicken, einen Arbeitgeber wählen oder alle sichtbaren lassen, dann ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
+      ],
+      notes: [
+        "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
+      ]
+    },
+    {
+      id: "bulk-status",
+      title: "KAM Status gesammelt ändern",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "write",
+      summary: "„Alle ändern“ im Spaltenkopf KAM Status setzt denselben Status für viele sichtbare Matches.",
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "Den neuen KAM Status wählen. Bei „Out“ ist ein Grund Pflicht.",
+        "Die Rückfrage prüfen und bestätigen."
+      ],
+      notes: [
+        "Bei „Hired“ und „Out“ wird zusätzlich die KAM WVL gelöscht.",
+        "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt.",
+        "Betroffen sind nur die aktuell sichtbaren Zeilen.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert."
+      ]
+    },
+    {
+      id: "bulk-forward",
+      title: "Terminvorschläge gesammelt weiterleiten",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "write",
+      summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
+      ],
+      notes: [
+        "Termine mit einem anderen Status bleiben unberührt.",
+        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Weitergeleitete Termine werden sofort blau eingefärbt."
+      ]
+    },
+    {
+      id: "out-feedback",
+      title: "KAM-Feedback-Schnellauswahl",
+      page: `${MY_MATCHES} › Out-Dialog`,
+      routes: onMyMatches,
+      kind: "form",
+      summary: "Im Out-Dialog des Adminpanels gibt es zusätzlich das Dropdown „KAM-Feedback“ mit häufigen Gründen wie „Gehalt“ oder „Kein Führerschein“.",
+      notes: [
+        "Die Auswahl wählt „Anderes“ und trägt den Text ein. Gespeichert wird erst mit dem Speichern-Knopf des Dialogs.",
+        "Die übrigen Gründe des Adminpanels bleiben wie gewohnt direkt anklickbar."
+      ]
+    },
+    {
+      id: "appointment-copy-paste",
+      title: "Terminvorlage kopieren und einfügen",
+      page: "Terminvorschlag-Dialog",
+      routes: onMyMatches,
+      kind: "form",
+      summary: "Im Terminvorschlag-Dialog merkt sich „Kopieren“ Status, Typ, Ort, Hinweise, Notizen und alle Termine. „Einfügen“ überträgt sie in einen anderen Terminvorschlag-Dialog.",
+      steps: [
+        "Den Dialog mit den fertigen Terminen öffnen und „Kopieren“ klicken.",
+        "Den Ziel-Dialog öffnen und „Einfügen“ klicken.",
+        "Alles prüfen und im Dialog speichern."
+      ],
+      notes: [
+        "„Einfügen“ gleicht die Anzahl der Termine an die Vorlage an. Überzählige Termine im Ziel-Dialog werden entfernt.",
+        "Die Box zeigt, was gerade als Vorlage gespeichert ist. Die Vorlage bleibt in deinem Browser, bis du erneut kopierst.",
+        "Gespeichert wird erst mit dem Speichern-Knopf des Dialogs."
+      ]
+    },
+    {
+      id: "slack-exports",
+      title: "VTA und VTV an Slack",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "external",
+      summary: "Bei Matches mit Termin stehen in der Terminspalte „VTA Exportieren“ und „VTV Exportieren“. Sie erstellen die Slack-Nachricht mit Kandidat und Arbeitgeber, bei VTV zusätzlich mit dem Termin, und erwähnen die zuständige CEM-Person.",
+      notes: [
+        "Je nach Einrichtung geht die Nachricht über Zapier direkt nach Slack oder wird in die Zwischenablage kopiert. Der Tooltip am Knopf sagt, was passiert.",
+        "Nach dem Versand heißt der Knopf „… erneut senden“. Ein zweiter Versand braucht deine Bestätigung.",
+        "VTV nimmt den spätesten Termin aus der Zeile."
+      ]
+    },
+    {
+      id: "contact-badges",
+      title: "Kontakt-Badges",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "view",
+      summary: "Zeigt bei jedem Arbeitgeber, wie direkt der Kontakt zu ihm ist.",
+      notes: [
+        "Direkter Kontakt (0–1 Tage), Indirekter Kontakt (2–5 Tage), Kein Kontakt (über eine Woche), Keine Antwort. „Leer“ heißt, dass beim Arbeitgeber nichts hinterlegt ist.",
+        "Der Wert kommt aus dem Arbeitgeberprofil und wird alle 5 Minuten nachgeladen."
+      ]
+    },
+    {
+      id: "vacancy-city-badges",
+      title: "Stadt neben dem Vakanztitel",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "view",
+      summary: "Zeigt neben dem Vakanztitel die Stadt der Stelle, damit du den Ort ohne Klick siehst."
+    },
+    {
+      id: "cem-status-line",
+      title: "CEM Status und CEM-Person",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "view",
+      summary: "Unter dem KAM Status steht der CEM Status des Matches und wer auf CEM-Seite zuständig ist.",
+      notes: ["Ein Klick auf den Namen kopiert ihn in die Zwischenablage, zum Beispiel für Slack."]
+    },
+    {
+      id: "candidate-file-popup",
+      title: "Kandidatenansicht als Popup",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "view",
+      summary: "Im Dialog „Kandidat Dateien“ öffnet „Kandidatenansicht öffnen ↗“ das Kandidatenprofil in einem kleinen Fenster. Die Liste bleibt dabei offen.",
+      notes: ["Passiert nichts, blockiert der Browser Popups. Dann Popups für admin.werkia.de erlauben."]
+    },
+    {
+      id: "chat-icon-redirect",
+      title: "Chat-Knopf öffnet die Unterhaltung",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "view",
+      summary: "Der Chat-Knopf in Meine Matches öffnet im Adminpanel sonst nur die Chatliste. Die Toolbox leitet ihn direkt auf die Unterhaltung dieses Matches um."
+    },
+    {
+      id: "status-effects",
+      title: "Feier bei Senden und Hired",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "view",
+      summary: "Stellst du einen Match auf „Senden“ oder „Hired“, gibt es eine kurze Feier-Animation.",
+      notes: ["Nur eine Animation. Sie ändert nichts."]
+    },
+    vacancyPanelTopic({ routes: onMyMatches, page: QUESTIONNAIRE }),
+    questionnaireEvaluationTopic({ routes: onMyMatches, page: QUESTIONNAIRE }),
+    omNotesBoxTopic({ routes: onMyMatches, page: QUESTIONNAIRE }),
+    routeCalculationTopic({ routes: onMyMatches, page: QUESTIONNAIRE }),
+    filterPresetsTopic({ page: MY_MATCHES, routes: onMyMatches }),
+    {
+      id: "chat-status-banner",
+      title: "Status-Banner im Chat",
+      page: "Chat",
+      routes: [ROUTES.chat],
+      kind: "view",
+      summary: "Im Chat zeigt ein farbiges Banner den aktuellen CEM und KAM Status des zugehörigen Matches."
+    },
+    {
+      id: "om-notes-templates",
+      title: "OM-Flags im Arbeitgeberprofil",
+      page: "Arbeitgeber › Bearbeiten",
+      routes: [ROUTES.employer],
+      kind: "form",
+      summary: "Am Feld OM Notes steht eine Leiste mit klickbaren OM-Flags wie [CV], [NUR OFFEN] oder [Muss: BE].",
+      steps: [
+        "Ein Flag anklicken: Es wird als eigene Zeile in OM Notes eingetragen. Ein zweiter Klick entfernt es wieder.",
+        "Für eigene Werte die Art wählen (z. B. „Muss: Fachbereich“), den Text eintragen und „Hinzufügen“ klicken.",
+        "Das Arbeitgeberprofil wie gewohnt speichern."
+      ],
+      notes: [
+        "Solange du nicht speicherst, ändert sich am Arbeitgeber nichts.",
+        "Flags, die schon in OM Notes stehen, sind farbig hinterlegt.",
+        "Die Flags steuern Hinweise und Filter in anderen Toolboxen, zum Beispiel auf Potenzielle Matches in der OBC-Toolbox."
+      ]
+    },
+    urgentVacancyTopic(),
+    {
+      id: "outlook-match-outen",
+      title: "Match Outen aus Outlook",
+      page: "Outlook › Bewerbungsmail",
+      hosts: [/(^|\.)outlook\.(office\.com|cloud\.microsoft)$/i],
+      kind: "write",
+      summary: "Bei einer geöffneten Bewerbungsmail erscheint in Outlook unten rechts „Match Outen“. Damit setzt du den passenden Match auf KAM Status „Out“, ohne das Adminpanel zu öffnen.",
+      steps: [
+        "Die Bewerbungsmail öffnen. Der Betreff hat die Form „Bewerbung: Kandidat: Vakanz - Firma (Werkia)“.",
+        "„Match Outen“ klicken. Die Toolbox sucht Arbeitgeber und Match. Gibt es mehrere Treffer, wählst du den richtigen aus. „im AP prüfen“ öffnet ihn zur Kontrolle.",
+        "Den Grund wählen und die Rückfrage bestätigen."
+      ],
+      notes: [
+        "Gesetzt wird KAM Status „Out“ mit Grund. Außerdem wird die KAM WVL gelöscht und offene Terminvorschläge werden abgelehnt.",
+        "Gleichnamige Kandidaten unterscheidet die Toolbox über die PLZ aus der Mail. Treffer mit passender PLZ stehen oben und sind mit „✓ PLZ“ markiert.",
+        "Dafür braucht es eine Anmeldung am Adminpanel. Fehlt sie, öffnet sich kurz ein Fenster auf admin.werkia.de."
+      ]
+    }
+  ];
+  var kamHelp = createToolboxHelp({ namespace: "kam", toolboxName: "KAM-Toolbox", topics: KAM_HELP_TOPICS });
+  function executeToolboxHelp(runtime) {
+    runtime.registerSource("kam/toolbox/src/help.js");
+    kamHelp.install(runtime);
+  }
+
   // ../../shared/js/admin-panel-reload.js
   var ADMIN_PANEL_RELOAD_SELECTOR = 'header button[aria-label="Neu laden"]';
   function reloadAdminPanel(documentRef = document) {
@@ -855,7 +1774,7 @@
       #${IDS.button}:hover, #${IDS.statusButton}:hover, #${IDS.forwardButton}:hover { background: #fff3e0; }
       #${IDS.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
       #${IDS.dialog}::backdrop { background: rgba(0,0,0,.38); }
-      #${IDS.dialog} .wkw-head { padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
+      #${IDS.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
       #${IDS.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
       #${IDS.dialog} .wkw-body [hidden] { display: none !important; }
       #${IDS.dialog} label { display: grid; gap: 5px; font-weight: 700; }
@@ -925,7 +1844,7 @@
       const dialog = document.createElement("dialog");
       dialog.id = IDS.dialog;
       dialog.innerHTML = `
-      <div class="wkw-head">KAM WVL gesammelt ändern</div>
+      <div class="wkw-head">KAM WVL gesammelt ändern${kamHelp.tipHtml("bulk-wvl", { tone: "dark" })}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -969,7 +1888,7 @@
       const dialog = document.createElement("dialog");
       dialog.id = IDS.dialog;
       dialog.innerHTML = `
-      <div class="wkw-head">KAM Status gesammelt ändern</div>
+      <div class="wkw-head">KAM Status gesammelt ändern${kamHelp.tipHtml("bulk-status", { tone: "dark" })}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -1025,7 +1944,7 @@
       const dialog = document.createElement("dialog");
       dialog.id = IDS.dialog;
       dialog.innerHTML = `
-      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten</div>
+      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten${kamHelp.tipHtml("bulk-forward", { tone: "dark" })}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -1086,7 +2005,7 @@
       if (!anchor) return;
       const shortcuts = document.createElement("label");
       shortcuts.id = IDS.feedbackShortcuts;
-      shortcuts.innerHTML = `KAM-Feedback
+      shortcuts.innerHTML = `<span style="display:inline-flex;align-items:center;">KAM-Feedback${kamHelp.tipHtml("out-feedback")}</span>
       <select name="werkiaKamOutFeedback">
         <option value="">Bitte auswählen</option>
         ${OUT_FEEDBACK_TEMPLATE_OPTIONS.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
@@ -2123,7 +3042,7 @@
       if (/Matchkommentare/i.test(text)) return false;
       if (/Kandidat Dateien/i.test(text)) return false;
       const labels = new Set(
-        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el) => (el.innerText || "").trim())
+        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || "").trim())
       );
       const count = QUESTIONNAIRE_LABELS.filter((l) => labels.has(l)).length;
       const hasHeader = labels.has("Kandidat") && labels.has("Job");
@@ -2672,7 +3591,7 @@
   }
   function getDialogLabelTexts(dialog) {
     if (!dialog) return [];
-    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el) => (el.innerText || el.textContent || "").trim()).filter(Boolean);
+    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || el2.textContent || "").trim()).filter(Boolean);
   }
   function isQuestionnaireDialog(dialog, { strictMode = true, fold = false, labels = QUESTIONNAIRE_LABELS2 } = {}) {
     if (!dialog) return false;
@@ -2709,7 +3628,7 @@
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return null;
     const field = mode === "last" ? fields[fields.length - 1] : fields[0];
-    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el) => (el.innerText || el.textContent || "").trim()) || null;
+    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el2) => (el2.innerText || el2.textContent || "").trim()) || null;
   }
   function findValueAllowEmpty(dialog, labelText, mode = "first", { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
@@ -2727,11 +3646,11 @@
   function getPositionEls(dialog, labelText, { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return [];
-    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el) => (el.innerText || el.textContent || "").trim() && normalize4(el.innerText || el.textContent, fold) !== "berufsausbildung");
+    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize4(el2.innerText || el2.textContent, fold) !== "berufsausbildung");
   }
   function getQuestionnaireHeaderValue(dialog, labelText, { fold = false } = {}) {
     const field = getFieldsByLabel(dialog, labelText, { fold })[0];
-    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el) => el.textContent?.trim() && normalize4(el.textContent, fold) !== normalize4(labelText, fold)) : null;
+    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize4(el2.textContent, fold) !== normalize4(labelText, fold)) : null;
     if (value?.textContent?.trim()) return value.textContent.trim();
     const lines = (dialog.innerText || dialog.textContent || "").split("\n").map((line) => line.trim()).filter(Boolean);
     const labelIndex = lines.findIndex((line) => normalize4(line, fold) === normalize4(labelText, fold));
@@ -2753,7 +3672,7 @@
   function comparisonValue(value, original, options = {}) {
     return original && isOwnMarkedValue(value, original, options) ? original : value;
   }
-  function mark(el, color, title = "", options = {}) {
+  function mark(el2, color, title = "", options = {}) {
     const {
       markAttr = DEFAULT_MARK_ATTR,
       originalAttr = DEFAULT_ORIGINAL_ATTR,
@@ -2762,24 +3681,24 @@
       prefixByColor = null,
       dedupeAttr = null
     } = options;
-    if (!el) return;
+    if (!el2) return;
     if (dedupeAttr) {
       const signature = `${color}|${title}`;
-      if (el.dataset[dedupeAttr] === signature) return;
-      el.dataset[dedupeAttr] = signature;
+      if (el2.dataset[dedupeAttr] === signature) return;
+      el2.dataset[dedupeAttr] = signature;
     }
-    if (!el.dataset[originalAttr]) el.dataset[originalAttr] = el.innerText || "";
-    el.dataset[markAttr] = "true";
-    el.style.background = color;
-    el.style.color = "#000";
-    el.style.padding = "4px 6px";
-    el.style.borderRadius = "4px";
-    el.style.fontWeight = fontWeight;
-    el.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
-    if (title) el.title = title;
-    const original = el.dataset[originalAttr];
+    if (!el2.dataset[originalAttr]) el2.dataset[originalAttr] = el2.innerText || "";
+    el2.dataset[markAttr] = "true";
+    el2.style.background = color;
+    el2.style.color = "#000";
+    el2.style.padding = "4px 6px";
+    el2.style.borderRadius = "4px";
+    el2.style.fontWeight = fontWeight;
+    el2.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
+    if (title) el2.title = title;
+    const original = el2.dataset[originalAttr];
     const prefix = prefixByColor?.[color];
-    el.innerText = prefix ? `${prefix}${original}` : original;
+    el2.innerText = prefix ? `${prefix}${original}` : original;
   }
   function clearMarks(root = document, options = {}) {
     const {
@@ -2787,19 +3706,19 @@
       originalAttr = DEFAULT_ORIGINAL_ATTR,
       dedupeAttr = null
     } = options;
-    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el) => {
-      const original = el.dataset[originalAttr];
-      if (original && isOwnMarkedValue(el.innerText || "", original, options)) el.innerText = original;
-      el.style.background = "";
-      el.style.color = "";
-      el.style.padding = "";
-      el.style.borderRadius = "";
-      el.style.fontWeight = "";
-      el.style.boxShadow = "";
-      el.title = "";
-      delete el.dataset[markAttr];
-      delete el.dataset[originalAttr];
-      if (dedupeAttr) delete el.dataset[dedupeAttr];
+    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el2) => {
+      const original = el2.dataset[originalAttr];
+      if (original && isOwnMarkedValue(el2.innerText || "", original, options)) el2.innerText = original;
+      el2.style.background = "";
+      el2.style.color = "";
+      el2.style.padding = "";
+      el2.style.borderRadius = "";
+      el2.style.fontWeight = "";
+      el2.style.boxShadow = "";
+      el2.title = "";
+      delete el2.dataset[markAttr];
+      delete el2.dataset[originalAttr];
+      if (dedupeAttr) delete el2.dataset[dedupeAttr];
     });
   }
 
@@ -2834,8 +3753,8 @@
   }
   function executeQuestionnaireEvaluation(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/questionnaire-evaluation.js");
-    function mark2(el, color, title = "") {
-      mark(el, color, title, MARK_OPTIONS);
+    function mark2(el2, color, title = "") {
+      mark(el2, color, title, MARK_OPTIONS);
     }
     function clearMarks2() {
       clearMarks(document, MARK_OPTIONS);
@@ -2886,20 +3805,20 @@
       return { status: "send" };
     }
     function compareRecognition(dialog) {
-      const el = findValue(dialog, "Recognition status");
-      if (!el) return { status: "send" };
-      const v = clean(el.innerText);
+      const el2 = findValue(dialog, "Recognition status");
+      if (!el2) return { status: "send" };
+      const v = clean(el2.innerText);
       if (v.includes("ja, ist anerkannt")) {
-        mark2(el, GREEN, "Anerkennung: Ja");
+        mark2(el2, GREEN, "Anerkennung: Ja");
         return { status: "send" };
       }
       if (v.includes("in anerkennung")) {
-        mark2(el, YELLOW, "In Anerkennung");
-        return { status: "unclear", detail: `Recognition status: ${el.innerText}` };
+        mark2(el2, YELLOW, "In Anerkennung");
+        return { status: "unclear", detail: `Recognition status: ${el2.innerText}` };
       }
       if (v.includes("noch nicht beantragt")) {
-        mark2(el, RED, "Noch nicht beantragt");
-        return { status: "no-send", detail: `Recognition status: ${el.innerText}` };
+        mark2(el2, RED, "Noch nicht beantragt");
+        return { status: "no-send", detail: `Recognition status: ${el2.innerText}` };
       }
       return { status: "send" };
     }
@@ -2948,8 +3867,8 @@
       return { status: "send" };
     }
     function comparePositions(dialog) {
-      const empEls = getPositionEls(dialog, "Position").map((el) => ({ el, value: clean(el.innerText) }));
-      const candEls = getPositionEls(dialog, "Positionen").map((el) => ({ el, value: clean(el.innerText) }));
+      const empEls = getPositionEls(dialog, "Position").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
+      const candEls = getPositionEls(dialog, "Positionen").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
       if (!empEls.length) return { status: "send" };
       if (!candEls.length) return { status: "unclear", detail: `Positionen: ${empEls.map((p) => p.value).join(", ")} → leer` };
       let anyGreen = false;
@@ -3011,11 +3930,11 @@
       }
       banner.style.background = evaluation.color;
       banner.innerHTML = `
-      <div>${evaluation.title}</div>
+      <div style="display:flex;align-items:center;">${evaluation.title}${kamHelp.tipHtml("questionnaire-evaluation")}</div>
       ${evaluation.details.length ? `<div style="margin-top:6px;font-weight:500;font-size:13px;line-height:1.4;">${evaluation.details.join("<br>")}</div>` : ""}
     `;
     }
-    function escapeHtml(str) {
+    function escapeHtml2(str) {
       return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
     function createOrUpdateOmNotes(dialog) {
@@ -3103,7 +4022,7 @@
       bullets.forEach((point) => {
         const li = document.createElement("li");
         li.style.cssText = "display:flex;gap:8px;margin-bottom:8px;align-items:flex-start;font-size:15px;line-height:1.6;";
-        li.innerHTML = `<span style="color:#e67700;flex-shrink:0;font-weight:900;margin-top:1px;">•</span><span>${escapeHtml(point)}</span>`;
+        li.innerHTML = `<span style="color:#e67700;flex-shrink:0;font-weight:900;margin-top:1px;">•</span><span>${escapeHtml2(point)}</span>`;
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -3112,7 +4031,7 @@
     function currentFieldSignature(dialog) {
       return [...dialog.querySelectorAll("span.ra-field")].map((field) => {
         const label = field.querySelector("p span")?.innerText?.trim() || "";
-        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el) => comparisonValue2(el.innerText ?? el.textContent ?? "", el.dataset[ORIGINAL_TEXT])).join("|");
+        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el2) => comparisonValue2(el2.innerText ?? el2.textContent ?? "", el2.dataset[ORIGINAL_TEXT])).join("|");
         return `${label}=${values}`;
       }).join(";");
     }
@@ -3189,7 +4108,7 @@
     const calculations = /* @__PURE__ */ new Map();
     let renderTimer = null;
     const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
-    const escapeHtml = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const escapeHtml2 = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const visible = (dialog) => {
       const rect = dialog.getBoundingClientRect();
       const style = window.getComputedStyle(dialog);
@@ -3321,7 +4240,7 @@
         y: clamp(preferAbove || Number(point[1]) > height / 2 ? Number(point[1]) - labelHeight - 12 : Number(point[1]) + 12, 6, height - labelHeight - 6)
       });
       const startLabel = labelPosition(start), endLabel = labelPosition(end, true);
-      return `<div style="margin-top:10px;border:1px solid rgba(25,113,194,.2);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.78);"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Vorschau der Fahrtroute" style="display:block;width:100%;height:270px;min-height:220px;"><defs><pattern id="werkia-route-grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M 24 0 L 0 0 0 24" fill="none" stroke="#dbe4ea" stroke-width="1"/></pattern></defs><rect width="${width}" height="${height}" fill="#f8fafb"/><rect width="${width}" height="${height}" fill="url(#werkia-route-grid)"/><polyline points="${points.join(" ")}" fill="none" stroke="#1971c2" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${points.join(" ")}" fill="none" stroke="#74c0fc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${start[0]}" cy="${start[1]}" r="9" fill="#2f9e44" stroke="#fff" stroke-width="4"/><circle cx="${end[0]}" cy="${end[1]}" r="9" fill="#e03131" stroke="#fff" stroke-width="4"/><foreignObject x="${startLabel.x}" y="${startLabel.y}" width="${labelWidth}" height="${labelHeight}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;box-sizing:border-box;padding:7px 9px;border:2px solid #2f9e44;border-radius:8px;background:rgba(255,255,255,.96);color:#1b1b1b;font:600 12px/1.3 sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.16);overflow:hidden;"><div style="font-size:13px;font-weight:900;color:#2b8a3e;margin-bottom:2px;">Kandidat</div><div>${escapeHtml(candidateAddress)}</div></div></foreignObject><foreignObject x="${endLabel.x}" y="${endLabel.y}" width="${labelWidth}" height="${labelHeight}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;box-sizing:border-box;padding:7px 9px;border:2px solid #e03131;border-radius:8px;background:rgba(255,255,255,.96);color:#1b1b1b;font:600 12px/1.3 sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.16);overflow:hidden;"><div style="font-size:13px;font-weight:900;color:#c92a2a;margin-bottom:2px;">Vakanz</div><div>${escapeHtml(jobPositionAddress)}</div></div></foreignObject></svg><div style="padding:5px 8px;font-size:11px;font-weight:600;opacity:.65;text-align:center;">Klicken für die vollständige Karte</div></div>`;
+      return `<div style="margin-top:10px;border:1px solid rgba(25,113,194,.2);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.78);"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Vorschau der Fahrtroute" style="display:block;width:100%;height:270px;min-height:220px;"><defs><pattern id="werkia-route-grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M 24 0 L 0 0 0 24" fill="none" stroke="#dbe4ea" stroke-width="1"/></pattern></defs><rect width="${width}" height="${height}" fill="#f8fafb"/><rect width="${width}" height="${height}" fill="url(#werkia-route-grid)"/><polyline points="${points.join(" ")}" fill="none" stroke="#1971c2" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${points.join(" ")}" fill="none" stroke="#74c0fc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${start[0]}" cy="${start[1]}" r="9" fill="#2f9e44" stroke="#fff" stroke-width="4"/><circle cx="${end[0]}" cy="${end[1]}" r="9" fill="#e03131" stroke="#fff" stroke-width="4"/><foreignObject x="${startLabel.x}" y="${startLabel.y}" width="${labelWidth}" height="${labelHeight}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;box-sizing:border-box;padding:7px 9px;border:2px solid #2f9e44;border-radius:8px;background:rgba(255,255,255,.96);color:#1b1b1b;font:600 12px/1.3 sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.16);overflow:hidden;"><div style="font-size:13px;font-weight:900;color:#2b8a3e;margin-bottom:2px;">Kandidat</div><div>${escapeHtml2(candidateAddress)}</div></div></foreignObject><foreignObject x="${endLabel.x}" y="${endLabel.y}" width="${labelWidth}" height="${labelHeight}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;box-sizing:border-box;padding:7px 9px;border:2px solid #e03131;border-radius:8px;background:rgba(255,255,255,.96);color:#1b1b1b;font:600 12px/1.3 sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.16);overflow:hidden;"><div style="font-size:13px;font-weight:900;color:#c92a2a;margin-bottom:2px;">Vakanz</div><div>${escapeHtml2(jobPositionAddress)}</div></div></foreignObject></svg><div style="padding:5px 8px;font-size:11px;font-weight:600;opacity:.65;text-align:center;">Klicken für die vollständige Karte</div></div>`;
     }
     function positionBox(box, dialog) {
       const dialogRect = dialog.getBoundingClientRect();
@@ -3354,7 +4273,7 @@
         return;
       }
       if (state === "missing") {
-        const reason = escapeHtml(data.reason || "Kandidatenadresse, Vakanzadresse oder Routenservice nicht verfügbar.");
+        const reason = escapeHtml2(data.reason || "Kandidatenadresse, Vakanzadresse oder Routenservice nicht verfügbar.");
         box.innerHTML = `<strong>🗺️ Distanzrechner</strong><div style="margin-top:4px;font-size:13px;color:#c92a2a;">Route nicht verfügbar</div><div style="margin-top:3px;font-size:12px;line-height:1.35;">${reason}</div>`;
         box.style.background = "#fff5f5";
         box.style.borderColor = "rgba(201,42,42,.35)";
@@ -3362,7 +4281,7 @@
       }
       box.style.background = "#e7f5ff";
       box.style.borderColor = "rgba(25,113,194,.38)";
-      box.innerHTML = `<strong>🗺️ Distanz & Fahrzeit</strong><div style="margin-top:4px;font-size:15px;font-weight:800;">${escapeHtml(data.displayText)}</div>${previewSvg(data.previewCoordinates, data.candidateAddress, data.jobPositionAddress)}`;
+      box.innerHTML = `<strong>🗺️ Distanz & Fahrzeit</strong><div style="margin-top:4px;font-size:15px;font-weight:800;">${escapeHtml2(data.displayText)}</div>${previewSvg(data.previewCoordinates, data.candidateAddress, data.jobPositionAddress)}`;
       box.title = `${data.candidateAddress} → ${data.jobPositionAddress}`;
       box.disabled = false;
       box.onclick = () => window.open(`https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&from=${encodeURIComponent(data.candidateAddress)}&to=${encodeURIComponent(data.jobPositionAddress)}`, "_blank", "noopener,noreferrer");
@@ -3566,16 +4485,16 @@
 
   // src/features/kam-suite/status-effects.js
   var STATUS_SELECTOR = ".MuiSelect-root";
-  function getSelectData(el) {
-    const input = el.querySelector("input.MuiSelect-nativeInput");
-    const combo = el.querySelector('[role="combobox"]');
+  function getSelectData(el2) {
+    const input = el2.querySelector("input.MuiSelect-nativeInput");
+    const combo = el2.querySelector('[role="combobox"]');
     return {
       value: input?.value || "",
       text: combo?.textContent?.trim() || ""
     };
   }
-  function getState(el) {
-    const { value, text } = getSelectData(el);
+  function getState(el2) {
+    const { value, text } = getSelectData(el2);
     if (value === "process" || text === "Senden") return "process";
     if (value === "hired" || text === "Hired") return "hired";
     return value || text || "empty";
@@ -3585,23 +4504,23 @@
     const lastStates = /* @__PURE__ */ new WeakMap();
     let initialized = false;
     function initSelectStates() {
-      document.querySelectorAll(STATUS_SELECTOR).forEach((el) => {
-        lastStates.set(el, getState(el));
+      document.querySelectorAll(STATUS_SELECTOR).forEach((el2) => {
+        lastStates.set(el2, getState(el2));
       });
       initialized = true;
     }
-    function flashGreen(el) {
-      const inner = el.querySelector('[role="combobox"]') || el;
-      el.style.transition = "all 0.2s ease";
-      el.style.backgroundColor = "#bbf7d0";
-      el.style.boxShadow = "0 0 0 4px rgba(34, 197, 94, 0.45)";
+    function flashGreen(el2) {
+      const inner = el2.querySelector('[role="combobox"]') || el2;
+      el2.style.transition = "all 0.2s ease";
+      el2.style.backgroundColor = "#bbf7d0";
+      el2.style.boxShadow = "0 0 0 4px rgba(34, 197, 94, 0.45)";
       inner.style.transition = "all 0.2s ease";
       inner.style.backgroundColor = "#bbf7d0";
       inner.style.color = "#14532d";
       inner.style.fontWeight = "700";
       runtime.setTimeout(() => {
-        el.style.backgroundColor = "";
-        el.style.boxShadow = "";
+        el2.style.backgroundColor = "";
+        el2.style.boxShadow = "";
         inner.style.backgroundColor = "";
         inner.style.color = "";
         inner.style.fontWeight = "";
@@ -3774,24 +4693,24 @@
     }
     function checkSelects() {
       if (!initialized) return;
-      document.querySelectorAll(STATUS_SELECTOR).forEach((el) => {
-        const currentState = getState(el);
-        if (!lastStates.has(el)) {
-          lastStates.set(el, currentState);
+      document.querySelectorAll(STATUS_SELECTOR).forEach((el2) => {
+        const currentState = getState(el2);
+        if (!lastStates.has(el2)) {
+          lastStates.set(el2, currentState);
           return;
         }
-        const lastState = lastStates.get(el);
+        const lastState = lastStates.get(el2);
         if (currentState !== lastState) {
           if (currentState === "process") {
-            flashGreen(el);
+            flashGreen(el2);
             showAnotherOneText();
             fireConfetti();
           }
           if (currentState === "hired") {
-            flashGreen(el);
+            flashGreen(el2);
             showHiredCelebration();
           }
-          lastStates.set(el, currentState);
+          lastStates.set(el2, currentState);
         }
       });
     }
@@ -3860,7 +4779,7 @@
       const candidate = rightLinks[0];
       if (!candidate) return null;
       const row = candidate.closest("div") || candidate.parentElement;
-      const prio = [...row.querySelectorAll("span, div, button")].find((el) => /^[A-F]\d*$/i.test((el.innerText || "").trim()));
+      const prio = [...row.querySelectorAll("span, div, button")].find((el2) => /^[A-F]\d*$/i.test((el2.innerText || "").trim()));
       return prio || candidate;
     }
     function ensureBox() {
@@ -4026,7 +4945,7 @@
     location: { names: ["location", "locationId", "appointmentLocation"], label: "Standort", fallbackIndex: 2 }
   };
   function getAppointments(root = document) {
-    return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el) => el.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
+    return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el2) => el2.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
   }
   function hasAppointmentFields(dialog) {
     return Boolean(dialog?.querySelector?.(APPOINTMENT_INPUT_SELECTOR));
@@ -4085,9 +5004,9 @@
       }
     }
     function termToast(text) {
-      const el = document.createElement("div");
-      el.textContent = text;
-      el.style.cssText = `
+      const el2 = document.createElement("div");
+      el2.textContent = text;
+      el2.style.cssText = `
       position: fixed;
       bottom: 24px;
       right: 24px;
@@ -4098,22 +5017,22 @@
       z-index: 99999999;
       font-size: 14px;
     `;
-      document.body.appendChild(el);
-      runtime.setTimeout(() => el.remove(), 2200);
+      document.body.appendChild(el2);
+      runtime.setTimeout(() => el2.remove(), 2200);
     }
-    function setValue(el, value) {
-      el.focus();
+    function setValue(el2, value) {
+      el2.focus();
       const inputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
       const textareaSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-      if (el.tagName === "TEXTAREA") {
-        textareaSetter?.call(el, value);
+      if (el2.tagName === "TEXTAREA") {
+        textareaSetter?.call(el2, value);
       } else {
-        inputSetter?.call(el, value);
+        inputSetter?.call(el2, value);
       }
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      el.dispatchEvent(new Event("blur", { bubbles: true }));
-      el.blur();
+      el2.dispatchEvent(new Event("input", { bubbles: true }));
+      el2.dispatchEvent(new Event("change", { bubbles: true }));
+      el2.dispatchEvent(new Event("blur", { bubbles: true }));
+      el2.blur();
     }
     function setPicker(root, value) {
       const values = parseAppointmentValue(value);
@@ -4269,7 +5188,8 @@
       const content = document.createElement("div");
       const title = document.createElement("div");
       title.textContent = "Terminvorlage";
-      title.style.cssText = "font-size:16px; font-weight:800; color:#7a3600;";
+      title.style.cssText = "display:flex; align-items:center; font-size:16px; font-weight:800; color:#7a3600;";
+      title.appendChild(kamHelp.tip("appointment-copy-paste"));
       const summary = document.createElement("div");
       summary.className = "werkia-termine-summary";
       summary.style.cssText = "margin-top:3px; color:#8a5a32; font-weight:500;";
@@ -4472,7 +5392,7 @@
   function resendConfirmText(type, sentAt) {
     return `${type} wurde für dieses Match bereits am ${formatSentAt(sentAt)} gesendet. Trotzdem erneut senden?`;
   }
-  function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl: webhookUrl2 = "" }) {
+  function executeSlackExports(runtime, { role, getGraphqlAdapter, sourcePath, webhookUrl: webhookUrl2 = "", helpTip }) {
     runtime.registerSource(sourcePath);
     const matchDataCache = /* @__PURE__ */ new Map();
     const taggedRole = String(role).toLowerCase() === "kam" ? "cem" : "kam";
@@ -4613,6 +5533,11 @@
         button.addEventListener("click", () => copyExport(button, type));
         exports.appendChild(button);
       });
+      const tip = helpTip?.();
+      if (tip) {
+        tip.style.alignSelf = "center";
+        exports.appendChild(tip);
+      }
       cell.appendChild(exports);
     }
     function removeExports() {
@@ -4650,6 +5575,7 @@
       role: "KAM",
       getGraphqlAdapter: getKamGraphqlAdapter,
       webhookUrl,
+      helpTip: () => kamHelp.tip("slack-exports"),
       sourcePath: "kam/toolbox/src/features/kam-suite/slack-exports.js"
     });
   }
@@ -4911,18 +5837,19 @@
       await graphqlRequestWithRetry(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: null });
       return declineOpenInterviewsForMatch(matchId);
     }
-    function styled(node, styles) {
+    function styled2(node, styles) {
       Object.assign(node.style, styles);
       return node;
     }
     function buildHead(titleText) {
       const head = document.createElement("div");
       head.textContent = titleText;
-      return styled(head, { padding: "16px 18px", color: "#fff", background: "#ef6c00", fontSize: "17px", fontWeight: "700" });
+      head.appendChild(kamHelp.tip("outlook-match-outen", { tone: "dark" }));
+      return styled2(head, { display: "flex", alignItems: "center", padding: "16px 18px", color: "#fff", background: "#ef6c00", fontSize: "17px", fontWeight: "700" });
     }
     function buildBody(children) {
       const body = document.createElement("div");
-      styled(body, { padding: "18px", display: "grid", gap: "12px", font: "14px/1.4 Arial,sans-serif", color: "#222" });
+      styled2(body, { padding: "18px", display: "grid", gap: "12px", font: "14px/1.4 Arial,sans-serif", color: "#222" });
       children.forEach((child) => {
         if (child) body.appendChild(child);
       });
@@ -4930,7 +5857,7 @@
     }
     function buildNote(parts, { error = false } = {}) {
       const note = document.createElement("div");
-      styled(note, { padding: "10px", borderRadius: "5px", background: error ? "#fdecea" : "#f5f5f5", color: error ? "#b3261e" : "#444" });
+      styled2(note, { padding: "10px", borderRadius: "5px", background: error ? "#fdecea" : "#f5f5f5", color: error ? "#b3261e" : "#444" });
       (Array.isArray(parts) ? parts : [parts]).forEach((part) => {
         if (part && typeof part === "object") {
           const anchor = document.createElement("a");
@@ -4938,7 +5865,7 @@
           anchor.href = part.href;
           anchor.target = "_blank";
           anchor.rel = "noopener";
-          styled(anchor, { color: "#0b5cab" });
+          styled2(anchor, { color: "#0b5cab" });
           note.appendChild(anchor);
         } else {
           note.appendChild(document.createTextNode(String(part ?? "")));
@@ -4948,15 +5875,15 @@
     }
     function buildActions(children) {
       const actions = document.createElement("div");
-      styled(actions, { display: "flex", justifyContent: "flex-end", gap: "8px" });
+      styled2(actions, { display: "flex", justifyContent: "flex-end", gap: "8px" });
       children.forEach((child) => actions.appendChild(child));
       return actions;
     }
     function buildSplitActions(leftChildren, rightChildren) {
       const row = document.createElement("div");
-      styled(row, { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" });
+      styled2(row, { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" });
       const left = document.createElement("div");
-      styled(left, { display: "flex", gap: "8px" });
+      styled2(left, { display: "flex", gap: "8px" });
       leftChildren.forEach((child) => left.appendChild(child));
       row.append(left, buildActions(rightChildren));
       return row;
@@ -4966,7 +5893,7 @@
       btn.type = "button";
       btn.textContent = label;
       if (action) btn.dataset.action = action;
-      styled(btn, {
+      styled2(btn, {
         padding: "8px 13px",
         border: primary ? "1px solid #ef6c00" : "1px solid #aaa",
         borderRadius: "5px",
@@ -4979,15 +5906,15 @@
     }
     function setButtonDisabled(btn, disabled) {
       btn.disabled = disabled;
-      styled(btn, { opacity: disabled ? ".55" : "1", cursor: disabled ? "wait" : "pointer" });
+      styled2(btn, { opacity: disabled ? ".55" : "1", cursor: disabled ? "wait" : "pointer" });
     }
     function buildList() {
       const list = document.createElement("div");
-      return styled(list, { display: "grid", gap: "6px", maxHeight: "260px", overflowY: "auto", border: "1px solid #ddd", borderRadius: "6px", padding: "8px" });
+      return styled2(list, { display: "grid", gap: "6px", maxHeight: "260px", overflowY: "auto", border: "1px solid #ddd", borderRadius: "6px", padding: "8px" });
     }
     function buildOptionRow({ name, index, checked, labelText, href, linkLabel = "im AP prüfen" }) {
       const option = document.createElement("label");
-      styled(option, { display: "flex", alignItems: "flex-start", gap: "8px", padding: "6px", borderRadius: "5px", fontWeight: "400", cursor: "pointer" });
+      styled2(option, { display: "flex", alignItems: "flex-start", gap: "8px", padding: "6px", borderRadius: "5px", fontWeight: "400", cursor: "pointer" });
       const radio = document.createElement("input");
       radio.type = "radio";
       radio.name = name;
@@ -5002,13 +5929,13 @@
         anchor.href = href;
         anchor.target = "_blank";
         anchor.rel = "noopener";
-        styled(anchor, { marginLeft: "auto", fontSize: "12px", color: "#0b5cab", whiteSpace: "nowrap" });
+        styled2(anchor, { marginLeft: "auto", fontSize: "12px", color: "#0b5cab", whiteSpace: "nowrap" });
         option.appendChild(anchor);
       }
       return { option, radio };
     }
     function styleDialogFrame(dialog) {
-      styled(dialog, {
+      styled2(dialog, {
         width: "min(520px, calc(100vw - 32px))",
         border: "0",
         borderRadius: "10px",
@@ -5024,7 +5951,7 @@
         button.id = IDS2.button;
         button.type = "button";
         button.textContent = "Match Outen";
-        styled(button, {
+        styled2(button, {
           position: "fixed",
           right: "24px",
           bottom: "24px",
@@ -5182,7 +6109,7 @@
       const select = document.createElement("select");
       select.name = "outFeedback";
       select.required = true;
-      styled(select, { boxSizing: "border-box", width: "100%", padding: "9px", border: "1px solid #bbb", borderRadius: "5px", font: "inherit", background: "#fff" });
+      styled2(select, { boxSizing: "border-box", width: "100%", padding: "9px", border: "1px solid #bbb", borderRadius: "5px", font: "inherit", background: "#fff" });
       const chooseOption = document.createElement("option");
       chooseOption.value = "__choose__";
       chooseOption.textContent = "Bitte auswählen";
@@ -5194,21 +6121,21 @@
         select.appendChild(option);
       });
       const label = document.createElement("label");
-      styled(label, { display: "grid", gap: "5px", fontWeight: "700" });
+      styled2(label, { display: "grid", gap: "5px", fontWeight: "700" });
       label.append("Grund", select);
       const statusEl = document.createElement("div");
       statusEl.textContent = "Bitte einen Grund auswählen.";
       const setStatus = (text, tone = "") => {
         statusEl.textContent = text;
         const color = tone === "ok" ? "#18752b" : tone === "error" ? "#b3261e" : tone === "busy" ? "#995000" : "#222";
-        styled(statusEl, { color });
+        styled2(statusEl, { color });
       };
       const openMatchLink = document.createElement("a");
       openMatchLink.textContent = "Match in Meine Matches öffnen";
       openMatchLink.href = kamMyMatchesUrl({ candidateId: match.candidateId, employerId: state.employer.id });
       openMatchLink.target = "_blank";
       openMatchLink.rel = "noopener";
-      styled(openMatchLink, {
+      styled2(openMatchLink, {
         padding: "8px 13px",
         border: "1px solid #aaa",
         borderRadius: "5px",
@@ -5492,7 +6419,10 @@
     sourcePath,
     label = "Filtervorlagen",
     builtInPresets = [],
-    storage
+    storage,
+    // Optional: liefert den ?-Knopf der jeweiligen Toolbox-Hilfe
+    // (shared/js/toolbox-help/). Ohne ihn bleibt die Leiste wie bisher.
+    helpTip
   } = {}) {
     runtime.registerSource(sourcePath);
     const presetStorage = storage || createPresetStorage({
@@ -5652,7 +6582,8 @@
       resetButton.className = "werkia-filter-presets-secondary";
       resetButton.textContent = "Filter zuruecksetzen";
       resetButton.addEventListener("click", () => applyPreset({ filter: {} }));
-      bar.append(title, select, saveButton, manageButton, resetButton);
+      const tip = helpTip?.();
+      bar.append(...[title, tip, select, saveButton, manageButton, resetButton].filter(Boolean));
       return bar;
     }
     function fillSelect(select) {
@@ -5718,6 +6649,7 @@
     executeListFilterPresets(runtime, {
       routes: KAM_ROUTES,
       builtInPresets: KAM_BUILT_IN_PRESETS,
+      helpTip: () => kamHelp.tip("filter-presets"),
       sourcePath: "kam/toolbox/src/features/filter-presets.js"
     });
   }
@@ -5889,7 +6821,7 @@ ${next}`;
     document.querySelectorAll(`[${CEM_ANCHOR_ATTR}]`).forEach((anchor) => anchor.removeAttribute(CEM_ANCHOR_ATTR));
     document.getElementById(TOOLBAR_ID)?.remove();
   }
-  function executeOmNotesTemplates(runtime) {
+  function executeOmNotesTemplates(runtime, { helpTip } = {}) {
     runtime?.registerSource?.("shared/js/om-notes-templates/index.js");
     let refreshTimer = null;
     let currentField = null;
@@ -5963,6 +6895,8 @@ ${next}`;
       const title = document.createElement("p");
       title.className = "werkia-om-notes-title";
       title.textContent = "OM-Flags";
+      const tip = helpTip?.();
+      if (tip) title.appendChild(tip);
       head.appendChild(title);
       const help = document.createElement("p");
       help.className = "werkia-om-notes-help";
@@ -6302,6 +7236,8 @@ ${next}`;
   // src/main.js
   initKamGraphqlAdapter();
   bootstrapToolbox({ label: "KAM", marker: "data-werkia-kam-toolbox-loaded" }, [
+    // First: installs the delegated ?-button handling the features below use.
+    { id: "toolbox-help", execute: executeToolboxHelp },
     { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions },
     { id: "kam-suite-contact-badges", execute: executeContactBadges },
     { id: "kam-suite-vacancy-city-badges", execute: executeVacancyCityBadges },
@@ -6322,7 +7258,7 @@ ${next}`;
     { id: "kam-suite-slack-exports", execute: executeSlackExports2 },
     { id: "kam-suite-outlook-match-outen", execute: executeOutlookMatchOuten },
     { id: "filter-presets", execute: executeFilterPresets },
-    { id: "om-notes-templates", execute: executeOmNotesTemplates },
+    { id: "om-notes-templates", execute: (runtime) => executeOmNotesTemplates(runtime, { helpTip: () => kamHelp.tip("om-notes-templates", { tone: "dark" }) }) },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ]);
 })();
