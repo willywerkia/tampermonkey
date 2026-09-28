@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.5.85
+// @version      1.5.86
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2010,7 +2010,8 @@
       const loading = status2?.value === "loading";
       const feedback = out ? status2?.feedback : "";
       tag.dataset.kamStatus = status2?.value || "";
-      tag.textContent = feedback ? `KAM Status: ${status2.label} (${feedback})` : `KAM Status: ${status2.label}`;
+      const text = feedback ? `KAM Status: ${status2.label} (${feedback})` : `KAM Status: ${status2.label}`;
+      if (tag.textContent !== text) tag.textContent = text;
       tag.title = loading ? `KAM Status des ${matchType} wird im Hintergrund geladen` : `KAM Status des ${matchType}: ${status2.label}${feedback ? ` – Grund: ${feedback}` : ""}`;
       tag.style.cssText = `display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:0;padding:5px 9px;border:${out ? "2px solid #c92a2a" : "1px solid rgba(0,0,0,0.26)"};border-radius:999px;background:${out ? "#fa5252" : "rgba(255,255,255,0.16)"};color:${out ? "#fff" : "rgba(0,0,0,0.64)"};font-size:12px;font-weight:400;line-height:1.2;white-space:nowrap;vertical-align:middle;box-shadow:${out ? "0 2px 5px rgba(201,42,42,0.28)" : "none"};opacity:${loading && !out ? "0.72" : "1"};`;
     }
@@ -2050,7 +2051,8 @@
       row.querySelectorAll(".werkia-urgent-vacancy-badge").forEach((badge) => badge.remove());
       const tag = existing || document.createElement("span");
       tag.className = SENT_MATCH_TAG_CLASS;
-      tag.textContent = sentAt ? `Match gesendet: ${formatSentAt(sentAt)}` : "Match bereits gesendet";
+      const text = sentAt ? `Match gesendet: ${formatSentAt(sentAt)}` : "Match bereits gesendet";
+      if (tag.textContent !== text) tag.textContent = text;
       tag.title = sentAt ? `Für diesen Arbeitgeber wurde am ${formatSentAt(sentAt)} bereits ein Match gesendet. Diesen Vorschlag ignorieren.` : "Für diesen Arbeitgeber wurde bereits ein Match gesendet. Der genaue Zeitpunkt wird im Hintergrund geladen.";
       tag.style.cssText = "display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid #8f2e2e;border-radius:999px;background:#a83232;color:#fff;font:800 12px/1.2 Arial,sans-serif;letter-spacing:.15px;vertical-align:middle;white-space:nowrap;";
       if (!existing) {
@@ -3377,12 +3379,14 @@
       const candidates = table.getVisibleCandidates();
       const loadedCount = candidates.filter((item) => state.cache[item.id]).length;
       const status2 = panel.querySelector(".werkia-panel-status");
-      if (customText) status2.textContent = customText;
+      let text;
+      if (customText) text = customText;
       else if (state.processing && state.activeCandidateId) {
         const active = candidates.find((item) => item.id === state.activeCandidateId);
-        status2.textContent = `Lädt ${loadedCount}/${candidates.length}: ${active?.name || state.activeCandidateId}`;
-      } else if (state.queue.length) status2.textContent = `${loadedCount}/${candidates.length} geladen · ${state.queue.length} warten`;
-      else status2.textContent = `${loadedCount}/${candidates.length} Kandidaten geladen`;
+        text = `Lädt ${loadedCount}/${candidates.length}: ${active?.name || state.activeCandidateId}`;
+      } else if (state.queue.length) text = `${loadedCount}/${candidates.length} geladen · ${state.queue.length} warten`;
+      else text = `${loadedCount}/${candidates.length} Kandidaten geladen`;
+      if (status2.textContent !== text) status2.textContent = text;
       panel.querySelector(".werkia-stop-btn").disabled = !state.processing && state.queue.length === 0;
     }
     function renderPhone(candidate, value) {
@@ -3822,7 +3826,7 @@
       status2.setAttribute("role", "alert");
       (anchor || document.querySelector("main") || document.body).prepend(status2);
     }
-    status2.textContent = message;
+    if (status2.textContent !== message) status2.textContent = message;
     return status2;
   }
   function selectedMatchFromLink(link) {
@@ -4412,10 +4416,17 @@
       bar.append(...[title, tip, select, saveButton, manageButton, resetButton].filter(Boolean));
       return bar;
     }
+    const optionSignatures = /* @__PURE__ */ new WeakMap();
     function fillSelect(select) {
       if (!select) return;
       const own = ownPresets();
       const active = findActivePresetId([...builtInPresets, ...own], parseListState(location.hash));
+      const signature = JSON.stringify([builtInPresets, own].map((list) => list.map((preset) => [preset.id, preset.name, describePreset(preset)])));
+      if (optionSignatures.get(select) === signature) {
+        if (select.value !== active) select.value = active;
+        return;
+      }
+      optionSignatures.set(select, signature);
       select.textContent = "";
       const placeholder = document.createElement("option");
       placeholder.value = "";

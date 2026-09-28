@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.4.85
+// @version      1.4.86
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -2356,7 +2356,8 @@
       const isLoading = status?.value === "loading";
       const feedback = isOut ? status?.feedback : "";
       tag.dataset.kamStatus = status?.value || "";
-      tag.textContent = feedback ? `KAM Status: ${status.label} (${feedback})` : `KAM Status: ${status.label}`;
+      const text = feedback ? `KAM Status: ${status.label} (${feedback})` : `KAM Status: ${status.label}`;
+      if (tag.textContent !== text) tag.textContent = text;
       tag.title = isLoading ? "KAM Status des Reverse Match wird im Hintergrund geladen" : `KAM Status des bereits gesendeten Reverse Match: ${status.label}${feedback ? ` – Grund: ${feedback}` : ""}`;
       tag.style.cssText = `
       display:inline-flex;
@@ -2428,7 +2429,8 @@
       row.querySelectorAll(".werkia-urgent-vacancy-badge").forEach((badge) => badge.remove());
       const tag = existing || document.createElement("span");
       tag.className = MATCH_PRESENT_TAG_CLASS;
-      tag.textContent = `Match gesendet: ${formatSentAt(sentAt)}`;
+      const text = `Match gesendet: ${formatSentAt(sentAt)}`;
+      if (tag.textContent !== text) tag.textContent = text;
       tag.title = `Für diesen Arbeitgeber wurde am ${formatSentAt(sentAt)} bereits ein Match gesendet. Diesen Vorschlag ignorieren.`;
       tag.style.cssText = "display:inline-flex;align-items:center;flex:0 0 auto;width:max-content;margin:6px 0 2px 8px;padding:5px 9px;border:1px solid #8f2e2e;border-radius:999px;background:#a83232;color:#fff;font:800 12px/1.2 Arial,sans-serif;letter-spacing:.15px;vertical-align:middle;white-space:nowrap;";
       if (!existing) {
@@ -3895,7 +3897,7 @@
       status.setAttribute("role", "alert");
       (anchor || document.querySelector("main") || document.body).prepend(status);
     }
-    status.textContent = message;
+    if (status.textContent !== message) status.textContent = message;
     return status;
   }
   function selectedMatchFromLink(link) {
@@ -4485,10 +4487,17 @@
       bar.append(...[title, tip, select, saveButton, manageButton, resetButton].filter(Boolean));
       return bar;
     }
+    const optionSignatures = /* @__PURE__ */ new WeakMap();
     function fillSelect(select) {
       if (!select) return;
       const own = ownPresets();
       const active = findActivePresetId([...builtInPresets, ...own], parseListState(location.hash));
+      const signature = JSON.stringify([builtInPresets, own].map((list) => list.map((preset) => [preset.id, preset.name, describePreset(preset)])));
+      if (optionSignatures.get(select) === signature) {
+        if (select.value !== active) select.value = active;
+        return;
+      }
+      optionSignatures.set(select, signature);
       select.textContent = "";
       const placeholder = document.createElement("option");
       placeholder.value = "";

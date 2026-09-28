@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.3.85
+// @version      1.3.86
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -4714,7 +4714,15 @@
         }
       });
     }
-    runtime.createMutationObserver(checkSelects).observe(document.body, {
+    let checkTimer = null;
+    function scheduleCheck() {
+      if (checkTimer !== null) return;
+      checkTimer = runtime.setTimeout(() => {
+        checkTimer = null;
+        checkSelects();
+      }, 100);
+    }
+    runtime.createMutationObserver(scheduleCheck).observe(document.body, {
       childList: true,
       subtree: true,
       characterData: true,
@@ -6586,10 +6594,17 @@
       bar.append(...[title, tip, select, saveButton, manageButton, resetButton].filter(Boolean));
       return bar;
     }
+    const optionSignatures = /* @__PURE__ */ new WeakMap();
     function fillSelect(select) {
       if (!select) return;
       const own = ownPresets();
       const active = findActivePresetId([...builtInPresets, ...own], parseListState(location.hash));
+      const signature = JSON.stringify([builtInPresets, own].map((list) => list.map((preset) => [preset.id, preset.name, describePreset(preset)])));
+      if (optionSignatures.get(select) === signature) {
+        if (select.value !== active) select.value = active;
+        return;
+      }
+      optionSignatures.set(select, signature);
       select.textContent = "";
       const placeholder = document.createElement("option");
       placeholder.value = "";
