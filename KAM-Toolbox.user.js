@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.3.95
+// @version      1.3.96
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -6038,7 +6038,7 @@
   }
 
   // src/features/kam-suite/slack-exports.js
-  var webhookUrl = true ? "https://hooks.zapier.com/hooks/catch/27487536/4hyl3yh/" : "";
+  var webhookUrl = true ? "https://srv-a1.tail4b9d62.ts.net/webhook/ops-bot/vt/5d8e2f14-3a6b-4c9d-8e1f-2b7a9c4d6e03" : "";
   function executeSlackExports2(runtime) {
     executeSlackExports(runtime, {
       role: "KAM",
