@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.6.91
+// @version      1.6.92
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1847,8 +1847,9 @@
 
   // src/help.js
   var onPotentialMatches = [ROUTES.potentialMatches];
-  var MY_MATCHES = "CEM › Meine Matches";
   var onMyMatches = [ROUTES.cemMyMatches];
+  var BULK_PAGES = "CEM › Meine Kandidaten (aufgeklappte Matches)";
+  var onBulkPages = [ROUTES.cemMyMatches, ROUTES.cemMyCandidates];
   var CEM_HELP_TOPICS = [
     {
       id: "vacancy-candidate-info",
@@ -1864,9 +1865,9 @@
         "Geladene Infos bleiben 4 Stunden im Browser gespeichert. Im Adminpanel wird nichts geändert."
       ]
     },
-    bulkWvlTopic({ team: "CEM", page: MY_MATCHES, routes: onMyMatches }),
-    bulkStatusTopic({ team: "CEM", page: MY_MATCHES, routes: onMyMatches, declinesInterviews: true }),
-    bulkForwardTopic({ page: MY_MATCHES, routes: onMyMatches }),
+    bulkWvlTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages }),
+    bulkStatusTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages, declinesInterviews: true }),
+    bulkForwardTopic({ page: BULK_PAGES, routes: onBulkPages }),
     {
       id: "status-colors",
       title: "Status-Farben",
@@ -5161,7 +5162,7 @@
       finishDialog(dialog);
     }
     function installButton(header, id, label2, title, render) {
-      if (!header || header.querySelector(`#${id}`)) return;
+      if (!header || document.getElementById(id)) return;
       const button = document.createElement("button");
       button.id = id;
       button.type = "button";
@@ -5255,7 +5256,7 @@
     { value: "others", label: "Anderes", freeText: true }
   ];
   function isTargetPage(hash = location.hash) {
-    return /#\/CEM\/My(?:Cem)?Matches(?:[/?]|$)/i.test(hash);
+    return /#\/CEM\/(?:My(?:Cem)?Matches|MyCandidates)(?:[/?]|$)/i.test(hash);
   }
   function resolveCemOutFeedback(reason, freeText) {
     if (!reason) return "";
