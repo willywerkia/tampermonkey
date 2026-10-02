@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.4.97
+// @version      1.4.98
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1747,6 +1747,20 @@
       ]
     },
     {
+      id: "match-slack-actions",
+      title: "Dringend und Push Request",
+      page: MY_MATCHES,
+      routes: onMyMatches,
+      kind: "external",
+      summary: "Unter dem Vakanztitel stehen „Dringend“ und „Push“. Beide posten über den OPS-Bot in Slack, für die Vakanz der Zeile.",
+      notes: [
+        "„Dringend“ schreibt den Befehl in den Dringend-Channel. Der Bot setzt dort den Tag [dringende Suche] und fragt nach 14 Tagen nach, ob die Suche noch dringend ist.",
+        "Rot mit Haken heißt: Die Vakanz ist dringend. Ein Klick darauf beendet die dringende Suche nach einer Rückfrage. Gelb heißt: angefragt, der Bot hat noch nicht bestätigt.",
+        "Nur veröffentlichte Vakanzen können dringend werden.",
+        "„Push“ postet eine Push Request an @push in #push-requests. Danach steht „Push ✓“ am Knopf, ein zweiter Versand braucht deine Bestätigung."
+      ]
+    },
+    {
       id: "slack-exports",
       title: "VTA und VTV an Slack",
       page: MY_MATCHES,
@@ -2246,7 +2260,7 @@
     runtime.registerSource(sourcePath);
     const {
       team,
-      isTargetPage: isTargetPage8,
+      isTargetPage: isTargetPage9,
       getRequest,
       ids: IDS4,
       fields,
@@ -2739,7 +2753,7 @@
       });
     }
     function installHeaderButtons() {
-      if (!isTargetPage8()) return;
+      if (!isTargetPage9()) return;
       kit.injectStyle();
       installButton(columns.followUp, IDS4.button, "Alle ändern", `${team}-WVL-Datum für angehakte sichtbare Matches ändern`, renderWvlDialog);
       installButton(columns.status, IDS4.statusButton, "Alle ändern", `${team} Status für angehakte sichtbare Matches ändern`, renderStatusDialog);
@@ -2752,7 +2766,7 @@
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        if (!isTargetPage8()) {
+        if (!isTargetPage9()) {
           document.getElementById(IDS4.dialog)?.remove();
           return;
         }
@@ -6099,6 +6113,313 @@
     });
   }
 
+  // ../../shared/js/werkia-graphql/job-position-urgency-provider.js
+  var URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
+  var JOB_POSITION_URGENCY_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    status
+    additionalInformation
+    __typename
+  }
+}`;
+  async function fetchJobPositionUrgency(request, jobPositionIds) {
+    const index = /* @__PURE__ */ new Map();
+    if (!jobPositionIds.length) return index;
+    const result = await request(JOB_POSITION_URGENCY_QUERY, { filter: { ids: jobPositionIds } });
+    for (const item of result?.items || []) {
+      if (!item?.id) continue;
+      index.set(item.id, {
+        urgent: URGENT_TAG_RE.test(String(item.additionalInformation || "")),
+        published: item.status === "Published"
+      });
+    }
+    return index;
+  }
+
+  // src/features/kam-suite/match-slack-actions.js
+  var defaultWebhookUrl = true ? "https://srv-a1.tail4b9d62.ts.net/webhook/ops-bot/kam-match/b41e7c2a-9d35-4f08-a6c1-3e8f5d2b7a94" : "";
+  var ROW_SELECTOR8 = "tbody tr.RaDataTable-row";
+  var JOB_TITLE_LINK_SELECTOR2 = '.column-jobPositionId a[href*="#/JobPosition/"]';
+  var MATCH_LINK_SELECTOR4 = 'a[href*="#/Match/"]';
+  var BAR_CLASS = "werkia-kam-match-actions";
+  var STYLE_ID5 = "werkia-kam-match-actions-style";
+  var STORE_KEY = "werkia_kam_match_actions_v1";
+  var REFRESH_INTERVAL_MS4 = 5 * 60 * 1e3;
+  var PENDING_POLL_MS = 8e3;
+  var PENDING_TIMEOUT_MS = 20 * 60 * 1e3;
+  function isTargetPage8(hash = location.hash) {
+    return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
+  }
+  function jobPositionIdFromHref(href) {
+    return String(href || "").match(/#\/JobPosition\/([0-9a-f-]{36})(?:[/?]|$)/i)?.[1] || "";
+  }
+  function matchIdFromHref2(href) {
+    return String(href || "").match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
+  }
+  function formatAt(iso) {
+    return new Date(iso).toLocaleString("de-DE", { timeZone: "Europe/Berlin" });
+  }
+  function activePending(pending, now = Date.now()) {
+    if (!pending) return null;
+    return now - new Date(pending.at).getTime() < PENDING_TIMEOUT_MS ? pending : null;
+  }
+  function urgentButtonState(urgency, pending, now = Date.now()) {
+    if (!urgency) return { state: "loading", label: "Dringend", title: "Dringend-Status wird geladen", disabled: true };
+    const open = activePending(pending, now);
+    if (open && open.target !== urgency.urgent) {
+      return {
+        state: "pending",
+        label: open.target ? "Wird gesetzt …" : "Wird beendet …",
+        title: `Angefragt am ${formatAt(open.at)}. Der Bot bestätigt im Dringend-Channel.`,
+        disabled: true
+      };
+    }
+    if (urgency.urgent) {
+      return { state: "on", label: "✓ Dringend", title: "Vakanz ist als dringend markiert. Klick beendet die dringende Suche.", disabled: false };
+    }
+    if (!urgency.published) {
+      return { state: "off", label: "Dringend", title: "Nur veröffentlichte Vakanzen können dringend werden.", disabled: true };
+    }
+    return { state: "off", label: "Dringend", title: "Vakanz als dringend markieren (Slack-Befehl im Dringend-Channel)", disabled: false };
+  }
+  function pushButtonState(sentAt) {
+    if (!sentAt) return { state: "off", label: "Push", title: "Push Request für diese Vakanz in #push-requests posten" };
+    return { state: "sent", label: "Push ✓", title: `Push Request gesendet am ${formatAt(sentAt)}. Klick sendet erneut.` };
+  }
+  function pushResendConfirmText(sentAt) {
+    return `Für diese Vakanz wurde am ${formatAt(sentAt)} schon ein Push Request gesendet. Trotzdem erneut senden?`;
+  }
+  var STOP_URGENT_CONFIRM_TEXT = 'Dringende Suche für diese Vakanz beenden? Der Bot postet "nicht dringend" im Dringend-Channel und entfernt den Tag.';
+  function gmPost(url, payload) {
+    return new Promise((resolve, reject) => GM_xmlhttpRequest({
+      method: "POST",
+      url,
+      headers: { "Content-Type": "application/json" },
+      data: JSON.stringify(payload),
+      onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`OPS-Bot HTTP ${response.status}`)),
+      onerror: () => reject(new Error("OPS-Bot nicht erreichbar")),
+      ontimeout: () => reject(new Error("OPS-Bot antwortet nicht")),
+      timeout: 15e3
+    }));
+  }
+  function executeMatchSlackActions(runtime, {
+    webhookUrl: webhookUrl2 = defaultWebhookUrl,
+    request = (...args) => getKamGraphqlAdapter().request(...args),
+    post: postJson = gmPost
+  } = {}) {
+    runtime.registerSource("kam/toolbox/src/features/kam-suite/match-slack-actions.js");
+    if (!webhookUrl2) return;
+    const urgencyIndex = /* @__PURE__ */ new Map();
+    const requested = /* @__PURE__ */ new Set();
+    let loadPromise = null;
+    let syncTimer = null;
+    let pollTimer = null;
+    function loadStore() {
+      try {
+        const store = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+        return { pending: store.pending || {}, pushSent: store.pushSent || {} };
+      } catch {
+        return { pending: {}, pushSent: {} };
+      }
+    }
+    function saveStore(store) {
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(store));
+      } catch {
+      }
+    }
+    function updateStore(change) {
+      const store = loadStore();
+      change(store);
+      saveStore(store);
+    }
+    function rows() {
+      return [...document.querySelectorAll(ROW_SELECTOR8)].filter((row) => row.querySelector(JOB_TITLE_LINK_SELECTOR2));
+    }
+    function rowIds(row) {
+      return {
+        jobPositionId: jobPositionIdFromHref(row.querySelector(JOB_TITLE_LINK_SELECTOR2)?.href),
+        matchId: matchIdFromHref2(row.querySelector(MATCH_LINK_SELECTOR4)?.href)
+      };
+    }
+    function visibleJobPositionIds() {
+      return [...new Set(rows().map((row) => rowIds(row).jobPositionId).filter(Boolean))];
+    }
+    function ensureStyle() {
+      if (document.getElementById(STYLE_ID5)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID5;
+      style.textContent = `
+      .${BAR_CLASS} { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-top:4px; }
+      .${BAR_CLASS} button { min-height:20px; padding:2px 7px; border:1px solid #9ca3af; border-radius:5px; background:#fff; color:#374151; cursor:pointer; font:700 10.5px/1 Arial,sans-serif; white-space:nowrap; }
+      .${BAR_CLASS} button:hover:not(:disabled) { background:#f3f4f6; }
+      .${BAR_CLASS} button:disabled { cursor:default; opacity:.65; }
+      .${BAR_CLASS} button[data-state="on"] { border-color:#dc2626; background:#dc2626; color:#fff; opacity:1; }
+      .${BAR_CLASS} button[data-state="on"]:hover { background:#b91c1c; }
+      .${BAR_CLASS} button[data-state="pending"] { border-color:#d97706; background:#fef3c7; color:#92400e; opacity:1; }
+      .${BAR_CLASS} button[data-state="sent"] { border-color:#4956df; color:#4956df; }
+    `;
+      document.head.appendChild(style);
+    }
+    const post = (payload) => postJson(webhookUrl2, payload);
+    function applyState(button, { state, label, title, disabled = false }) {
+      if (button.dataset.busy === "true") return;
+      if (button.textContent !== label) button.textContent = label;
+      if (button.title !== title) button.title = title;
+      if (button.dataset.state !== state) button.dataset.state = state;
+      if (button.disabled !== disabled) button.disabled = disabled;
+    }
+    function flash(button, text) {
+      button.dataset.busy = "true";
+      button.textContent = text;
+      runtime.setTimeout(() => {
+        delete button.dataset.busy;
+        render();
+      }, 1500);
+    }
+    async function onUrgentClick(button, jobPositionId, matchId) {
+      const urgency = urgencyIndex.get(jobPositionId);
+      const { state } = urgentButtonState(urgency, loadStore().pending[jobPositionId]);
+      if (state === "loading" || state === "pending") return;
+      const target = !urgency.urgent;
+      if (!target && !window.confirm(STOP_URGENT_CONFIRM_TEXT)) return;
+      button.disabled = true;
+      try {
+        await post({ type: target ? "DRINGEND" : "NICHT_DRINGEND", jobPositionId, matchId });
+        updateStore((store) => {
+          store.pending[jobPositionId] = { target, at: (/* @__PURE__ */ new Date()).toISOString() };
+        });
+        render();
+        schedulePendingPoll();
+      } catch (error) {
+        console.warn("[KAM Dringend]", error);
+        flash(button, "Fehler");
+      }
+    }
+    async function onPushClick(button, jobPositionId, matchId) {
+      const sentAt = loadStore().pushSent[jobPositionId];
+      if (sentAt && !window.confirm(pushResendConfirmText(sentAt))) return;
+      button.disabled = true;
+      try {
+        await post({ type: "PUSH", jobPositionId, matchId });
+        updateStore((store) => {
+          store.pushSent[jobPositionId] = (/* @__PURE__ */ new Date()).toISOString();
+        });
+        flash(button, "Gesendet");
+      } catch (error) {
+        console.warn("[KAM Push Request]", error);
+        flash(button, "Fehler");
+      }
+    }
+    function ensureBar(row) {
+      const { jobPositionId, matchId } = rowIds(row);
+      if (!jobPositionId) return null;
+      let bar = row.querySelector(`.${BAR_CLASS}`);
+      if (bar && bar.dataset.jobPositionId === jobPositionId) return bar;
+      bar?.remove();
+      bar = document.createElement("div");
+      bar.className = BAR_CLASS;
+      bar.dataset.jobPositionId = jobPositionId;
+      bar.addEventListener("click", (event) => event.stopPropagation());
+      const urgent = document.createElement("button");
+      urgent.type = "button";
+      urgent.dataset.action = "urgent";
+      urgent.addEventListener("click", () => onUrgentClick(urgent, jobPositionId, matchId));
+      const push = document.createElement("button");
+      push.type = "button";
+      push.dataset.action = "push";
+      push.addEventListener("click", () => onPushClick(push, jobPositionId, matchId));
+      bar.append(urgent, push);
+      const tip = kamHelp.tip("match-slack-actions");
+      if (tip) bar.appendChild(tip);
+      row.querySelector(".column-jobPositionId")?.appendChild(bar);
+      return bar;
+    }
+    function render() {
+      const { pending, pushSent } = loadStore();
+      rows().forEach((row) => {
+        const bar = ensureBar(row);
+        if (!bar) return;
+        const jobPositionId = bar.dataset.jobPositionId;
+        applyState(bar.querySelector('[data-action="urgent"]'), urgentButtonState(urgencyIndex.get(jobPositionId), pending[jobPositionId]));
+        applyState(bar.querySelector('[data-action="push"]'), pushButtonState(pushSent[jobPositionId]));
+      });
+    }
+    function settlePending() {
+      updateStore((store) => {
+        Object.entries(store.pending).forEach(([id, pending]) => {
+          const urgency = urgencyIndex.get(id);
+          if (!activePending(pending) || urgency && urgency.urgent === pending.target) delete store.pending[id];
+        });
+      });
+    }
+    function openPendingIds() {
+      const { pending } = loadStore();
+      return visibleJobPositionIds().filter((id) => activePending(pending[id]));
+    }
+    async function loadUrgency(ids) {
+      if (loadPromise || !ids.length) return loadPromise;
+      ids.forEach((id) => requested.add(id));
+      loadPromise = (async () => {
+        try {
+          const fetched = await fetchJobPositionUrgency(request, ids);
+          fetched.forEach((value, id) => urgencyIndex.set(id, value));
+          settlePending();
+        } catch (error) {
+          console.warn("[KAM Dringend]", error);
+        } finally {
+          loadPromise = null;
+          render();
+        }
+      })();
+      return loadPromise;
+    }
+    function schedulePendingPoll() {
+      if (pollTimer !== null) return;
+      pollTimer = runtime.setTimeout(async () => {
+        pollTimer = null;
+        if (!isTargetPage8()) return;
+        const ids = openPendingIds();
+        if (!ids.length) return;
+        await loadUrgency(ids);
+        schedulePendingPoll();
+      }, PENDING_POLL_MS);
+    }
+    function removeBars() {
+      document.querySelectorAll(`.${BAR_CLASS}`).forEach((element) => element.remove());
+    }
+    function sync() {
+      if (!isTargetPage8()) {
+        removeBars();
+        return;
+      }
+      ensureStyle();
+      render();
+      loadUrgency(visibleJobPositionIds().filter((id) => !requested.has(id)));
+      if (openPendingIds().length) schedulePendingPoll();
+    }
+    function scheduleSync() {
+      if (syncTimer !== null) return;
+      syncTimer = runtime.setTimeout(() => {
+        syncTimer = null;
+        sync();
+      }, 150);
+    }
+    runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleSync);
+    runtime.setInterval(() => {
+      if (isTargetPage8()) loadUrgency(visibleJobPositionIds());
+    }, REFRESH_INTERVAL_MS4);
+    runtime.addCleanup?.(() => {
+      if (syncTimer !== null) runtime.clearTimeout(syncTimer);
+      if (pollTimer !== null) runtime.clearTimeout(pollTimer);
+      removeBars();
+      document.getElementById(STYLE_ID5)?.remove();
+    });
+    scheduleSync();
+  }
+
   // src/features/kam-suite/outlook-match-outen.js
   var EMPLOYERS_BY_NAME_QUERY = `query OutenEmployersByName($filter: EmployerFilter) {
   items: allEmployers(filter: $filter) { id name __typename }
@@ -6957,7 +7278,7 @@
       const element = document.getElementById(id);
       return element?.dataset.werkiaPresetsOwner === owner ? element : null;
     };
-    const isTargetPage8 = () => isTargetRoute(location.hash, routes);
+    const isTargetPage9 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
     function ensureStyle() {
@@ -7146,7 +7467,7 @@
       select.value = active;
     }
     function render() {
-      if (!isTargetPage8()) {
+      if (!isTargetPage9()) {
         ownElement(IDS3.bar)?.remove();
         closeDialog();
         return;
@@ -7216,7 +7537,7 @@
     { label: "Freitext", prefix: "" }
   ];
   var TOOLBAR_ID = "werkia-om-notes-template-toolbar";
-  var STYLE_ID5 = "werkia-om-notes-template-style";
+  var STYLE_ID6 = "werkia-om-notes-template-style";
   var TARGET_SELECTOR = 'textarea[name="omNotes"], input[name="omNotes"]';
   var CEM_TARGET_SELECTOR = 'textarea[name="cemNotes"], input[name="cemNotes"]';
   var EMPLOYER_ROUTE = /^#\/Employer\/[^/?]+/i;
@@ -7285,11 +7606,11 @@ ${next}`;
     }
   }
   function ensureStyles() {
-    if (document.getElementById(STYLE_ID5)) {
+    if (document.getElementById(STYLE_ID6)) {
       return;
     }
     const style = document.createElement("style");
-    style.id = STYLE_ID5;
+    style.id = STYLE_ID6;
     style.textContent = `
     [${LAYOUT_ROOT_ATTR}="left"] { --om-flags-panel-width:min(620px, max(500px, 35%)); --om-flags-gap:16px; position:relative !important; }
     [${LAYOUT_ROOT_ATTR}="left"] [${OM_ANCHOR_ATTR}], [${LAYOUT_ROOT_ATTR}="left"] [${CEM_ANCHOR_ATTR}] { width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; max-width:calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; margin-left:calc(var(--om-flags-panel-width) + var(--om-flags-gap)) !important; flex:0 0 calc(100% - var(--om-flags-panel-width) - var(--om-flags-gap)) !important; }
@@ -7523,7 +7844,7 @@ ${next}`;
       }
       observer.disconnect();
       removeToolbar();
-      document.getElementById(STYLE_ID5)?.remove();
+      document.getElementById(STYLE_ID6)?.remove();
     });
     renderToolbar();
   }
@@ -7542,8 +7863,8 @@ ${next}`;
       const root = document.documentElement;
       if (!root || root.getAttribute(bootstrapMarker) === "true") return;
       root.setAttribute(bootstrapMarker, "true");
-      const URGENT_TAG_RE = /\[\s*dringende\s+suche\s*\]/i;
-      const STYLE_ID6 = "werkia-urgent-vacancy-style";
+      const URGENT_TAG_RE2 = /\[\s*dringende\s+suche\s*\]/i;
+      const STYLE_ID7 = "werkia-urgent-vacancy-style";
       const ROW_CLASS = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const MATCH_PRESENT_ROW_CLASS = "werkia-cem-match-present-row";
@@ -7662,7 +7983,7 @@ ${next}`;
         const flags = /* @__PURE__ */ new Map();
         (result?.items || []).forEach((item) => {
           if (!item?.id) return;
-          flags.set(item.id, item.status === "Published" && URGENT_TAG_RE.test(item.additionalInformation || ""));
+          flags.set(item.id, item.status === "Published" && URGENT_TAG_RE2.test(item.additionalInformation || ""));
         });
         return flags;
       }
@@ -7682,9 +8003,9 @@ ${next}`;
         return rowsByJobId;
       }
       function ensureStyles2() {
-        if (document.getElementById(STYLE_ID6)) return;
+        if (document.getElementById(STYLE_ID7)) return;
         const style = document.createElement("style");
-        style.id = STYLE_ID6;
+        style.id = STYLE_ID7;
         style.textContent = `
       .${ROW_CLASS} { outline: 3px solid #d97706 !important; outline-offset: -3px; box-shadow: inset 7px 0 0 #b45309 !important; }
       .${ROW_CLASS} > td, .${ROW_CLASS} > th { background: #fff3cd !important; }
@@ -7790,6 +8111,7 @@ ${next}`;
     { id: "kam-suite-chat-icon-redirect", execute: executeChatIconRedirect },
     { id: "kam-suite-appointment-copy-paste", execute: executeAppointmentCopyPaste },
     { id: "kam-suite-slack-exports", execute: executeSlackExports2 },
+    { id: "kam-suite-match-slack-actions", execute: executeMatchSlackActions },
     { id: "kam-suite-outlook-match-outen", execute: executeOutlookMatchOuten },
     { id: "filter-presets", execute: executeFilterPresets },
     { id: "om-notes-templates", execute: (runtime) => executeOmNotesTemplates(runtime, { helpTip: () => kamHelp.tip("om-notes-templates", { tone: "dark" }) }) },
