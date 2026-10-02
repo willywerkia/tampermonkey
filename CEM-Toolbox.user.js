@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.5.90
+// @version      1.6.91
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1604,7 +1604,9 @@
     potentialMatches: /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i,
     createOfflineMatch: /^#\/CreateOfflineMatch(?:[/?]|$)/i,
     kamMyMatches: /#\/KAM\/MyMatches(?:[/?]|$)/i,
-    cemMyMatches: /#\/CEM\/MyMatches(?:[/?]|$)/i,
+    // Das AP fuehrt "CEM › Meine Matches" seit spaetestens 2026-10-02 unter
+    // #/CEM/MyCemMatches; #/CEM/MyMatches bleibt fuer alte Links erkannt.
+    cemMyMatches: /#\/CEM\/My(?:Cem)?Matches(?:[/?]|$)/i,
     cemMyCandidates: /#\/CEM\/MyCandidates(?:[/?]|$)/i,
     obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
     employer: /^#\/Employer\/[^/?]+/i,
@@ -1632,6 +1634,66 @@
         "Vorlagen liegen nur in deinem Browser und bleiben bei Toolbox-Updates erhalten. Kolleg:innen sehen sie nicht.",
         "„Verwalten“ zum Umbenennen und Löschen. Zum Übertragen auf einen anderen Rechner den Text dort kopieren und im anderen Browser mit „Aus Textfeld importieren“ einfügen. Der Import ergänzt nur und überschreibt nichts.",
         "„Filter zurücksetzen“ leert nur den Filter der Ansicht. Deine Vorlagen bleiben."
+      ]
+    };
+  }
+  function bulkWvlTopic({ team, page, routes }) {
+    return {
+      id: "bulk-wvl",
+      title: `${team} WVL gesammelt ändern`,
+      page,
+      routes,
+      kind: "write",
+      summary: `„Alle ändern“ im Spaltenkopf ${team} WVL setzt oder entfernt das Wiedervorlagedatum für viele Matches auf einmal.`,
+      steps: [
+        "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
+        "„Alle ändern“ klicken, einen Arbeitgeber wählen oder alle sichtbaren lassen, dann ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
+      ],
+      notes: [
+        "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
+      ]
+    };
+  }
+  function bulkStatusTopic({ team, page, routes, declinesInterviews = false }) {
+    return {
+      id: "bulk-status",
+      title: `${team} Status gesammelt ändern`,
+      page,
+      routes,
+      kind: "write",
+      summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        `Den neuen ${team} Status wählen. Bei „Out“ ist ein Grund Pflicht.`,
+        "Die Rückfrage prüfen und bestätigen."
+      ],
+      notes: [
+        `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
+        declinesInterviews ? "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt." : "",
+        "Betroffen sind nur die aktuell sichtbaren Zeilen.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert."
+      ].filter(Boolean)
+    };
+  }
+  function bulkForwardTopic({ page, routes }) {
+    return {
+      id: "bulk-forward",
+      title: "Terminvorschläge gesammelt weiterleiten",
+      page,
+      routes,
+      kind: "write",
+      summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
+      ],
+      notes: [
+        "Termine mit einem anderen Status bleiben unberührt.",
+        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Weitergeleitete Termine werden sofort blau eingefärbt."
       ]
     };
   }
@@ -1785,6 +1847,8 @@
 
   // src/help.js
   var onPotentialMatches = [ROUTES.potentialMatches];
+  var MY_MATCHES = "CEM › Meine Matches";
+  var onMyMatches = [ROUTES.cemMyMatches];
   var CEM_HELP_TOPICS = [
     {
       id: "vacancy-candidate-info",
@@ -1800,6 +1864,9 @@
         "Geladene Infos bleiben 4 Stunden im Browser gespeichert. Im Adminpanel wird nichts geändert."
       ]
     },
+    bulkWvlTopic({ team: "CEM", page: MY_MATCHES, routes: onMyMatches }),
+    bulkStatusTopic({ team: "CEM", page: MY_MATCHES, routes: onMyMatches, declinesInterviews: true }),
+    bulkForwardTopic({ page: MY_MATCHES, routes: onMyMatches }),
     {
       id: "status-colors",
       title: "Status-Farben",
@@ -3608,7 +3675,7 @@
     if (Number.isNaN(date.getTime())) return String(value);
     return date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
   }
-  function createCandidateUi({ document: document2, isTargetPage, table, getState, refreshVisibleCandidates, stopLoading, clearAllCache, helpTipHtml = () => "" }) {
+  function createCandidateUi({ document: document2, isTargetPage: isTargetPage2, table, getState, refreshVisibleCandidates, stopLoading, clearAllCache, helpTipHtml = () => "" }) {
     const SCRIPT_ID = "werkia-vakanz-kandidateninfos";
     const STYLE_ID3 = `${SCRIPT_ID}-style`;
     const PANEL_ID2 = `${SCRIPT_ID}-panel`;
@@ -3650,7 +3717,7 @@
       document2.head.appendChild(style);
     }
     function createPanel() {
-      if (!isTargetPage()) return null;
+      if (!isTargetPage2()) return null;
       let panel = document2.getElementById(PANEL_ID2);
       if (panel) return panel;
       panel = document2.createElement("div");
@@ -3808,7 +3875,7 @@
     let generation = 0;
     let scanTimer = null;
     let targetActive = false;
-    const isTargetPage = () => /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i.test(location.hash);
+    const isTargetPage2 = () => /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i.test(location.hash);
     const table = createCandidateTableIntegration({
       document,
       headerAttribute: HEADER_ATTRIBUTE,
@@ -3818,7 +3885,7 @@
     const getState = () => ({ cache, queue, processing, activeCandidateId });
     const ui = createCandidateUi({
       document,
-      isTargetPage,
+      isTargetPage: isTargetPage2,
       table,
       getState,
       refreshVisibleCandidates,
@@ -3865,7 +3932,7 @@
       queuedIds.add(candidateId);
     }
     function scanTable() {
-      if (!isTargetPage()) return;
+      if (!isTargetPage2()) return;
       ui.addStyles();
       ui.createPanel();
       table.ensureHeader();
@@ -3896,12 +3963,12 @@
       ui.updatePanelStatus();
     }
     async function processQueue() {
-      if (processing || stopRequested || !isTargetPage()) return;
+      if (processing || stopRequested || !isTargetPage2()) return;
       processing = true;
       const currentGeneration = generation;
       processingGeneration = currentGeneration;
       try {
-        while (queue.length && !stopRequested && isTargetPage() && currentGeneration === generation) {
+        while (queue.length && !stopRequested && isTargetPage2() && currentGeneration === generation) {
           const item = queue.shift();
           queuedIds.delete(item.id);
           activeCandidateId = item.id;
@@ -3930,12 +3997,12 @@
           processing = false;
           processingGeneration = null;
           ui.updatePanelStatus(stopRequested ? "Laden gestoppt" : "Fertig");
-          if (queue.length && !stopRequested && isTargetPage()) runtime.setTimeout(processQueue, 0);
+          if (queue.length && !stopRequested && isTargetPage2()) runtime.setTimeout(processQueue, 0);
         }
       }
     }
     function refreshVisibleCandidates() {
-      if (!isTargetPage()) return;
+      if (!isTargetPage2()) return;
       generation++;
       stopRequested = false;
       activeCandidateId = null;
@@ -3982,7 +4049,7 @@
     function scheduleScan() {
       runtime.clearTimeout(scanTimer);
       scanTimer = runtime.setTimeout(() => {
-        if (isTargetPage()) {
+        if (isTargetPage2()) {
           if (!targetActive) {
             targetActive = true;
             stopRequested = false;
@@ -3995,13 +4062,13 @@
       }, 150);
     }
     const observer = runtime.createMutationObserver(() => {
-      if (isTargetPage()) scheduleScan();
+      if (isTargetPage2()) scheduleScan();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleScan);
     runtime.addWindowListener("popstate", scheduleScan);
     runtime.setInterval(() => {
-      if (isTargetPage()) scanTable();
+      if (isTargetPage2()) scanTable();
     }, 1500);
     scheduleScan();
   }
@@ -4362,6 +4429,859 @@
     });
   }
 
+  // ../../shared/js/admin-panel-reload.js
+  var ADMIN_PANEL_RELOAD_SELECTOR = 'header button[aria-label="Neu laden"]';
+  function reloadAdminPanel(documentRef = document) {
+    const button = documentRef.querySelector(ADMIN_PANEL_RELOAD_SELECTOR);
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  }
+
+  // ../../shared/js/bulk-match-actions/core.js
+  var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
+  var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
+  items: allInterviews(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
+    id
+    status
+  }
+  total: _allInterviewsMeta(filter: $filter, page: $page, perPage: $perPage) {
+    count
+  }
+}`;
+  var UPDATE_INTERVIEW_MUTATION = `mutation updateInterview($id: UUID, $status: String) {
+  data: updateInterview(id: $id, status: $status) {
+    id
+    matchId
+    status
+  }
+}`;
+  var SUGGESTED_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
+  items: allInterviews(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
+    id
+    status
+    dates
+  }
+  total: _allInterviewsMeta(filter: $filter, page: $page, perPage: $perPage) {
+    count
+  }
+}`;
+  var FORWARD_INTERVIEW_MUTATION = `mutation updateInterview($id: UUID, $status: String, $dates: [DateTime!]) {
+  data: updateInterview(id: $id, status: $status, dates: $dates) {
+    id
+    matchId
+    status
+  }
+}`;
+  function buildStatusMutation(statusField) {
+    return `mutation updateMatch($id: String!, $${statusField}: String) {
+  data: updateMatch(id: $id, ${statusField}: $${statusField}) {
+    id
+    ${statusField}
+    __typename
+  }
+}`;
+  }
+  function buildStatusWithFeedbackMutation(statusField, feedbackField) {
+    return `mutation updateMatch($id: String!, $${statusField}: String, $${feedbackField}: String) {
+  data: updateMatch(id: $id, ${statusField}: $${statusField}, ${feedbackField}: $${feedbackField}) {
+    id
+    ${statusField}
+    ${feedbackField}
+    __typename
+  }
+}`;
+  }
+  function buildFollowUpMutation(followUpField) {
+    return `mutation updateMatch($id: String!, $${followUpField}: Date) {
+  data: updateMatch(id: $id, ${followUpField}: $${followUpField}) {
+    id
+    ${followUpField}
+    __typename
+  }
+}`;
+  }
+  function normalize2(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+  function parseIsoDate(isoDate) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+    if (!match) return null;
+    return { year: match[1], month: match[2], day: match[3] };
+  }
+  function statusClearsWvl(statusValue) {
+    return statusValue === "hired" || statusValue === "out";
+  }
+  function openInterviewIds(items) {
+    return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
+  }
+  function suggestedInterviews(items) {
+    return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
+  }
+  var FORWARDED_CHIP_CLASSES = ["MuiChip-colorInterviewForwarded", "MuiChip-filledInterviewForwarded"];
+  var FORWARDED_CHIP_BACKGROUND = "#b9e5fd";
+  function isSuggestionChip(chip) {
+    if (!chip?.classList?.contains("MuiChip-root")) return false;
+    if ([...chip.classList].some((name) => /^MuiChip-(?:color|filled)InterviewSuggest/i.test(name))) return true;
+    return /^vorschlag$/i.test(String(chip.getAttribute("aria-label") || "").trim());
+  }
+  function markSuggestionChipsForwarded(cell) {
+    if (!cell) return 0;
+    const chips = [...cell.querySelectorAll(".MuiChip-root")].filter(isSuggestionChip);
+    chips.forEach((chip) => {
+      [...chip.classList].filter((name) => /^MuiChip-(?:color|filled)/.test(name)).forEach((name) => chip.classList.remove(name));
+      chip.classList.add(...FORWARDED_CHIP_CLASSES);
+      chip.style.backgroundColor = FORWARDED_CHIP_BACKGROUND;
+      chip.setAttribute("aria-label", "Weitergeleitet");
+      chip.dataset.werkiaForwarded = "true";
+    });
+    return chips.length;
+  }
+  function statusMutationValue(value) {
+    return value || null;
+  }
+  function statusConfirmed(returned, expected) {
+    return (returned ?? "") === (expected ?? "");
+  }
+
+  // ../../shared/js/bulk-match-actions/index.js
+  var ROW_SELECTOR = "tbody tr.RaDataTable-row";
+  var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
+  function executeBulkMatchActions(runtime, sourcePath, config) {
+    runtime.registerSource(sourcePath);
+    const {
+      team,
+      isTargetPage: isTargetPage2,
+      getRequest,
+      ids: IDS3,
+      fields,
+      columns,
+      statusOptions,
+      outFeedbackOptions,
+      resolveOutFeedback,
+      declineInterviewsOnOut = false,
+      nativeOutFeedbackTemplates = null,
+      helpTip = {}
+    } = config;
+    const tip = (key) => helpTip[key]?.() || "";
+    const WVL_CELL_SELECTOR = `td.column-${columns.followUp}`;
+    const INTERVIEW_CELL_SELECTOR = `td.column-${columns.interview}`;
+    const STATUS_MUTATION = buildStatusMutation(fields.status);
+    const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
+    const WVL_MUTATION = buildFollowUpMutation(fields.followUp);
+    let running = false;
+    let cancelRequested = false;
+    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    async function waitFor(find, timeoutMs = 3e3, intervalMs = 50) {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        const result = find();
+        if (result) return result;
+        await sleep(intervalMs);
+      }
+      return null;
+    }
+    function clickLikeUser(element) {
+      const eventOptions = { bubbles: true, cancelable: true, composed: true, button: 0, buttons: 1 };
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerdown", { ...eventOptions, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      }
+      element.dispatchEvent(new MouseEvent("mousedown", eventOptions));
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerup", { ...eventOptions, buttons: 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      }
+      element.dispatchEvent(new MouseEvent("mouseup", { ...eventOptions, buttons: 0 }));
+      element.click();
+    }
+    function visibleOverlay(element) {
+      if (!element) return false;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    }
+    function getRows() {
+      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(WVL_CELL_SELECTOR));
+    }
+    function employerFromRow(row) {
+      const link = row.querySelector(EMPLOYER_LINK_SELECTOR);
+      if (!link) return null;
+      const match = link.href.match(/#\/Employer\/([^/]+)\//i);
+      return {
+        id: match?.[1] || link.href,
+        name: normalize2(link.textContent) || "Unbekannter Arbeitgeber"
+      };
+    }
+    function matchIdFromRow(row) {
+      const link = row.querySelector('a[href*="#/Match/"]');
+      return link?.href.match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
+    }
+    function getEmployerChoices() {
+      const choices = /* @__PURE__ */ new Map();
+      getRows().forEach((row) => {
+        const employer = employerFromRow(row);
+        if (!employer) return;
+        if (!choices.has(employer.id)) choices.set(employer.id, { ...employer, rows: [] });
+        choices.get(employer.id).rows.push(row);
+      });
+      return [...choices.values()];
+    }
+    function injectStyle() {
+      if (document.getElementById(IDS3.style)) return;
+      const style = document.createElement("style");
+      style.id = IDS3.style;
+      style.textContent = `
+      #${IDS3.button}, #${IDS3.statusButton}, #${IDS3.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      #${IDS3.button}:hover, #${IDS3.statusButton}:hover, #${IDS3.forwardButton}:hover { background: #fff3e0; }
+      #${IDS3.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
+      #${IDS3.dialog}::backdrop { background: rgba(0,0,0,.38); }
+      #${IDS3.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
+      #${IDS3.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
+      #${IDS3.dialog} .wkw-body [hidden] { display: none !important; }
+      #${IDS3.dialog} label { display: grid; gap: 5px; font-weight: 700; }
+      #${IDS3.dialog} select, #${IDS3.dialog} input { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      #${IDS3.dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
+      #${IDS3.dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      #${IDS3.dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
+      #${IDS3.dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
+      #${IDS3.dialog} button:disabled { opacity: .55; cursor: wait; }
+      #${IDS3.status}[data-tone="ok"] { color: #18752b; }
+      #${IDS3.status}[data-tone="error"] { color: #b3261e; }
+      #${IDS3.status}[data-tone="busy"] { color: #995000; }
+      #${IDS3.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
+      #${IDS3.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+    `;
+      document.head.appendChild(style);
+    }
+    function setStatus(text, tone = "") {
+      const status2 = document.getElementById(IDS3.status);
+      if (!status2) return;
+      status2.textContent = text;
+      status2.dataset.tone = tone;
+    }
+    function handleCloseOrCancel(dialog) {
+      if (!running) {
+        dialog.close();
+        return;
+      }
+      cancelRequested = true;
+      const stopButton = dialog.querySelector('[data-action="close"]');
+      if (stopButton) {
+        stopButton.disabled = true;
+        stopButton.textContent = "Wird gestoppt …";
+      }
+      setStatus("Stopp angefordert. Die aktuelle Zeile wird noch beendet; weitere Matches bleiben unverändert.", "busy");
+    }
+    function setRunningControls(dialog, isRunning) {
+      dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
+        element.disabled = isRunning;
+      });
+      const stopButton = dialog.querySelector('[data-action="close"]');
+      if (stopButton) {
+        stopButton.disabled = false;
+        stopButton.hidden = false;
+        stopButton.textContent = isRunning ? "Lauf stoppen" : "Abbrechen";
+      }
+    }
+    function finishDialog(dialog) {
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      setRunningControls(dialog, false);
+      applyButton.dataset.completed = "true";
+      applyButton.textContent = "Fertig – schließen";
+      dialog.querySelector('[data-action="close"]').hidden = true;
+      applyButton.focus();
+    }
+    function handleDialogClose(dialog) {
+      if (dialog.dataset.needsReload === "true") {
+        dialog.remove();
+        if (!reloadAdminPanel()) window.alert('Änderung geprüft. Der interne Adminpanel-Button "Neu laden" wurde nicht gefunden.');
+        return;
+      }
+      if (!running) dialog.remove();
+    }
+    function renderDialog() {
+      document.getElementById(IDS3.dialog)?.remove();
+      const choices = getEmployerChoices();
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS3.dialog;
+      dialog.innerHTML = `
+      <div class="wkw-head">${team} WVL gesammelt ändern${tip("wvl")}</div>
+      <form class="wkw-body" method="dialog">
+        <label>Arbeitgeber
+          <select name="employer" required>
+            <option value="__all__">Alle Arbeitgeber (${getRows().length} sichtbare Matches)</option>
+            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
+          </select>
+        </label>
+        <label>Neues ${team}-WVL-Datum
+          <input name="date" type="date">
+        </label>
+        <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Datumsfeld leer lassen, um die ${team} WVL zu entfernen statt sie zu setzen.</div>
+        <div id="${IDS3.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
+        <div class="wkw-actions">
+          <button type="button" data-action="close">Abbrechen</button>
+          <button type="button" data-action="apply">Datum anwenden</button>
+        </div>
+      </form>`;
+      document.body.appendChild(dialog);
+      const dateInput = dialog.querySelector('input[name="date"]');
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      const syncApplyLabel = () => {
+        applyButton.textContent = dateInput.value ? "Datum anwenden" : "Datum entfernen";
+      };
+      dateInput.addEventListener("input", syncApplyLabel);
+      syncApplyLabel();
+      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
+      applyButton.addEventListener("click", (event) => {
+        if (event.currentTarget.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        applyFromDialog(dialog);
+      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
+      dialog.showModal();
+      dateInput.focus();
+    }
+    function renderStatusDialog() {
+      document.getElementById(IDS3.dialog)?.remove();
+      const choices = getEmployerChoices();
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS3.dialog;
+      const outConsequences = [
+        `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
+        declineInterviewsOnOut ? "Bei „Out“ werden offene Terminvorschläge abgelehnt." : "",
+        "Für „Out“ muss ein Grund ausgewählt werden."
+      ].filter(Boolean).join(" ");
+      dialog.innerHTML = `
+      <div class="wkw-head">${team} Status gesammelt ändern${tip("status")}</div>
+      <form class="wkw-body" method="dialog">
+        <label>Arbeitgeber
+          <select name="employer" required>
+            <option value="__all__">Alle sichtbaren Arbeitgeber (${getRows().length} sichtbare Matches)</option>
+            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
+          </select>
+        </label>
+        <label>Neuer ${team} Status
+          <select name="status" required>
+            <option value="__choose__">Bitte auswählen</option>
+            ${statusOptions.map((status2) => `<option value="${status2.value}">${status2.label}</option>`).join("")}
+          </select>
+        </label>
+        <label data-out-feedback hidden>Grund
+          <select name="outFeedback">
+            <option value="__choose__">Bitte auswählen</option>
+            ${outFeedbackOptions.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
+          </select>
+        </label>
+        <label data-out-feedback-text hidden>Eigener Grund
+          <input name="outFeedbackText" type="text" maxlength="200">
+        </label>
+        <div class="wkw-note">Standardmäßig werden alle aktuell sichtbaren Matches aller Arbeitgeber geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. ${outConsequences}</div>
+        <div id="${IDS3.status}">Bitte Arbeitgeber und ${team} Status prüfen.</div>
+        <div class="wkw-actions">
+          <button type="button" data-action="close">Abbrechen</button>
+          <button type="button" data-action="apply">Status anwenden</button>
+        </div>
+      </form>`;
+      document.body.appendChild(dialog);
+      const statusSelect = dialog.querySelector('[name="status"]');
+      const reasonLabel = dialog.querySelector("[data-out-feedback]");
+      const reasonSelect = dialog.querySelector('[name="outFeedback"]');
+      const reasonTextLabel = dialog.querySelector("[data-out-feedback-text]");
+      const reasonText = dialog.querySelector('[name="outFeedbackText"]');
+      const syncOutFeedback = () => {
+        const isOut = statusSelect.value === "out";
+        reasonLabel.hidden = !isOut;
+        reasonSelect.required = isOut;
+        const needsText = isOut && Boolean(outFeedbackOptions.find((reason) => reason.value === reasonSelect.value)?.freeText);
+        reasonTextLabel.hidden = !needsText;
+        reasonText.required = needsText;
+      };
+      statusSelect.addEventListener("change", syncOutFeedback);
+      reasonSelect.addEventListener("change", syncOutFeedback);
+      syncOutFeedback();
+      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
+      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
+        if (event.currentTarget.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        applyStatusFromDialog(dialog);
+      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
+      dialog.showModal();
+      statusSelect.focus();
+    }
+    function renderForwardDialog() {
+      document.getElementById(IDS3.dialog)?.remove();
+      const choices = getEmployerChoices();
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS3.dialog;
+      dialog.innerHTML = `
+      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten${tip("forward")}</div>
+      <form class="wkw-body" method="dialog">
+        <label>Arbeitgeber
+          <select name="employer" required>
+            <option value="__all__">Alle sichtbaren Arbeitgeber (${getRows().length} sichtbare Matches)</option>
+            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
+          </select>
+        </label>
+        <div class="wkw-note">Alle Terminvorschläge mit Status „Vorschlag“ der ausgewählten sichtbaren Matches werden auf „Weitergeleitet“ gesetzt, wie mit dem Button „Weiterleiten“ im Termindialog. Vor dem Weiterleiten wird die genaue Anzahl angezeigt.</div>
+        <div id="${IDS3.status}">Bitte Arbeitgeber prüfen.</div>
+        <div class="wkw-actions">
+          <button type="button" data-action="close">Abbrechen</button>
+          <button type="button" data-action="apply">Weiterleiten</button>
+        </div>
+      </form>`;
+      document.body.appendChild(dialog);
+      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
+      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
+        if (event.currentTarget.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        applyForwardFromDialog(dialog);
+      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
+      dialog.showModal();
+      dialog.querySelector('[name="employer"]').focus();
+    }
+    function visibleOutFeedbackDialogs() {
+      return [...document.querySelectorAll('[role="dialog"]')].filter((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]'));
+    }
+    function setControlledInputValue(input, value) {
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      if (setter) setter.call(input, value);
+      else input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    async function applyNativeOutFeedback(dialog, reason) {
+      const radio = dialog.querySelector(`input[name="feedback"][value="${reason.nativeValue}"]`);
+      if (!radio) throw new Error(`Option „${reason.nativeValue}“ wurde im Out-Dialog nicht gefunden`);
+      clickLikeUser(radio);
+      if (!reason.customFeedback) return;
+      const customInput = await waitFor(
+        () => dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]'),
+        3e3,
+        75
+      );
+      if (!customInput) throw new Error("Textfeld für „Anderes“ wurde nicht gefunden");
+      setControlledInputValue(customInput, reason.customFeedback);
+      customInput.dispatchEvent(new Event("blur", { bubbles: true }));
+    }
+    function installNativeOutFeedbackDropdown(dialog) {
+      if (dialog.querySelector(`#${IDS3.feedbackShortcuts}`)) return;
+      const customInput = dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]');
+      const othersRadio = dialog.querySelector('input[name="feedback"][value="others"]');
+      const anchor = customInput?.closest(".MuiFormControl-root") || customInput?.parentElement || othersRadio?.closest("label") || othersRadio?.parentElement;
+      if (!anchor) return;
+      const shortcuts = document.createElement("label");
+      shortcuts.id = IDS3.feedbackShortcuts;
+      shortcuts.innerHTML = `<span style="display:inline-flex;align-items:center;">${team}-Feedback${tip("outFeedback")}</span>
+      <select name="werkia${team[0]}${team.slice(1).toLowerCase()}OutFeedback">
+        <option value="">Bitte auswählen</option>
+        ${nativeOutFeedbackTemplates.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
+      </select>`;
+      anchor.insertAdjacentElement("afterend", shortcuts);
+      const select = shortcuts.querySelector("select");
+      select.addEventListener("change", () => {
+        const reason = nativeOutFeedbackTemplates.find((option) => option.value === select.value);
+        if (!reason) return;
+        applyNativeOutFeedback(dialog, reason).catch((error) => {
+          console.warn(`[${team} Out-Feedback] Schnellauswahl konnte nicht übernommen werden:`, error);
+          select.value = "";
+        });
+      });
+    }
+    async function updateMatchStatus(matchId, targetStatus, feedback) {
+      const request = getRequest();
+      const value = statusMutationValue(targetStatus.value);
+      const mutation = feedback ? STATUS_WITH_FEEDBACK_MUTATION : STATUS_MUTATION;
+      const variables = feedback ? { id: matchId, [fields.status]: value, [fields.feedback]: feedback } : { id: matchId, [fields.status]: value };
+      const result = await request(mutation, variables);
+      const match = result?.data;
+      if (match?.id !== matchId || !statusConfirmed(match[fields.status], value)) {
+        throw new Error(`${team} Status wurde nicht auf „${targetStatus.label}“ bestätigt`);
+      }
+    }
+    async function updateMatchFollowUpDate(matchId, isoDateOrNull) {
+      const request = getRequest();
+      const result = await request(WVL_MUTATION, { id: matchId, [fields.followUp]: isoDateOrNull });
+      const match = result?.data;
+      if (match?.id !== matchId || match[fields.followUp] !== isoDateOrNull) {
+        throw new Error(`${team} WVL wurde nicht bestätigt`);
+      }
+    }
+    async function openInterviewIdsForMatch(matchId) {
+      const request = getRequest();
+      const perPage = 100;
+      const interviewIds = [];
+      let page = 0;
+      let total = Infinity;
+      while (interviewIds.length < total) {
+        const result = await request(ALL_INTERVIEWS_QUERY, {
+          filter: { matchId, statuses: OPEN_INTERVIEW_STATUSES },
+          page,
+          perPage,
+          sortField: "status",
+          sortOrder: "ASC"
+        });
+        const items = result?.items || [];
+        interviewIds.push(...openInterviewIds(items));
+        total = Number(result?.total?.count) || 0;
+        if (!items.length || items.length < perPage) break;
+        page += 1;
+      }
+      return interviewIds;
+    }
+    async function declineOpenInterviewsForMatch(matchId) {
+      const request = getRequest();
+      const interviewIds = await openInterviewIdsForMatch(matchId);
+      let declined = 0;
+      for (const interviewId of interviewIds) {
+        if (cancelRequested) break;
+        const result = await request(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
+        const interview = result?.data;
+        if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
+          throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
+        }
+        declined += 1;
+      }
+      return declined;
+    }
+    async function suggestedInterviewsForMatch(matchId) {
+      const request = getRequest();
+      const perPage = 100;
+      const interviews = [];
+      let page = 0;
+      let total = Infinity;
+      let loaded = 0;
+      while (loaded < total) {
+        const result = await request(SUGGESTED_INTERVIEWS_QUERY, {
+          filter: { matchId, statuses: ["suggestion"] },
+          page,
+          perPage,
+          sortField: "status",
+          sortOrder: "ASC"
+        });
+        const items = result?.items || [];
+        loaded += items.length;
+        interviews.push(...suggestedInterviews(items));
+        total = Number(result?.total?.count) || 0;
+        if (!items.length || items.length < perPage) break;
+        page += 1;
+      }
+      return interviews;
+    }
+    function markRowForwarded(matchId) {
+      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markSuggestionChipsForwarded(row.querySelector(INTERVIEW_CELL_SELECTOR)));
+    }
+    async function forwardInterview(matchId, interview) {
+      const request = getRequest();
+      const result = await request(FORWARD_INTERVIEW_MUTATION, { id: interview.id, status: "forwarded", dates: interview.dates });
+      const updated = result?.data;
+      if (updated?.id !== interview.id || updated.status !== "forwarded" || updated.matchId !== matchId) {
+        throw new Error(`Terminvorschlag ${interview.id} wurde nicht als weitergeleitet bestätigt`);
+      }
+    }
+    async function applyForwardFromDialog(dialog) {
+      if (running) return;
+      const employerId = dialog.querySelector('[name="employer"]').value;
+      const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
+      if (!choice?.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
+      running = true;
+      cancelRequested = false;
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      applyButton.dataset.completed = "false";
+      setRunningControls(dialog, true);
+      const matchIds = [...new Set(choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean))];
+      const queue = [];
+      const failures = [];
+      for (let index = 0; index < matchIds.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Lade Terminvorschläge ${index + 1} von ${matchIds.length} …`, "busy");
+        try {
+          (await suggestedInterviewsForMatch(matchIds[index])).forEach((interview) => queue.push({ matchId: matchIds[index], interview }));
+        } catch (error) {
+          failures.push(`Laden ${index + 1}: ${error.message}`);
+        }
+      }
+      if (cancelRequested) {
+        running = false;
+        setStatus("Lauf gestoppt, bevor etwas weitergeleitet wurde.", "busy");
+        return finishDialog(dialog);
+      }
+      if (!queue.length) {
+        running = false;
+        setStatus(failures.length ? `Keine Vorschläge weitergeleitet, ${failures.length} Matches nicht ladbar. ${failures.slice(0, 3).join(" | ")}` : "Keine Terminvorschläge mit Status „Vorschlag“ gefunden.", failures.length ? "error" : "ok");
+        return finishDialog(dialog);
+      }
+      const matchCount = new Set(queue.map((item) => item.matchId)).size;
+      const scopeText = employerId === "__all__" ? "aller sichtbaren Arbeitgeber" : `von „${choice.name}“`;
+      const failureText = failures.length ? ` (${failures.length} Matches konnten nicht geladen werden und bleiben unverändert.)` : "";
+      if (!window.confirm(`${queue.length} Terminvorschläge aus ${matchCount} Matches ${scopeText} weiterleiten?${failureText}`)) {
+        running = false;
+        setRunningControls(dialog, false);
+        return setStatus("Nichts weitergeleitet.", "");
+      }
+      let forwarded = 0;
+      const pendingByMatch = /* @__PURE__ */ new Map();
+      queue.forEach((item) => pendingByMatch.set(item.matchId, (pendingByMatch.get(item.matchId) || 0) + 1));
+      for (let index = 0; index < queue.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Leite weiter ${index + 1} von ${queue.length} …`, "busy");
+        try {
+          await forwardInterview(queue[index].matchId, queue[index].interview);
+          forwarded += 1;
+          const remaining = pendingByMatch.get(queue[index].matchId) - 1;
+          pendingByMatch.set(queue[index].matchId, remaining);
+          if (remaining === 0) markRowForwarded(queue[index].matchId);
+        } catch (error) {
+          failures.push(`${index + 1}: ${error.message}`);
+        }
+      }
+      running = false;
+      if (cancelRequested) {
+        setStatus(`Lauf gestoppt: ${forwarded} weitergeleitet${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Vorschläge blieben unverändert.`, "busy");
+      } else if (failures.length) {
+        setStatus(`${forwarded} weitergeleitet, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else {
+        setStatus(`${forwarded} Terminvorschläge erfolgreich weitergeleitet.`, "ok");
+      }
+      finishDialog(dialog);
+    }
+    async function applyStatusFromDialog(dialog) {
+      if (running) return;
+      const employerId = dialog.querySelector('[name="employer"]').value;
+      const targetValue = dialog.querySelector('[name="status"]').value;
+      const targetStatus = statusOptions.find((status2) => status2.value === targetValue);
+      const outFeedbackValue = dialog.querySelector('[name="outFeedback"]').value;
+      const outFeedback = outFeedbackOptions.find((reason) => reason.value === outFeedbackValue);
+      const outFeedbackText = normalize2(dialog.querySelector('[name="outFeedbackText"]').value);
+      const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
+      if (!choice?.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
+      if (!targetStatus || targetValue === "__choose__") return setStatus(`Bitte einen ${team} Status auswählen.`, "error");
+      const isOut = targetStatus.value === "out";
+      if (isOut && (!outFeedback || outFeedbackValue === "__choose__")) {
+        return setStatus(`Bitte einen Grund für den ${team} Status „Out“ auswählen.`, "error");
+      }
+      if (isOut && outFeedback.freeText && !outFeedbackText) {
+        return setStatus("Bitte den eigenen Grund eintragen.", "error");
+      }
+      const declinesInterviews = isOut && declineInterviewsOnOut;
+      const clearsWvl = statusClearsWvl(targetStatus.value);
+      const cleanupText = clearsWvl ? ` Die ${team} WVL dieser Matches wird ebenfalls gelöscht.` : "";
+      const interviewText = declinesInterviews ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
+      const employerCount = new Set(choice.rows.map((row) => employerFromRow(row)?.id).filter(Boolean)).size;
+      const scopeText = employerId === "__all__" ? `${choice.rows.length} sichtbare Matches von ${employerCount} Arbeitgebern` : `${choice.rows.length} sichtbare Matches von „${choice.name}“`;
+      const reasonLabel = isOut ? outFeedback.freeText ? outFeedbackText : outFeedback.label : "";
+      const reasonText = isOut ? ` Grund: „${reasonLabel}“.` : "";
+      if (!window.confirm(`${scopeText} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
+      running = true;
+      cancelRequested = false;
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      applyButton.dataset.completed = "false";
+      setRunningControls(dialog, true);
+      let changed = 0;
+      let declinedInterviews = 0;
+      const failures = [];
+      const feedback = isOut ? resolveOutFeedback(outFeedback, outFeedbackText) : null;
+      const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
+      for (let index = 0; index < queue.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Ändere Status ${index + 1} von ${queue.length} …`, "busy");
+        try {
+          await updateMatchStatus(queue[index], targetStatus, feedback);
+          if (clearsWvl) await updateMatchFollowUpDate(queue[index], null);
+          if (declinesInterviews) {
+            setStatus(`Lehne Terminvorschläge ${index + 1} von ${queue.length} ab …`, "busy");
+            declinedInterviews += await declineOpenInterviewsForMatch(queue[index]);
+          }
+          changed += 1;
+        } catch (error) {
+          failures.push(`${index + 1}: ${error.message}`);
+        }
+      }
+      running = false;
+      if (changed > 0) dialog.dataset.needsReload = "true";
+      if (cancelRequested) {
+        setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Matches blieben unverändert.`, "busy");
+      } else if (failures.length) {
+        setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else {
+        const interviewSummary = declinesInterviews ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : "";
+        setStatus(`${changed} ${team}-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${interviewSummary}`, "ok");
+      }
+      finishDialog(dialog);
+    }
+    async function applyFromDialog(dialog) {
+      if (running) return;
+      const employerId = dialog.querySelector('[name="employer"]').value;
+      const isoDate = dialog.querySelector('[name="date"]').value;
+      const clearing = !isoDate;
+      const date = clearing ? null : parseIsoDate(isoDate);
+      const choice = employerId === "__all__" ? { id: "__all__", name: "Alle Arbeitgeber", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
+      if (!choice || !choice.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
+      if (!clearing && !date) return setStatus("Bitte ein gültiges Datum auswählen oder das Feld leer lassen.", "error");
+      const formatted = date ? `${date.day}.${date.month}.${date.year}` : "";
+      const confirmText = clearing ? `${choice.rows.length} sichtbare Matches von „${choice.name}“ die ${team} WVL entfernen?` : `${choice.rows.length} sichtbare Matches von „${choice.name}“ auf ${formatted} setzen?`;
+      if (!window.confirm(confirmText)) return;
+      running = true;
+      cancelRequested = false;
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      applyButton.dataset.completed = "false";
+      applyButton.textContent = clearing ? "Datum entfernen" : "Datum anwenden";
+      setRunningControls(dialog, true);
+      let changed = 0;
+      const failures = [];
+      const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
+      for (let index = 0; index < queue.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Ändere ${index + 1} von ${queue.length} …`, "busy");
+        try {
+          await updateMatchFollowUpDate(queue[index], isoDate || null);
+          changed += 1;
+        } catch (error) {
+          failures.push(`${index + 1}: ${error.message}`);
+        }
+      }
+      running = false;
+      if (changed > 0) dialog.dataset.needsReload = "true";
+      if (cancelRequested) {
+        setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Matches blieben unverändert.`, "busy");
+      } else if (failures.length) {
+        setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else if (clearing) {
+        setStatus(`${changed} ${team}-WVL-Daten erfolgreich entfernt.`, "ok");
+      } else {
+        setStatus(`${changed} ${team}-WVL-Daten erfolgreich auf ${formatted} gesetzt.`, "ok");
+      }
+      finishDialog(dialog);
+    }
+    function installButton(header, id, label2, title, render) {
+      if (!header || header.querySelector(`#${id}`)) return;
+      const button = document.createElement("button");
+      button.id = id;
+      button.type = "button";
+      button.textContent = label2;
+      button.title = title;
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
+        render();
+      });
+      header.appendChild(button);
+    }
+    function installHeaderButtons() {
+      if (!isTargetPage2()) return;
+      injectStyle();
+      installButton(
+        document.querySelector(`th.column-${columns.followUp}`),
+        IDS3.button,
+        "Alle ändern",
+        `${team}-WVL-Datum für alle sichtbaren Matches eines Arbeitgebers ändern`,
+        renderDialog
+      );
+      installButton(
+        document.querySelector(`th.column-${columns.status}`),
+        IDS3.statusButton,
+        "Alle ändern",
+        `${team} Status für alle sichtbaren Matches eines Arbeitgebers ändern`,
+        renderStatusDialog
+      );
+      installButton(
+        document.querySelector(`th.column-${columns.interview}`),
+        IDS3.forwardButton,
+        "Alle weiterleiten",
+        "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten",
+        renderForwardDialog
+      );
+    }
+    let scheduled = false;
+    const scheduleInstall = () => {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        if (!isTargetPage2()) {
+          document.getElementById(IDS3.dialog)?.remove();
+          return;
+        }
+        installHeaderButtons();
+        if (nativeOutFeedbackTemplates?.length) visibleOutFeedbackDialogs().forEach(installNativeOutFeedbackDropdown);
+      }, 150);
+    };
+    runtime.createMutationObserver(scheduleInstall).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleInstall);
+    scheduleInstall();
+  }
+
+  // src/features/bulk-match-actions.js
+  var IDS = {
+    button: "werkia-cem-wvl-bulk-button",
+    statusButton: "werkia-cem-status-bulk-button",
+    forwardButton: "werkia-cem-interview-forward-bulk-button",
+    dialog: "werkia-cem-bulk-dialog",
+    style: "werkia-cem-bulk-style",
+    status: "werkia-cem-bulk-status",
+    feedbackShortcuts: "werkia-cem-out-feedback-shortcuts"
+  };
+  var CEM_STATUS_OPTIONS = [
+    { value: "", label: "Leer" },
+    { value: "onboarding", label: "Onboarding" },
+    { value: "confirm_appointment", label: "Terminbestätigung" },
+    { value: "reminder_appointment", label: "Terminerinnerung" },
+    { value: "feedback_appointment", label: "VT/HT Feedback" },
+    { value: "hot_case", label: "Hot Case" },
+    { value: "hot_hot_case", label: "Hot Hot Case" },
+    { value: "out", label: "Out" },
+    { value: "hired", label: "Hired" },
+    { value: "interview_conducted", label: "Termin Stattgefunden" }
+  ];
+  var CEM_OUT_FEEDBACK_OPTIONS = [
+    { value: "candidate_not_responsive", label: "BEW nicht responsive" },
+    { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG" },
+    { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW" },
+    { value: "stays_with_current_employer", label: "BEW bleibt beim aktuellen AG" },
+    { value: "found_privately", label: "Privat etwas gefunden" },
+    { value: "hired_by_partner", label: "Hired bei Partner" },
+    { value: "distance_too_far", label: "Entfernung zu weit" },
+    { value: "technical_error", label: "Technischer Fehler" },
+    { value: "salary_too_low", label: "Gehalt zu gering" },
+    { value: "desired_position_not_available", label: "Wunschposition nicht verfügbar" },
+    { value: "others", label: "Anderes", freeText: true }
+  ];
+  function isTargetPage(hash = location.hash) {
+    return /#\/CEM\/My(?:Cem)?Matches(?:[/?]|$)/i.test(hash);
+  }
+  function resolveCemOutFeedback(reason, freeText) {
+    if (!reason) return "";
+    return reason.freeText ? String(freeText || "").trim() : reason.value;
+  }
+  function executeBulkMatchActions2(runtime) {
+    executeBulkMatchActions(runtime, "cem/toolbox/src/features/bulk-match-actions.js", {
+      team: "CEM",
+      isTargetPage,
+      getRequest: () => getCemGraphqlAdapter().request,
+      ids: IDS,
+      fields: { status: "cemStatus", feedback: "cemFeedback", followUp: "cemFollowUpDate" },
+      columns: { status: "cemStatus", followUp: "cemFollowUpDate", interview: "matchInterview" },
+      statusOptions: CEM_STATUS_OPTIONS,
+      outFeedbackOptions: CEM_OUT_FEEDBACK_OPTIONS,
+      resolveOutFeedback: resolveCemOutFeedback,
+      declineInterviewsOnOut: true,
+      nativeOutFeedbackTemplates: null,
+      helpTip: {
+        wvl: () => cemHelp.tipHtml("bulk-wvl", { tone: "dark" }),
+        status: () => cemHelp.tipHtml("bulk-status", { tone: "dark" }),
+        forward: () => cemHelp.tipHtml("bulk-forward", { tone: "dark" })
+      }
+    });
+  }
+
   // ../../shared/js/list-filter-presets/core.js
   var STORAGE_KEY = "werkia_list_filter_presets_v1";
   var STORE_VERSION = 1;
@@ -4518,7 +5438,7 @@
   }
 
   // ../../shared/js/list-filter-presets/index.js
-  var IDS = {
+  var IDS2 = {
     bar: "werkia-filter-presets-bar",
     select: "werkia-filter-presets-select",
     style: "werkia-filter-presets-style",
@@ -4561,33 +5481,33 @@
       const element = document.getElementById(id);
       return element?.dataset.werkiaPresetsOwner === owner ? element : null;
     };
-    const isTargetPage = () => isTargetRoute(location.hash, routes);
+    const isTargetPage2 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
     function ensureStyle() {
-      if (document.getElementById(IDS.style)) return;
+      if (document.getElementById(IDS2.style)) return;
       const style = document.createElement("style");
-      style.id = IDS.style;
+      style.id = IDS2.style;
       style.textContent = `
-      #${IDS.bar} { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 10px; padding:8px 10px; border:1px solid #d7dae6; border-radius:8px; background:#f7f8fc; font:400 13px/1.3 Arial,sans-serif; }
-      #${IDS.bar} > strong { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#5a6178; }
-      #${IDS.select} { min-width:230px; height:30px; padding:4px 8px; border:1px solid #c8ccdd; border-radius:6px; background:#fff; color:#1f2933; font:400 13px/1.3 Arial,sans-serif; }
-      #${IDS.bar} button { min-height:30px; padding:5px 10px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
-      #${IDS.bar} button:hover { background:#3643c7; }
-      #${IDS.bar} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
-      #${IDS.bar} button.werkia-filter-presets-secondary:hover { background:#d7dbf0; }
-      #${IDS.dialog} { position:fixed; inset:0; z-index:2147483000; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.45); }
-      #${IDS.dialog} .werkia-filter-presets-card { width:min(600px,92vw); max-height:82vh; overflow:auto; padding:18px; border-radius:10px; background:#fff; font:400 13px/1.4 Arial,sans-serif; }
-      #${IDS.dialog} h2 { margin:0 0 12px; font-size:15px; }
-      #${IDS.dialog} p { margin:0 0 10px; color:#6b7280; font-size:12px; }
-      #${IDS.dialog} ul { margin:0 0 14px; padding:0; list-style:none; }
-      #${IDS.dialog} li { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #eceef6; }
-      #${IDS.dialog} .werkia-filter-presets-name { flex:1; font-weight:700; }
-      #${IDS.dialog} .werkia-filter-presets-fields { flex:1; color:#6b7280; font-size:11px; }
-      #${IDS.dialog} textarea { width:100%; min-height:120px; margin-bottom:10px; padding:8px; border:1px solid #c8ccdd; border-radius:6px; font:400 12px/1.4 monospace; }
-      #${IDS.dialog} button { min-height:28px; padding:5px 10px; margin-right:6px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
-      #${IDS.dialog} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
-      #${IDS.dialog} button.werkia-filter-presets-danger { background:#f8d7da; color:#a02334; }
+      #${IDS2.bar} { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 10px; padding:8px 10px; border:1px solid #d7dae6; border-radius:8px; background:#f7f8fc; font:400 13px/1.3 Arial,sans-serif; }
+      #${IDS2.bar} > strong { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#5a6178; }
+      #${IDS2.select} { min-width:230px; height:30px; padding:4px 8px; border:1px solid #c8ccdd; border-radius:6px; background:#fff; color:#1f2933; font:400 13px/1.3 Arial,sans-serif; }
+      #${IDS2.bar} button { min-height:30px; padding:5px 10px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+      #${IDS2.bar} button:hover { background:#3643c7; }
+      #${IDS2.bar} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
+      #${IDS2.bar} button.werkia-filter-presets-secondary:hover { background:#d7dbf0; }
+      #${IDS2.dialog} { position:fixed; inset:0; z-index:2147483000; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.45); }
+      #${IDS2.dialog} .werkia-filter-presets-card { width:min(600px,92vw); max-height:82vh; overflow:auto; padding:18px; border-radius:10px; background:#fff; font:400 13px/1.4 Arial,sans-serif; }
+      #${IDS2.dialog} h2 { margin:0 0 12px; font-size:15px; }
+      #${IDS2.dialog} p { margin:0 0 10px; color:#6b7280; font-size:12px; }
+      #${IDS2.dialog} ul { margin:0 0 14px; padding:0; list-style:none; }
+      #${IDS2.dialog} li { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #eceef6; }
+      #${IDS2.dialog} .werkia-filter-presets-name { flex:1; font-weight:700; }
+      #${IDS2.dialog} .werkia-filter-presets-fields { flex:1; color:#6b7280; font-size:11px; }
+      #${IDS2.dialog} textarea { width:100%; min-height:120px; margin-bottom:10px; padding:8px; border:1px solid #c8ccdd; border-radius:6px; font:400 12px/1.4 monospace; }
+      #${IDS2.dialog} button { min-height:28px; padding:5px 10px; margin-right:6px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+      #${IDS2.dialog} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
+      #${IDS2.dialog} button.werkia-filter-presets-danger { background:#f8d7da; color:#a02334; }
     `;
       document.head.appendChild(style);
     }
@@ -4603,13 +5523,13 @@
       render();
     }
     function closeDialog() {
-      ownElement(IDS.dialog)?.remove();
+      ownElement(IDS2.dialog)?.remove();
     }
     function renderManager() {
       closeDialog();
       const route = currentRoute();
       const overlay = document.createElement("div");
-      overlay.id = IDS.dialog;
+      overlay.id = IDS2.dialog;
       overlay.dataset.werkiaPresetsOwner = owner;
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) closeDialog();
@@ -4687,12 +5607,12 @@
     }
     function buildBar() {
       const bar = document.createElement("div");
-      bar.id = IDS.bar;
+      bar.id = IDS2.bar;
       bar.dataset.werkiaPresetsOwner = owner;
       const title = document.createElement("strong");
       title.textContent = label2;
       const select = document.createElement("select");
-      select.id = IDS.select;
+      select.id = IDS2.select;
       select.addEventListener("change", () => {
         const preset = [...builtInPresets, ...ownPresets()].find((entry) => entry.id === select.value);
         if (preset) applyPreset(preset);
@@ -4750,13 +5670,13 @@
       select.value = active;
     }
     function render() {
-      if (!isTargetPage()) {
-        ownElement(IDS.bar)?.remove();
+      if (!isTargetPage2()) {
+        ownElement(IDS2.bar)?.remove();
         closeDialog();
         return;
       }
       ensureStyle();
-      let bar = document.getElementById(IDS.bar);
+      let bar = document.getElementById(IDS2.bar);
       if (bar && bar.dataset.werkiaPresetsOwner !== owner) return;
       if (!bar) {
         const anchor = findListAnchor(document);
@@ -4764,7 +5684,7 @@
         bar = buildBar();
         anchor.parentElement.insertBefore(bar, anchor);
       }
-      fillSelect(bar.querySelector(`#${IDS.select}`));
+      fillSelect(bar.querySelector(`#${IDS2.select}`));
     }
     let scheduled = false;
     const scheduleRender = () => {
@@ -4781,7 +5701,7 @@
   }
 
   // src/features/filter-presets.js
-  var CEM_ROUTES = ["CEM/MyMatches"];
+  var CEM_ROUTES = ["CEM/MyCemMatches", "CEM/MyMatches"];
   var CEM_BUILT_IN_PRESETS = [];
   function executeFilterPresets(runtime) {
     executeListFilterPresets(runtime, {
@@ -5090,7 +6010,7 @@
 
   // ../../shared/js/no-go-check/index.js
   var POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
-  var ROW_SELECTOR = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var ROW_SELECTOR2 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
   var LEVEL_STYLES = {
     direct: { badge: "border:2px solid #450a0a;background:#7f1d1d;color:#fff;", accent: "#7f1d1d", tint: "#f7dcdc" },
     group: { badge: "border:2px solid #7f1d1d;background:#b91c1c;color:#fff;", accent: "#b91c1c", tint: "#fae3e3" },
@@ -5193,7 +6113,7 @@
         loadCandidateNoGos(candidateId);
         return;
       }
-      const rows = [...document.querySelectorAll(ROW_SELECTOR)];
+      const rows = [...document.querySelectorAll(ROW_SELECTOR2)];
       if (!noGos.length) {
         rows.forEach(clearRow);
         return;
@@ -5251,6 +6171,7 @@
   bootstrapToolbox({ label: "CEM", marker: "data-werkia-cem-toolbox-loaded" }, [
     // First: installs the delegated ?-button handling the features below use.
     { id: "toolbox-help", execute: executeToolboxHelp },
+    { id: "cem-bulk-match-actions", execute: executeBulkMatchActions2 },
     { id: "cem-ofm-contact-badges", execute: executeCemOfmContactBadges },
     { id: "cem-ofm-reverse-match-kam-status", execute: executeReverseMatchKamStatus },
     { id: "cem-ofm-company-flag", execute: executeCompanyFlag },

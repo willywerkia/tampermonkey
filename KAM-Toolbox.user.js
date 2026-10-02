@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.3.90
+// @version      1.3.91
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1516,7 +1516,9 @@
     potentialMatches: /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i,
     createOfflineMatch: /^#\/CreateOfflineMatch(?:[/?]|$)/i,
     kamMyMatches: /#\/KAM\/MyMatches(?:[/?]|$)/i,
-    cemMyMatches: /#\/CEM\/MyMatches(?:[/?]|$)/i,
+    // Das AP fuehrt "CEM › Meine Matches" seit spaetestens 2026-10-02 unter
+    // #/CEM/MyCemMatches; #/CEM/MyMatches bleibt fuer alte Links erkannt.
+    cemMyMatches: /#\/CEM\/My(?:Cem)?Matches(?:[/?]|$)/i,
     cemMyCandidates: /#\/CEM\/MyCandidates(?:[/?]|$)/i,
     obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
     employer: /^#\/Employer\/[^/?]+/i,
@@ -1544,6 +1546,66 @@
         "Vorlagen liegen nur in deinem Browser und bleiben bei Toolbox-Updates erhalten. Kolleg:innen sehen sie nicht.",
         "„Verwalten“ zum Umbenennen und Löschen. Zum Übertragen auf einen anderen Rechner den Text dort kopieren und im anderen Browser mit „Aus Textfeld importieren“ einfügen. Der Import ergänzt nur und überschreibt nichts.",
         "„Filter zurücksetzen“ leert nur den Filter der Ansicht. Deine Vorlagen bleiben."
+      ]
+    };
+  }
+  function bulkWvlTopic({ team, page, routes }) {
+    return {
+      id: "bulk-wvl",
+      title: `${team} WVL gesammelt ändern`,
+      page,
+      routes,
+      kind: "write",
+      summary: `„Alle ändern“ im Spaltenkopf ${team} WVL setzt oder entfernt das Wiedervorlagedatum für viele Matches auf einmal.`,
+      steps: [
+        "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
+        "„Alle ändern“ klicken, einen Arbeitgeber wählen oder alle sichtbaren lassen, dann ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
+      ],
+      notes: [
+        "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
+      ]
+    };
+  }
+  function bulkStatusTopic({ team, page, routes, declinesInterviews = false }) {
+    return {
+      id: "bulk-status",
+      title: `${team} Status gesammelt ändern`,
+      page,
+      routes,
+      kind: "write",
+      summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        `Den neuen ${team} Status wählen. Bei „Out“ ist ein Grund Pflicht.`,
+        "Die Rückfrage prüfen und bestätigen."
+      ],
+      notes: [
+        `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
+        declinesInterviews ? "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt." : "",
+        "Betroffen sind nur die aktuell sichtbaren Zeilen.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert."
+      ].filter(Boolean)
+    };
+  }
+  function bulkForwardTopic({ page, routes }) {
+    return {
+      id: "bulk-forward",
+      title: "Terminvorschläge gesammelt weiterleiten",
+      page,
+      routes,
+      kind: "write",
+      summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
+      ],
+      notes: [
+        "Termine mit einem anderen Status bleiben unberührt.",
+        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Weitergeleitete Termine werden sofort blau eingefärbt."
       ]
     };
   }
@@ -1622,60 +1684,9 @@
   var QUESTIONNAIRE = "OM-Fragebogen (Meine Matches)";
   var onMyMatches = [ROUTES.kamMyMatches];
   var KAM_HELP_TOPICS = [
-    {
-      id: "bulk-wvl",
-      title: "KAM WVL gesammelt ändern",
-      page: MY_MATCHES,
-      routes: onMyMatches,
-      kind: "write",
-      summary: "„Alle ändern“ im Spaltenkopf KAM WVL setzt oder entfernt das Wiedervorlagedatum für viele Matches auf einmal.",
-      steps: [
-        "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
-        "„Alle ändern“ klicken, einen Arbeitgeber wählen oder alle sichtbaren lassen, dann ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
-        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
-      ],
-      notes: [
-        "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
-        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
-      ]
-    },
-    {
-      id: "bulk-status",
-      title: "KAM Status gesammelt ändern",
-      page: MY_MATCHES,
-      routes: onMyMatches,
-      kind: "write",
-      summary: "„Alle ändern“ im Spaltenkopf KAM Status setzt denselben Status für viele sichtbare Matches.",
-      steps: [
-        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
-        "Den neuen KAM Status wählen. Bei „Out“ ist ein Grund Pflicht.",
-        "Die Rückfrage prüfen und bestätigen."
-      ],
-      notes: [
-        "Bei „Hired“ und „Out“ wird zusätzlich die KAM WVL gelöscht.",
-        "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt.",
-        "Betroffen sind nur die aktuell sichtbaren Zeilen.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert."
-      ]
-    },
-    {
-      id: "bulk-forward",
-      title: "Terminvorschläge gesammelt weiterleiten",
-      page: MY_MATCHES,
-      routes: onMyMatches,
-      kind: "write",
-      summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
-      steps: [
-        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
-        "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
-        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
-      ],
-      notes: [
-        "Termine mit einem anderen Status bleiben unberührt.",
-        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Weitergeleitete Termine werden sofort blau eingefärbt."
-      ]
-    },
+    bulkWvlTopic({ team: "KAM", page: MY_MATCHES, routes: onMyMatches }),
+    bulkStatusTopic({ team: "KAM", page: MY_MATCHES, routes: onMyMatches, declinesInterviews: true }),
+    bulkForwardTopic({ page: MY_MATCHES, routes: onMyMatches }),
     {
       id: "out-feedback",
       title: "KAM-Feedback-Schnellauswahl",
@@ -1840,56 +1851,7 @@
     return true;
   }
 
-  // src/features/kam-suite/bulk-match-actions.js
-  var IDS = {
-    button: "werkia-kam-wvl-bulk-button",
-    statusButton: "werkia-kam-status-bulk-button",
-    forwardButton: "werkia-kam-interview-forward-bulk-button",
-    dialog: "werkia-kam-wvl-bulk-dialog",
-    style: "werkia-kam-wvl-bulk-style",
-    status: "werkia-kam-wvl-bulk-status",
-    feedbackShortcuts: "werkia-kam-out-feedback-shortcuts"
-  };
-  var ROW_SELECTOR = "tbody tr.RaDataTable-row";
-  var WVL_CELL_SELECTOR = "td.column-kamFollowUpDate";
-  var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
-  var KAM_STATUS_OPTIONS = [
-    { value: "", label: "Leer" },
-    { value: "pending", label: "Ausstehend" },
-    { value: "with_cem", label: "Bei CEM" },
-    { value: "interview_request", label: "VT-Anfrage" },
-    { value: "interview_conducted", label: "Stattgefundenes VT" },
-    { value: "hot_case", label: "Hot Case" },
-    { value: "hot_hot_case", label: "Hot Hot Case" },
-    { value: "hired", label: "Hired" },
-    { value: "out", label: "Out" },
-    { value: "match_mail_sent", label: "MM gesendet" },
-    { value: "interview_feedback", label: "VT Feedback" }
-  ];
-  var OUT_FEEDBACK_OPTIONS = [
-    { value: "language_skills", label: "Sprachkenntnisse", nativeValue: "others", customFeedback: "Sprachkenntnisse" },
-    { value: "no_drivers_license", label: "Kein Führerschein", nativeValue: "others", customFeedback: "Kein Führerschein" },
-    { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" },
-    { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" },
-    { value: "job_change_frequency", label: "Wechselhäufigkeit", nativeValue: "others", customFeedback: "Wechselhäufigkeit" },
-    { value: "salary", label: "Gehalt", nativeValue: "others", customFeedback: "Gehalt" },
-    { value: "candidate_not_responsive", label: "BEW nicht responsive", nativeValue: "candidate_not_responsive", customFeedback: null },
-    { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG", nativeValue: "candidate_not_interested_in_employer", customFeedback: null },
-    { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW", nativeValue: "employer_not_interested_in_candidate", customFeedback: null },
-    { value: "stays_with_current_employer", label: "BEW bleibt beim aktuellen AG", nativeValue: "stays_with_current_employer", customFeedback: null },
-    { value: "found_privately", label: "Privat etwas gefunden", nativeValue: "found_privately", customFeedback: null },
-    { value: "hired_by_partner", label: "Hired bei Partner", nativeValue: "hired_by_partner", customFeedback: null },
-    { value: "distance_too_far", label: "Entfernung zu weit", nativeValue: "distance_too_far", customFeedback: null },
-    { value: "technical_error", label: "Technischer Fehler", nativeValue: "technical_error", customFeedback: null },
-    { value: "candidate_known", label: "BEW bereits bekannt", nativeValue: "candidate_known", customFeedback: null },
-    { value: "willing_to_travel", label: "Montagebereitschaft", nativeValue: "willing_to_travel", customFeedback: null },
-    { value: "conditions", label: "Konditionen", nativeValue: "conditions", customFeedback: null },
-    { value: "experience", label: "Erfahrung", nativeValue: "experience", customFeedback: null },
-    { value: "applicant_not_responsive", label: "BEW nicht responsive", nativeValue: "applicant_not_responsive", customFeedback: null },
-    { value: "position_filled", label: "Stelle besetzt", nativeValue: "position_filled", customFeedback: null },
-    { value: "qualification", label: "Qualifikation", nativeValue: "qualification", customFeedback: null }
-  ];
-  var OUT_FEEDBACK_TEMPLATE_OPTIONS = OUT_FEEDBACK_OPTIONS.filter((option) => option.nativeValue === "others");
+  // ../../shared/js/bulk-match-actions/core.js
   var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
   var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
   items: allInterviews(filter: $filter, sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage) {
@@ -1924,30 +1886,33 @@
     status
   }
 }`;
-  var UPDATE_MATCH_STATUS_MUTATION = `mutation updateMatch($id: String!, $kamStatus: String) {
-  data: updateMatch(id: $id, kamStatus: $kamStatus) {
+  function buildStatusMutation(statusField) {
+    return `mutation updateMatch($id: String!, $${statusField}: String) {
+  data: updateMatch(id: $id, ${statusField}: $${statusField}) {
     id
-    kamStatus
+    ${statusField}
     __typename
   }
 }`;
-  var UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION = `mutation updateMatch($id: String!, $kamStatus: String, $kamFeedback: String) {
-  data: updateMatch(id: $id, kamStatus: $kamStatus, kamFeedback: $kamFeedback) {
+  }
+  function buildStatusWithFeedbackMutation(statusField, feedbackField) {
+    return `mutation updateMatch($id: String!, $${statusField}: String, $${feedbackField}: String) {
+  data: updateMatch(id: $id, ${statusField}: $${statusField}, ${feedbackField}: $${feedbackField}) {
     id
-    kamStatus
-    kamFeedback
+    ${statusField}
+    ${feedbackField}
     __typename
   }
 }`;
-  var UPDATE_MATCH_WVL_MUTATION = `mutation updateMatch($id: String!, $kamFollowUpDate: Date) {
-  data: updateMatch(id: $id, kamFollowUpDate: $kamFollowUpDate) {
+  }
+  function buildFollowUpMutation(followUpField) {
+    return `mutation updateMatch($id: String!, $${followUpField}: Date) {
+  data: updateMatch(id: $id, ${followUpField}: $${followUpField}) {
     id
-    kamFollowUpDate
+    ${followUpField}
     __typename
   }
 }`;
-  function isTargetPage(hash = location.hash) {
-    return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
   function normalize(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -1962,6 +1927,9 @@
   }
   function openInterviewIds(items) {
     return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
+  }
+  function suggestedInterviews(items) {
+    return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
   }
   var FORWARDED_CHIP_CLASSES = ["MuiChip-colorInterviewForwarded", "MuiChip-filledInterviewForwarded"];
   var FORWARDED_CHIP_BACKGROUND = "#b9e5fd";
@@ -1982,14 +1950,38 @@
     });
     return chips.length;
   }
-  function suggestedInterviews(items) {
-    return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
+  function statusMutationValue(value) {
+    return value || null;
   }
-  function resolveOutFeedbackText(reason) {
-    return reason?.customFeedback || reason?.label || "";
+  function statusConfirmed(returned, expected) {
+    return (returned ?? "") === (expected ?? "");
   }
-  function executeBulkMatchActions(runtime) {
-    runtime.registerSource("kam/toolbox/src/features/kam-suite/bulk-match-actions.js");
+
+  // ../../shared/js/bulk-match-actions/index.js
+  var ROW_SELECTOR = "tbody tr.RaDataTable-row";
+  var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
+  function executeBulkMatchActions(runtime, sourcePath, config) {
+    runtime.registerSource(sourcePath);
+    const {
+      team,
+      isTargetPage: isTargetPage8,
+      getRequest,
+      ids: IDS4,
+      fields,
+      columns,
+      statusOptions,
+      outFeedbackOptions,
+      resolveOutFeedback,
+      declineInterviewsOnOut = false,
+      nativeOutFeedbackTemplates = null,
+      helpTip = {}
+    } = config;
+    const tip = (key) => helpTip[key]?.() || "";
+    const WVL_CELL_SELECTOR3 = `td.column-${columns.followUp}`;
+    const INTERVIEW_CELL_SELECTOR = `td.column-${columns.interview}`;
+    const STATUS_MUTATION = buildStatusMutation(fields.status);
+    const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
+    const WVL_MUTATION = buildFollowUpMutation(fields.followUp);
     let running = false;
     let cancelRequested = false;
     const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
@@ -2021,7 +2013,7 @@
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     }
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(WVL_CELL_SELECTOR));
+      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
     }
     function employerFromRow(row) {
       const link = row.querySelector(EMPLOYER_LINK_SELECTOR);
@@ -2047,34 +2039,34 @@
       return [...choices.values()];
     }
     function injectStyle() {
-      if (document.getElementById(IDS.style)) return;
+      if (document.getElementById(IDS4.style)) return;
       const style = document.createElement("style");
-      style.id = IDS.style;
+      style.id = IDS4.style;
       style.textContent = `
-      #${IDS.button}, #${IDS.statusButton}, #${IDS.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-      #${IDS.button}:hover, #${IDS.statusButton}:hover, #${IDS.forwardButton}:hover { background: #fff3e0; }
-      #${IDS.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
-      #${IDS.dialog}::backdrop { background: rgba(0,0,0,.38); }
-      #${IDS.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
-      #${IDS.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
-      #${IDS.dialog} .wkw-body [hidden] { display: none !important; }
-      #${IDS.dialog} label { display: grid; gap: 5px; font-weight: 700; }
-      #${IDS.dialog} select, #${IDS.dialog} input { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
-      #${IDS.dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
-      #${IDS.dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
-      #${IDS.dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
-      #${IDS.dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
-      #${IDS.dialog} button:disabled { opacity: .55; cursor: wait; }
-      #${IDS.status}[data-tone="ok"] { color: #18752b; }
-      #${IDS.status}[data-tone="error"] { color: #b3261e; }
-      #${IDS.status}[data-tone="busy"] { color: #995000; }
-      #${IDS.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
-      #${IDS.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      #${IDS4.button}, #${IDS4.statusButton}, #${IDS4.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      #${IDS4.button}:hover, #${IDS4.statusButton}:hover, #${IDS4.forwardButton}:hover { background: #fff3e0; }
+      #${IDS4.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
+      #${IDS4.dialog}::backdrop { background: rgba(0,0,0,.38); }
+      #${IDS4.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
+      #${IDS4.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
+      #${IDS4.dialog} .wkw-body [hidden] { display: none !important; }
+      #${IDS4.dialog} label { display: grid; gap: 5px; font-weight: 700; }
+      #${IDS4.dialog} select, #${IDS4.dialog} input { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      #${IDS4.dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
+      #${IDS4.dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      #${IDS4.dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
+      #${IDS4.dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
+      #${IDS4.dialog} button:disabled { opacity: .55; cursor: wait; }
+      #${IDS4.status}[data-tone="ok"] { color: #18752b; }
+      #${IDS4.status}[data-tone="error"] { color: #b3261e; }
+      #${IDS4.status}[data-tone="busy"] { color: #995000; }
+      #${IDS4.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
+      #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
     `;
       document.head.appendChild(style);
     }
     function setStatus(text, tone = "") {
-      const status = document.getElementById(IDS.status);
+      const status = document.getElementById(IDS4.status);
       if (!status) return;
       status.textContent = text;
       status.dataset.tone = tone;
@@ -2120,12 +2112,12 @@
       if (!running) dialog.remove();
     }
     function renderDialog() {
-      document.getElementById(IDS.dialog)?.remove();
+      document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
-      dialog.id = IDS.dialog;
+      dialog.id = IDS4.dialog;
       dialog.innerHTML = `
-      <div class="wkw-head">KAM WVL gesammelt ändern${kamHelp.tipHtml("bulk-wvl", { tone: "dark" })}</div>
+      <div class="wkw-head">${team} WVL gesammelt ändern${tip("wvl")}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -2133,11 +2125,11 @@
             ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
           </select>
         </label>
-        <label>Neues KAM-WVL-Datum
+        <label>Neues ${team}-WVL-Datum
           <input name="date" type="date">
         </label>
-        <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Datumsfeld leer lassen, um die KAM WVL zu entfernen statt sie zu setzen.</div>
-        <div id="${IDS.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
+        <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Datumsfeld leer lassen, um die ${team} WVL zu entfernen statt sie zu setzen.</div>
+        <div id="${IDS4.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Datum anwenden</button>
@@ -2164,12 +2156,17 @@
       dateInput.focus();
     }
     function renderStatusDialog() {
-      document.getElementById(IDS.dialog)?.remove();
+      document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
-      dialog.id = IDS.dialog;
+      dialog.id = IDS4.dialog;
+      const outConsequences = [
+        `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
+        declineInterviewsOnOut ? "Bei „Out“ werden offene Terminvorschläge abgelehnt." : "",
+        "Für „Out“ muss ein Grund ausgewählt werden."
+      ].filter(Boolean).join(" ");
       dialog.innerHTML = `
-      <div class="wkw-head">KAM Status gesammelt ändern${kamHelp.tipHtml("bulk-status", { tone: "dark" })}</div>
+      <div class="wkw-head">${team} Status gesammelt ändern${tip("status")}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -2177,35 +2174,44 @@
             ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
           </select>
         </label>
-        <label>Neuer KAM Status
-          <select name="kamStatus" required>
+        <label>Neuer ${team} Status
+          <select name="status" required>
             <option value="__choose__">Bitte auswählen</option>
-            ${KAM_STATUS_OPTIONS.map((status) => `<option value="${status.value}">${status.label}</option>`).join("")}
+            ${statusOptions.map((status) => `<option value="${status.value}">${status.label}</option>`).join("")}
           </select>
         </label>
         <label data-out-feedback hidden>Grund
           <select name="outFeedback">
             <option value="__choose__">Bitte auswählen</option>
-            ${OUT_FEEDBACK_OPTIONS.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
+            ${outFeedbackOptions.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
           </select>
         </label>
-        <div class="wkw-note">Standardmäßig werden alle aktuell sichtbaren Matches aller Arbeitgeber geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Bei „Hired“ und „Out“ wird zusätzlich die KAM WVL gelöscht. Für „Out“ muss ein Grund ausgewählt werden.</div>
-        <div id="${IDS.status}">Bitte Arbeitgeber und KAM Status prüfen.</div>
+        <label data-out-feedback-text hidden>Eigener Grund
+          <input name="outFeedbackText" type="text" maxlength="200">
+        </label>
+        <div class="wkw-note">Standardmäßig werden alle aktuell sichtbaren Matches aller Arbeitgeber geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. ${outConsequences}</div>
+        <div id="${IDS4.status}">Bitte Arbeitgeber und ${team} Status prüfen.</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Status anwenden</button>
         </div>
       </form>`;
       document.body.appendChild(dialog);
-      const statusSelect = dialog.querySelector('[name="kamStatus"]');
+      const statusSelect = dialog.querySelector('[name="status"]');
       const reasonLabel = dialog.querySelector("[data-out-feedback]");
       const reasonSelect = dialog.querySelector('[name="outFeedback"]');
+      const reasonTextLabel = dialog.querySelector("[data-out-feedback-text]");
+      const reasonText = dialog.querySelector('[name="outFeedbackText"]');
       const syncOutFeedback = () => {
         const isOut = statusSelect.value === "out";
         reasonLabel.hidden = !isOut;
         reasonSelect.required = isOut;
+        const needsText = isOut && Boolean(outFeedbackOptions.find((reason) => reason.value === reasonSelect.value)?.freeText);
+        reasonTextLabel.hidden = !needsText;
+        reasonText.required = needsText;
       };
       statusSelect.addEventListener("change", syncOutFeedback);
+      reasonSelect.addEventListener("change", syncOutFeedback);
       syncOutFeedback();
       dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
       dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
@@ -2217,15 +2223,15 @@
       });
       dialog.addEventListener("close", () => handleDialogClose(dialog));
       dialog.showModal();
-      dialog.querySelector('[name="kamStatus"]').focus();
+      statusSelect.focus();
     }
     function renderForwardDialog() {
-      document.getElementById(IDS.dialog)?.remove();
+      document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
-      dialog.id = IDS.dialog;
+      dialog.id = IDS4.dialog;
       dialog.innerHTML = `
-      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten${kamHelp.tipHtml("bulk-forward", { tone: "dark" })}</div>
+      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten${tip("forward")}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -2234,7 +2240,7 @@
           </select>
         </label>
         <div class="wkw-note">Alle Terminvorschläge mit Status „Vorschlag“ der ausgewählten sichtbaren Matches werden auf „Weitergeleitet“ gesetzt, wie mit dem Button „Weiterleiten“ im Termindialog. Vor dem Weiterleiten wird die genaue Anzahl angezeigt.</div>
-        <div id="${IDS.status}">Bitte Arbeitgeber prüfen.</div>
+        <div id="${IDS4.status}">Bitte Arbeitgeber prüfen.</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Weiterleiten</button>
@@ -2279,49 +2285,50 @@
       customInput.dispatchEvent(new Event("blur", { bubbles: true }));
     }
     function installNativeOutFeedbackDropdown(dialog) {
-      if (dialog.querySelector(`#${IDS.feedbackShortcuts}`)) return;
+      if (dialog.querySelector(`#${IDS4.feedbackShortcuts}`)) return;
       const customInput = dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]');
       const othersRadio = dialog.querySelector('input[name="feedback"][value="others"]');
       const anchor = customInput?.closest(".MuiFormControl-root") || customInput?.parentElement || othersRadio?.closest("label") || othersRadio?.parentElement;
       if (!anchor) return;
       const shortcuts = document.createElement("label");
-      shortcuts.id = IDS.feedbackShortcuts;
-      shortcuts.innerHTML = `<span style="display:inline-flex;align-items:center;">KAM-Feedback${kamHelp.tipHtml("out-feedback")}</span>
-      <select name="werkiaKamOutFeedback">
+      shortcuts.id = IDS4.feedbackShortcuts;
+      shortcuts.innerHTML = `<span style="display:inline-flex;align-items:center;">${team}-Feedback${tip("outFeedback")}</span>
+      <select name="werkia${team[0]}${team.slice(1).toLowerCase()}OutFeedback">
         <option value="">Bitte auswählen</option>
-        ${OUT_FEEDBACK_TEMPLATE_OPTIONS.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
+        ${nativeOutFeedbackTemplates.map((reason) => `<option value="${reason.value}">${reason.label}</option>`).join("")}
       </select>`;
       anchor.insertAdjacentElement("afterend", shortcuts);
       const select = shortcuts.querySelector("select");
       select.addEventListener("change", () => {
-        const reason = OUT_FEEDBACK_TEMPLATE_OPTIONS.find((option) => option.value === select.value);
+        const reason = nativeOutFeedbackTemplates.find((option) => option.value === select.value);
         if (!reason) return;
         applyNativeOutFeedback(dialog, reason).catch((error) => {
-          console.warn("[KAM Out-Feedback] Schnellauswahl konnte nicht übernommen werden:", error);
+          console.warn(`[${team} Out-Feedback] Schnellauswahl konnte nicht übernommen werden:`, error);
           select.value = "";
         });
       });
     }
-    async function updateMatchKamStatus(matchId, targetStatus, kamFeedback) {
-      const { request } = getKamGraphqlAdapter();
-      const mutation = kamFeedback ? UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION : UPDATE_MATCH_STATUS_MUTATION;
-      const variables = kamFeedback ? { id: matchId, kamStatus: targetStatus.value, kamFeedback } : { id: matchId, kamStatus: targetStatus.value };
+    async function updateMatchStatus(matchId, targetStatus, feedback) {
+      const request = getRequest();
+      const value = statusMutationValue(targetStatus.value);
+      const mutation = feedback ? STATUS_WITH_FEEDBACK_MUTATION : STATUS_MUTATION;
+      const variables = feedback ? { id: matchId, [fields.status]: value, [fields.feedback]: feedback } : { id: matchId, [fields.status]: value };
       const result = await request(mutation, variables);
       const match = result?.data;
-      if (match?.id !== matchId || match.kamStatus !== targetStatus.value) {
-        throw new Error(`KAM Status wurde nicht auf „${targetStatus.label}“ bestätigt`);
+      if (match?.id !== matchId || !statusConfirmed(match[fields.status], value)) {
+        throw new Error(`${team} Status wurde nicht auf „${targetStatus.label}“ bestätigt`);
       }
     }
-    async function updateMatchKamFollowUpDate(matchId, isoDateOrNull) {
-      const { request } = getKamGraphqlAdapter();
-      const result = await request(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: isoDateOrNull });
+    async function updateMatchFollowUpDate(matchId, isoDateOrNull) {
+      const request = getRequest();
+      const result = await request(WVL_MUTATION, { id: matchId, [fields.followUp]: isoDateOrNull });
       const match = result?.data;
-      if (match?.id !== matchId || match.kamFollowUpDate !== isoDateOrNull) {
-        throw new Error("KAM WVL wurde nicht bestätigt");
+      if (match?.id !== matchId || match[fields.followUp] !== isoDateOrNull) {
+        throw new Error(`${team} WVL wurde nicht bestätigt`);
       }
     }
     async function openInterviewIdsForMatch(matchId) {
-      const { request } = getKamGraphqlAdapter();
+      const request = getRequest();
       const perPage = 100;
       const interviewIds = [];
       let page = 0;
@@ -2343,7 +2350,7 @@
       return interviewIds;
     }
     async function declineOpenInterviewsForMatch(matchId) {
-      const { request } = getKamGraphqlAdapter();
+      const request = getRequest();
       const interviewIds = await openInterviewIdsForMatch(matchId);
       let declined = 0;
       for (const interviewId of interviewIds) {
@@ -2358,7 +2365,7 @@
       return declined;
     }
     async function suggestedInterviewsForMatch(matchId) {
-      const { request } = getKamGraphqlAdapter();
+      const request = getRequest();
       const perPage = 100;
       const interviews = [];
       let page = 0;
@@ -2382,10 +2389,10 @@
       return interviews;
     }
     function markRowForwarded(matchId) {
-      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markSuggestionChipsForwarded(row.querySelector("td.column-interview")));
+      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markSuggestionChipsForwarded(row.querySelector(INTERVIEW_CELL_SELECTOR)));
     }
     async function forwardInterview(matchId, interview) {
-      const { request } = getKamGraphqlAdapter();
+      const request = getRequest();
       const result = await request(FORWARD_INTERVIEW_MUTATION, { id: interview.id, status: "forwarded", dates: interview.dates });
       const updated = result?.data;
       if (updated?.id !== interview.id || updated.status !== "forwarded" || updated.matchId !== matchId) {
@@ -2461,23 +2468,30 @@
     async function applyStatusFromDialog(dialog) {
       if (running) return;
       const employerId = dialog.querySelector('[name="employer"]').value;
-      const targetValue = dialog.querySelector('[name="kamStatus"]').value;
-      const targetStatus = KAM_STATUS_OPTIONS.find((status) => status.value === targetValue);
+      const targetValue = dialog.querySelector('[name="status"]').value;
+      const targetStatus = statusOptions.find((status) => status.value === targetValue);
       const outFeedbackValue = dialog.querySelector('[name="outFeedback"]').value;
-      const outFeedback = OUT_FEEDBACK_OPTIONS.find((reason) => reason.value === outFeedbackValue);
+      const outFeedback = outFeedbackOptions.find((reason) => reason.value === outFeedbackValue);
+      const outFeedbackText = normalize(dialog.querySelector('[name="outFeedbackText"]').value);
       const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
       if (!choice?.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
-      if (!targetStatus || targetValue === "__choose__") return setStatus("Bitte einen KAM Status auswählen.", "error");
-      if (targetStatus.value === "out" && (!outFeedback || outFeedbackValue === "__choose__")) {
-        return setStatus("Bitte einen Grund für den KAM Status „Out“ auswählen.", "error");
+      if (!targetStatus || targetValue === "__choose__") return setStatus(`Bitte einen ${team} Status auswählen.`, "error");
+      const isOut = targetStatus.value === "out";
+      if (isOut && (!outFeedback || outFeedbackValue === "__choose__")) {
+        return setStatus(`Bitte einen Grund für den ${team} Status „Out“ auswählen.`, "error");
       }
+      if (isOut && outFeedback.freeText && !outFeedbackText) {
+        return setStatus("Bitte den eigenen Grund eintragen.", "error");
+      }
+      const declinesInterviews = isOut && declineInterviewsOnOut;
       const clearsWvl = statusClearsWvl(targetStatus.value);
-      const cleanupText = clearsWvl ? " Die KAM WVL dieser Matches wird ebenfalls gelöscht." : "";
-      const interviewText = targetStatus.value === "out" ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
+      const cleanupText = clearsWvl ? ` Die ${team} WVL dieser Matches wird ebenfalls gelöscht.` : "";
+      const interviewText = declinesInterviews ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
       const employerCount = new Set(choice.rows.map((row) => employerFromRow(row)?.id).filter(Boolean)).size;
       const scopeText = employerId === "__all__" ? `${choice.rows.length} sichtbare Matches von ${employerCount} Arbeitgebern` : `${choice.rows.length} sichtbare Matches von „${choice.name}“`;
-      const reasonText = targetStatus.value === "out" ? ` Grund: „${outFeedback.label}“.` : "";
-      if (!window.confirm(`${scopeText} auf KAM Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
+      const reasonLabel = isOut ? outFeedback.freeText ? outFeedbackText : outFeedback.label : "";
+      const reasonText = isOut ? ` Grund: „${reasonLabel}“.` : "";
+      if (!window.confirm(`${scopeText} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
       running = true;
       cancelRequested = false;
       const applyButton = dialog.querySelector('[data-action="apply"]');
@@ -2486,15 +2500,15 @@
       let changed = 0;
       let declinedInterviews = 0;
       const failures = [];
-      const kamFeedback = targetStatus.value === "out" ? resolveOutFeedbackText(outFeedback) : null;
+      const feedback = isOut ? resolveOutFeedback(outFeedback, outFeedbackText) : null;
       const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
       for (let index = 0; index < queue.length; index += 1) {
         if (cancelRequested) break;
         setStatus(`Ändere Status ${index + 1} von ${queue.length} …`, "busy");
         try {
-          await updateMatchKamStatus(queue[index], targetStatus, kamFeedback);
-          if (clearsWvl) await updateMatchKamFollowUpDate(queue[index], null);
-          if (targetStatus.value === "out") {
+          await updateMatchStatus(queue[index], targetStatus, feedback);
+          if (clearsWvl) await updateMatchFollowUpDate(queue[index], null);
+          if (declinesInterviews) {
             setStatus(`Lehne Terminvorschläge ${index + 1} von ${queue.length} ab …`, "busy");
             declinedInterviews += await declineOpenInterviewsForMatch(queue[index]);
           }
@@ -2510,8 +2524,8 @@
       } else if (failures.length) {
         setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
       } else {
-        const interviewSummary = targetStatus.value === "out" ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : "";
-        setStatus(`${changed} KAM-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${interviewSummary}`, "ok");
+        const interviewSummary = declinesInterviews ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : "";
+        setStatus(`${changed} ${team}-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${interviewSummary}`, "ok");
       }
       finishDialog(dialog);
     }
@@ -2525,7 +2539,7 @@
       if (!choice || !choice.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
       if (!clearing && !date) return setStatus("Bitte ein gültiges Datum auswählen oder das Feld leer lassen.", "error");
       const formatted = date ? `${date.day}.${date.month}.${date.year}` : "";
-      const confirmText = clearing ? `${choice.rows.length} sichtbare Matches von „${choice.name}“ die KAM WVL entfernen?` : `${choice.rows.length} sichtbare Matches von „${choice.name}“ auf ${formatted} setzen?`;
+      const confirmText = clearing ? `${choice.rows.length} sichtbare Matches von „${choice.name}“ die ${team} WVL entfernen?` : `${choice.rows.length} sichtbare Matches von „${choice.name}“ auf ${formatted} setzen?`;
       if (!window.confirm(confirmText)) return;
       running = true;
       cancelRequested = false;
@@ -2540,7 +2554,7 @@
         if (cancelRequested) break;
         setStatus(`Ändere ${index + 1} von ${queue.length} …`, "busy");
         try {
-          await updateMatchKamFollowUpDate(queue[index], isoDate || null);
+          await updateMatchFollowUpDate(queue[index], isoDate || null);
           changed += 1;
         } catch (error) {
           failures.push(`${index + 1}: ${error.message}`);
@@ -2553,60 +2567,51 @@
       } else if (failures.length) {
         setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
       } else if (clearing) {
-        setStatus(`${changed} KAM-WVL-Daten erfolgreich entfernt.`, "ok");
+        setStatus(`${changed} ${team}-WVL-Daten erfolgreich entfernt.`, "ok");
       } else {
-        setStatus(`${changed} KAM-WVL-Daten erfolgreich auf ${formatted} gesetzt.`, "ok");
+        setStatus(`${changed} ${team}-WVL-Daten erfolgreich auf ${formatted} gesetzt.`, "ok");
       }
       finishDialog(dialog);
     }
-    function installHeaderButton() {
-      if (!isTargetPage()) return;
+    function installButton(header, id, label, title, render) {
+      if (!header || header.querySelector(`#${id}`)) return;
+      const button = document.createElement("button");
+      button.id = id;
+      button.type = "button";
+      button.textContent = label;
+      button.title = title;
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
+        render();
+      });
+      header.appendChild(button);
+    }
+    function installHeaderButtons() {
+      if (!isTargetPage8()) return;
       injectStyle();
-      const wvlHeader = document.querySelector("th.column-kamFollowUpDate");
-      if (wvlHeader && !wvlHeader.querySelector(`#${IDS.button}`)) {
-        const button = document.createElement("button");
-        button.id = IDS.button;
-        button.type = "button";
-        button.textContent = "Alle ändern";
-        button.title = "KAM-WVL-Datum für alle sichtbaren Matches eines Arbeitgebers ändern";
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
-          renderDialog();
-        });
-        wvlHeader.appendChild(button);
-      }
-      const statusHeader = document.querySelector("th.column-kamStatus");
-      if (statusHeader && !statusHeader.querySelector(`#${IDS.statusButton}`)) {
-        const button = document.createElement("button");
-        button.id = IDS.statusButton;
-        button.type = "button";
-        button.textContent = "Alle ändern";
-        button.title = "KAM Status für alle sichtbaren Matches eines Arbeitgebers ändern";
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
-          renderStatusDialog();
-        });
-        statusHeader.appendChild(button);
-      }
-      const interviewHeader = document.querySelector("th.column-interview");
-      if (interviewHeader && !interviewHeader.querySelector(`#${IDS.forwardButton}`)) {
-        const button = document.createElement("button");
-        button.id = IDS.forwardButton;
-        button.type = "button";
-        button.textContent = "Alle weiterleiten";
-        button.title = "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten";
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
-          renderForwardDialog();
-        });
-        interviewHeader.appendChild(button);
-      }
+      installButton(
+        document.querySelector(`th.column-${columns.followUp}`),
+        IDS4.button,
+        "Alle ändern",
+        `${team}-WVL-Datum für alle sichtbaren Matches eines Arbeitgebers ändern`,
+        renderDialog
+      );
+      installButton(
+        document.querySelector(`th.column-${columns.status}`),
+        IDS4.statusButton,
+        "Alle ändern",
+        `${team} Status für alle sichtbaren Matches eines Arbeitgebers ändern`,
+        renderStatusDialog
+      );
+      installButton(
+        document.querySelector(`th.column-${columns.interview}`),
+        IDS4.forwardButton,
+        "Alle weiterleiten",
+        "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten",
+        renderForwardDialog
+      );
     }
     let scheduled = false;
     const scheduleInstall = () => {
@@ -2614,17 +2619,95 @@
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        if (!isTargetPage()) {
-          document.getElementById(IDS.dialog)?.remove();
+        if (!isTargetPage8()) {
+          document.getElementById(IDS4.dialog)?.remove();
           return;
         }
-        installHeaderButton();
-        visibleOutFeedbackDialogs().forEach(installNativeOutFeedbackDropdown);
+        installHeaderButtons();
+        if (nativeOutFeedbackTemplates?.length) visibleOutFeedbackDialogs().forEach(installNativeOutFeedbackDropdown);
       }, 150);
     };
     runtime.createMutationObserver(scheduleInstall).observe(document.documentElement, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleInstall);
     scheduleInstall();
+  }
+
+  // src/features/kam-suite/bulk-match-actions.js
+  var IDS = {
+    button: "werkia-kam-wvl-bulk-button",
+    statusButton: "werkia-kam-status-bulk-button",
+    forwardButton: "werkia-kam-interview-forward-bulk-button",
+    dialog: "werkia-kam-wvl-bulk-dialog",
+    style: "werkia-kam-wvl-bulk-style",
+    status: "werkia-kam-wvl-bulk-status",
+    feedbackShortcuts: "werkia-kam-out-feedback-shortcuts"
+  };
+  var KAM_STATUS_OPTIONS = [
+    { value: "", label: "Leer" },
+    { value: "pending", label: "Ausstehend" },
+    { value: "with_cem", label: "Bei CEM" },
+    { value: "interview_request", label: "VT-Anfrage" },
+    { value: "interview_conducted", label: "Stattgefundenes VT" },
+    { value: "hot_case", label: "Hot Case" },
+    { value: "hot_hot_case", label: "Hot Hot Case" },
+    { value: "hired", label: "Hired" },
+    { value: "out", label: "Out" },
+    { value: "match_mail_sent", label: "MM gesendet" },
+    { value: "interview_feedback", label: "VT Feedback" }
+  ];
+  var OUT_FEEDBACK_OPTIONS = [
+    { value: "language_skills", label: "Sprachkenntnisse", nativeValue: "others", customFeedback: "Sprachkenntnisse" },
+    { value: "no_drivers_license", label: "Kein Führerschein", nativeValue: "others", customFeedback: "Kein Führerschein" },
+    { value: "start_date_too_far_in_future", label: "Zu weit in der Zukunft", nativeValue: "others", customFeedback: "Zu weit in der Zukunft" },
+    { value: "employer_not_responsive", label: "AG nicht responsive", nativeValue: "others", customFeedback: "AG nicht responsive" },
+    { value: "job_change_frequency", label: "Wechselhäufigkeit", nativeValue: "others", customFeedback: "Wechselhäufigkeit" },
+    { value: "salary", label: "Gehalt", nativeValue: "others", customFeedback: "Gehalt" },
+    { value: "candidate_not_responsive", label: "BEW nicht responsive", nativeValue: "candidate_not_responsive", customFeedback: null },
+    { value: "candidate_not_interested_in_employer", label: "BEW hat kein Interesse am AG", nativeValue: "candidate_not_interested_in_employer", customFeedback: null },
+    { value: "employer_not_interested_in_candidate", label: "AG hat kein Interesse am BEW", nativeValue: "employer_not_interested_in_candidate", customFeedback: null },
+    { value: "stays_with_current_employer", label: "BEW bleibt beim aktuellen AG", nativeValue: "stays_with_current_employer", customFeedback: null },
+    { value: "found_privately", label: "Privat etwas gefunden", nativeValue: "found_privately", customFeedback: null },
+    { value: "hired_by_partner", label: "Hired bei Partner", nativeValue: "hired_by_partner", customFeedback: null },
+    { value: "distance_too_far", label: "Entfernung zu weit", nativeValue: "distance_too_far", customFeedback: null },
+    { value: "technical_error", label: "Technischer Fehler", nativeValue: "technical_error", customFeedback: null },
+    { value: "candidate_known", label: "BEW bereits bekannt", nativeValue: "candidate_known", customFeedback: null },
+    { value: "willing_to_travel", label: "Montagebereitschaft", nativeValue: "willing_to_travel", customFeedback: null },
+    { value: "conditions", label: "Konditionen", nativeValue: "conditions", customFeedback: null },
+    { value: "experience", label: "Erfahrung", nativeValue: "experience", customFeedback: null },
+    { value: "applicant_not_responsive", label: "BEW nicht responsive", nativeValue: "applicant_not_responsive", customFeedback: null },
+    { value: "position_filled", label: "Stelle besetzt", nativeValue: "position_filled", customFeedback: null },
+    { value: "qualification", label: "Qualifikation", nativeValue: "qualification", customFeedback: null }
+  ];
+  var OUT_FEEDBACK_TEMPLATE_OPTIONS = OUT_FEEDBACK_OPTIONS.filter((option) => option.nativeValue === "others");
+  var UPDATE_MATCH_STATUS_MUTATION = buildStatusMutation("kamStatus");
+  var UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation("kamStatus", "kamFeedback");
+  var UPDATE_MATCH_WVL_MUTATION = buildFollowUpMutation("kamFollowUpDate");
+  function isTargetPage(hash = location.hash) {
+    return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
+  }
+  function resolveOutFeedbackText(reason) {
+    return reason?.customFeedback || reason?.label || "";
+  }
+  function executeBulkMatchActions2(runtime) {
+    executeBulkMatchActions(runtime, "kam/toolbox/src/features/kam-suite/bulk-match-actions.js", {
+      team: "KAM",
+      isTargetPage,
+      getRequest: () => getKamGraphqlAdapter().request,
+      ids: IDS,
+      fields: { status: "kamStatus", feedback: "kamFeedback", followUp: "kamFollowUpDate" },
+      columns: { status: "kamStatus", followUp: "kamFollowUpDate", interview: "interview" },
+      statusOptions: KAM_STATUS_OPTIONS,
+      outFeedbackOptions: OUT_FEEDBACK_OPTIONS,
+      resolveOutFeedback: (reason) => resolveOutFeedbackText(reason),
+      declineInterviewsOnOut: true,
+      nativeOutFeedbackTemplates: OUT_FEEDBACK_TEMPLATE_OPTIONS,
+      helpTip: {
+        wvl: () => kamHelp.tipHtml("bulk-wvl", { tone: "dark" }),
+        status: () => kamHelp.tipHtml("bulk-status", { tone: "dark" }),
+        forward: () => kamHelp.tipHtml("bulk-forward", { tone: "dark" }),
+        outFeedback: () => kamHelp.tipHtml("out-feedback")
+      }
+    });
   }
 
   // ../../shared/js/werkia-graphql/employer-contact-provider.js
@@ -2650,7 +2733,7 @@
 
   // src/features/kam-suite/contact-badges.js
   var ROW_SELECTOR2 = "tbody tr.RaDataTable-row";
-  var WVL_CELL_SELECTOR2 = "td.column-kamFollowUpDate";
+  var WVL_CELL_SELECTOR = "td.column-kamFollowUpDate";
   var EMPLOYER_LINK_SELECTOR2 = 'a[href*="#/Employer/"]';
   var STYLE_ID = "werkia-kam-contact-style";
   var REFRESH_INTERVAL_MS = 5 * 60 * 1e3;
@@ -2676,7 +2759,7 @@
     const contactIndex = /* @__PURE__ */ new Map();
     let loadPromise = null;
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(WVL_CELL_SELECTOR2));
+      return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(WVL_CELL_SELECTOR));
     }
     function employerFromRow(row) {
       const link = row.querySelector(EMPLOYER_LINK_SELECTOR2);
@@ -4677,7 +4760,7 @@
 
   // src/features/kam-suite/candidate-file-popup.js
   var ROW_SELECTOR5 = "tbody tr.RaDataTable-row";
-  var WVL_CELL_SELECTOR3 = "td.column-kamFollowUpDate";
+  var WVL_CELL_SELECTOR2 = "td.column-kamFollowUpDate";
   var CANDIDATE_CELL_SELECTOR = "td.column-candidateId";
   var CANDIDATE_ACTIONS_CELL_SELECTOR = "td.column-candidateActions";
   var BULK_DIALOG_ID = "werkia-kam-wvl-bulk-dialog";
@@ -4689,7 +4772,7 @@
     let pendingCandidateId = "";
     let pendingCandidateAt = 0;
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR5)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
+      return [...document.querySelectorAll(ROW_SELECTOR5)].filter((row) => row.querySelector(WVL_CELL_SELECTOR2));
     }
     function visibleOverlay(element) {
       if (!element) return false;
@@ -7554,7 +7637,7 @@ ${next}`;
   bootstrapToolbox({ label: "KAM", marker: "data-werkia-kam-toolbox-loaded" }, [
     // First: installs the delegated ?-button handling the features below use.
     { id: "toolbox-help", execute: executeToolboxHelp },
-    { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions },
+    { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions2 },
     { id: "kam-suite-contact-badges", execute: executeContactBadges },
     { id: "kam-suite-vacancy-city-badges", execute: executeVacancyCityBadges },
     { id: "kam-suite-cem-status-line", execute: executeCemStatusLine },

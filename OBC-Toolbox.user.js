@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.4.90
+// @version      1.4.91
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -1605,7 +1605,9 @@
     potentialMatches: /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i,
     createOfflineMatch: /^#\/CreateOfflineMatch(?:[/?]|$)/i,
     kamMyMatches: /#\/KAM\/MyMatches(?:[/?]|$)/i,
-    cemMyMatches: /#\/CEM\/MyMatches(?:[/?]|$)/i,
+    // Das AP fuehrt "CEM › Meine Matches" seit spaetestens 2026-10-02 unter
+    // #/CEM/MyCemMatches; #/CEM/MyMatches bleibt fuer alte Links erkannt.
+    cemMyMatches: /#\/CEM\/My(?:Cem)?Matches(?:[/?]|$)/i,
     cemMyCandidates: /#\/CEM\/MyCandidates(?:[/?]|$)/i,
     obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
     employer: /^#\/Employer\/[^/?]+/i,
