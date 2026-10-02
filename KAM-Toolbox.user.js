@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.4.99
+// @version      1.4.100
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1747,30 +1747,20 @@
       ]
     },
     {
-      id: "match-slack-actions",
-      title: "Dringend und Push Request",
-      page: MY_MATCHES,
-      routes: onMyMatches,
-      kind: "external",
-      summary: "In der Terminspalte stehen neben VTA und VTV „Dringend“ und „Push“, in Zeilen ohne Termin allein. Beide posten über den OPS-Bot in Slack, für die Vakanz der Zeile.",
-      notes: [
-        "„Dringend“ schreibt den Befehl in den Dringend-Channel. Der Bot setzt dort den Tag [dringende Suche] und fragt nach 14 Tagen nach, ob die Suche noch dringend ist.",
-        "Rot umrandet: nicht dringend. Rot mit Haken: Die Vakanz ist dringend. Ein Klick darauf beendet die dringende Suche nach einer Rückfrage. Gelb heißt: angefragt, der Bot hat noch nicht bestätigt.",
-        "Nur veröffentlichte Vakanzen können dringend werden.",
-        "„Push“ postet eine Push Request an @push in #push-requests. Danach steht „Push ✓“ am Knopf, ein zweiter Versand braucht deine Bestätigung."
-      ]
-    },
-    {
       id: "slack-exports",
-      title: "VTA und VTV an Slack",
+      title: "VTA, VTV, Dringend und Push an Slack",
       page: MY_MATCHES,
       routes: onMyMatches,
       kind: "external",
-      summary: "Bei Matches mit Termin stehen in der Terminspalte „VTA Exportieren“ und „VTV Exportieren“. Sie erstellen die Slack-Nachricht mit Kandidat und Arbeitgeber, bei VTV zusätzlich mit dem Termin, und erwähnen die zuständige CEM-Person.",
+      summary: "In der Terminspalte stehen „VTA Exportieren“ und „VTV Exportieren“ (nur bei Matches mit Termin) sowie „Dringend“ und „Push“ (immer, für die Vakanz der Zeile). Alle vier posten über n8n in Slack.",
       notes: [
+        "VTA und VTV erstellen die Nachricht mit Kandidat und Arbeitgeber, bei VTV zusätzlich mit dem Termin, und erwähnen die zuständige CEM-Person.",
         "Je nach Einrichtung geht die Nachricht über n8n direkt nach Slack oder wird in die Zwischenablage kopiert. Der Tooltip am Knopf sagt, was passiert.",
         "Nach dem Versand heißt der Knopf „… erneut senden“. Ein zweiter Versand braucht deine Bestätigung.",
-        "VTV nimmt den spätesten Termin aus der Zeile."
+        "VTV nimmt den spätesten Termin aus der Zeile.",
+        "„Dringend“ schreibt den Befehl in #dringende_vakanzen. Der Bot setzt innerhalb einer Minute den Tag [dringende Suche] und fragt nach 14 Tagen nach, ob die Suche noch dringend ist. Nur veröffentlichte Vakanzen können dringend werden.",
+        "Rot umrandet: nicht dringend. Rot mit Haken: dringend, ein Klick beendet die dringende Suche nach einer Rückfrage. Gelb: angefragt, der Bot hat noch nicht bestätigt.",
+        "„Push“ postet eine Push Request an @push in #push-requests. Danach steht „Push ✓“ am Knopf, ein zweiter Versand braucht deine Bestätigung."
       ]
     },
     {
@@ -6323,6 +6313,8 @@
     }
     function placeBar(row, bar) {
       const vtBlock = row.querySelector(VT_BLOCK_SELECTOR);
+      const ownTip = bar.querySelector("[data-werkia-match-actions-tip]");
+      if (ownTip) ownTip.style.display = vtBlock ? "none" : "";
       if (vtBlock) {
         if (bar.parentElement !== vtBlock) {
           const lastVtButton = [...vtBlock.querySelectorAll(VT_BUTTON_SELECTOR)].pop();
@@ -6364,8 +6356,11 @@
       push.dataset.action = "push";
       push.addEventListener("click", () => onPushClick(push, jobPositionId, matchId));
       bar.append(urgent, push);
-      const tip = kamHelp.tip("match-slack-actions");
-      if (tip) bar.appendChild(tip);
+      const tip = kamHelp.tip("slack-exports");
+      if (tip) {
+        tip.dataset.werkiaMatchActionsTip = "true";
+        bar.appendChild(tip);
+      }
       placeBar(row, bar);
       return bar;
     }
