@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.3.94
+// @version      1.3.95
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -19,6 +19,7 @@
 // @connect      nominatim.openstreetmap.org
 // @connect      router.project-osrm.org
 // @connect      hooks.zapier.com
+// @connect      srv-a1.tail4b9d62.ts.net
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/KAM.svg
 // @updateURL    https://raw.githubusercontent.com/willywerkia/tampermonkey/main/KAM-Toolbox.user.js
 // @downloadURL  https://raw.githubusercontent.com/willywerkia/tampermonkey/main/KAM-Toolbox.user.js
@@ -1746,7 +1747,7 @@
       kind: "external",
       summary: "Bei Matches mit Termin stehen in der Terminspalte „VTA Exportieren“ und „VTV Exportieren“. Sie erstellen die Slack-Nachricht mit Kandidat und Arbeitgeber, bei VTV zusätzlich mit dem Termin, und erwähnen die zuständige CEM-Person.",
       notes: [
-        "Je nach Einrichtung geht die Nachricht über Zapier direkt nach Slack oder wird in die Zwischenablage kopiert. Der Tooltip am Knopf sagt, was passiert.",
+        "Je nach Einrichtung geht die Nachricht über n8n direkt nach Slack oder wird in die Zwischenablage kopiert. Der Tooltip am Knopf sagt, was passiert.",
         "Nach dem Versand heißt der Knopf „… erneut senden“. Ein zweiter Versand braucht deine Bestätigung.",
         "VTV nimmt den spätesten Termin aus der Zeile."
       ]
@@ -5966,7 +5967,7 @@
         const data = await loadMatchData(matchId);
         const appointmentAt = latestAppointmentDate(appointmentCell(row)?.innerText);
         if (webhookUrl2) {
-          await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl2, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Zapier HTTP ${response.status}`)), onerror: reject }));
+          await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl2, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Webhook HTTP ${response.status}`)), onerror: reject }));
           markSent(matchId, type);
           button.textContent = "Gesendet";
         } else {
