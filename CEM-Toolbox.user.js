@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.6.92
+// @version      1.6.93
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1869,6 +1869,41 @@
     bulkStatusTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages, declinesInterviews: true }),
     bulkForwardTopic({ page: BULK_PAGES, routes: onBulkPages }),
     {
+      id: "candidate-bulk-status",
+      title: "Kandidat-Status gesammelt ändern",
+      page: "CEM › Meine Kandidaten",
+      routes: [ROUTES.cemMyCandidates],
+      kind: "write",
+      summary: "„Alle ändern“ im Spaltenkopf Status setzt denselben Kandidat-Status für mehrere sichtbare Kandidaten.",
+      steps: [
+        "Die Liste so filtern, dass die gewünschten Kandidaten auf der Seite stehen.",
+        "„Alle ändern“ klicken. Alle Kandidaten der Seite sind angehakt; wer nicht geändert werden soll, abhaken.",
+        "Den neuen Status wählen, die Rückfrage mit der Anzahl prüfen und bestätigen."
+      ],
+      notes: [
+        "Geändert werden nur Kandidaten der aktuell geladenen Seite. Für mehr auf einmal die Seitengröße erhöhen.",
+        "Es wird nur der Status geschrieben, genau wie über das Status-Feld in der Zeile.",
+        "„Lauf stoppen“ bricht nach dem aktuellen Kandidaten ab. Bereits geänderte bleiben geändert."
+      ]
+    },
+    {
+      id: "candidate-bulk-wvl",
+      title: "Kandidat-WVL gesammelt ändern",
+      page: "CEM › Meine Kandidaten",
+      routes: [ROUTES.cemMyCandidates],
+      kind: "write",
+      summary: "„Alle ändern“ im Spaltenkopf WVL setzt oder entfernt die Kandidat-WVL für mehrere sichtbare Kandidaten.",
+      steps: [
+        "„Alle ändern“ klicken und die Kandidaten abhaken, die unverändert bleiben sollen.",
+        "Ein Datum wählen oder das Feld leer lassen, um die WVL zu entfernen.",
+        "Die Rückfrage mit der Anzahl prüfen und bestätigen."
+      ],
+      notes: [
+        "Betrifft die Kandidat-WVL, nicht die CEM WVL der Matches. Die CEM WVL ändert „Alle ändern“ in den aufgeklappten Match-Tabellen.",
+        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
+      ]
+    },
+    {
       id: "status-colors",
       title: "Status-Farben",
       page: "CEM › Meine Matches",
@@ -3676,7 +3711,7 @@
     if (Number.isNaN(date.getTime())) return String(value);
     return date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
   }
-  function createCandidateUi({ document: document2, isTargetPage: isTargetPage2, table, getState, refreshVisibleCandidates, stopLoading, clearAllCache, helpTipHtml = () => "" }) {
+  function createCandidateUi({ document: document2, isTargetPage: isTargetPage3, table, getState, refreshVisibleCandidates, stopLoading, clearAllCache, helpTipHtml = () => "" }) {
     const SCRIPT_ID = "werkia-vakanz-kandidateninfos";
     const STYLE_ID3 = `${SCRIPT_ID}-style`;
     const PANEL_ID2 = `${SCRIPT_ID}-panel`;
@@ -3718,7 +3753,7 @@
       document2.head.appendChild(style);
     }
     function createPanel() {
-      if (!isTargetPage2()) return null;
+      if (!isTargetPage3()) return null;
       let panel = document2.getElementById(PANEL_ID2);
       if (panel) return panel;
       panel = document2.createElement("div");
@@ -3876,7 +3911,7 @@
     let generation = 0;
     let scanTimer = null;
     let targetActive = false;
-    const isTargetPage2 = () => /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i.test(location.hash);
+    const isTargetPage3 = () => /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i.test(location.hash);
     const table = createCandidateTableIntegration({
       document,
       headerAttribute: HEADER_ATTRIBUTE,
@@ -3886,7 +3921,7 @@
     const getState = () => ({ cache, queue, processing, activeCandidateId });
     const ui = createCandidateUi({
       document,
-      isTargetPage: isTargetPage2,
+      isTargetPage: isTargetPage3,
       table,
       getState,
       refreshVisibleCandidates,
@@ -3933,7 +3968,7 @@
       queuedIds.add(candidateId);
     }
     function scanTable() {
-      if (!isTargetPage2()) return;
+      if (!isTargetPage3()) return;
       ui.addStyles();
       ui.createPanel();
       table.ensureHeader();
@@ -3964,12 +3999,12 @@
       ui.updatePanelStatus();
     }
     async function processQueue() {
-      if (processing || stopRequested || !isTargetPage2()) return;
+      if (processing || stopRequested || !isTargetPage3()) return;
       processing = true;
       const currentGeneration = generation;
       processingGeneration = currentGeneration;
       try {
-        while (queue.length && !stopRequested && isTargetPage2() && currentGeneration === generation) {
+        while (queue.length && !stopRequested && isTargetPage3() && currentGeneration === generation) {
           const item = queue.shift();
           queuedIds.delete(item.id);
           activeCandidateId = item.id;
@@ -3998,12 +4033,12 @@
           processing = false;
           processingGeneration = null;
           ui.updatePanelStatus(stopRequested ? "Laden gestoppt" : "Fertig");
-          if (queue.length && !stopRequested && isTargetPage2()) runtime.setTimeout(processQueue, 0);
+          if (queue.length && !stopRequested && isTargetPage3()) runtime.setTimeout(processQueue, 0);
         }
       }
     }
     function refreshVisibleCandidates() {
-      if (!isTargetPage2()) return;
+      if (!isTargetPage3()) return;
       generation++;
       stopRequested = false;
       activeCandidateId = null;
@@ -4050,7 +4085,7 @@
     function scheduleScan() {
       runtime.clearTimeout(scanTimer);
       scanTimer = runtime.setTimeout(() => {
-        if (isTargetPage2()) {
+        if (isTargetPage3()) {
           if (!targetActive) {
             targetActive = true;
             stopRequested = false;
@@ -4063,13 +4098,13 @@
       }, 150);
     }
     const observer = runtime.createMutationObserver(() => {
-      if (isTargetPage2()) scheduleScan();
+      if (isTargetPage3()) scheduleScan();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleScan);
     runtime.addWindowListener("popstate", scheduleScan);
     runtime.setInterval(() => {
-      if (isTargetPage2()) scanTable();
+      if (isTargetPage3()) scanTable();
     }, 1500);
     scheduleScan();
   }
@@ -4552,9 +4587,9 @@
     runtime.registerSource(sourcePath);
     const {
       team,
-      isTargetPage: isTargetPage2,
+      isTargetPage: isTargetPage3,
       getRequest,
-      ids: IDS3,
+      ids: IDS4,
       fields,
       columns,
       statusOptions,
@@ -4627,34 +4662,34 @@
       return [...choices.values()];
     }
     function injectStyle() {
-      if (document.getElementById(IDS3.style)) return;
+      if (document.getElementById(IDS4.style)) return;
       const style = document.createElement("style");
-      style.id = IDS3.style;
+      style.id = IDS4.style;
       style.textContent = `
-      #${IDS3.button}, #${IDS3.statusButton}, #${IDS3.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-      #${IDS3.button}:hover, #${IDS3.statusButton}:hover, #${IDS3.forwardButton}:hover { background: #fff3e0; }
-      #${IDS3.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
-      #${IDS3.dialog}::backdrop { background: rgba(0,0,0,.38); }
-      #${IDS3.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
-      #${IDS3.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
-      #${IDS3.dialog} .wkw-body [hidden] { display: none !important; }
-      #${IDS3.dialog} label { display: grid; gap: 5px; font-weight: 700; }
-      #${IDS3.dialog} select, #${IDS3.dialog} input { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
-      #${IDS3.dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
-      #${IDS3.dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
-      #${IDS3.dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
-      #${IDS3.dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
-      #${IDS3.dialog} button:disabled { opacity: .55; cursor: wait; }
-      #${IDS3.status}[data-tone="ok"] { color: #18752b; }
-      #${IDS3.status}[data-tone="error"] { color: #b3261e; }
-      #${IDS3.status}[data-tone="busy"] { color: #995000; }
-      #${IDS3.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
-      #${IDS3.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      #${IDS4.button}, #${IDS4.statusButton}, #${IDS4.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      #${IDS4.button}:hover, #${IDS4.statusButton}:hover, #${IDS4.forwardButton}:hover { background: #fff3e0; }
+      #${IDS4.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
+      #${IDS4.dialog}::backdrop { background: rgba(0,0,0,.38); }
+      #${IDS4.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
+      #${IDS4.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
+      #${IDS4.dialog} .wkw-body [hidden] { display: none !important; }
+      #${IDS4.dialog} label { display: grid; gap: 5px; font-weight: 700; }
+      #${IDS4.dialog} select, #${IDS4.dialog} input { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      #${IDS4.dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
+      #${IDS4.dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      #${IDS4.dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
+      #${IDS4.dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
+      #${IDS4.dialog} button:disabled { opacity: .55; cursor: wait; }
+      #${IDS4.status}[data-tone="ok"] { color: #18752b; }
+      #${IDS4.status}[data-tone="error"] { color: #b3261e; }
+      #${IDS4.status}[data-tone="busy"] { color: #995000; }
+      #${IDS4.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
+      #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
     `;
       document.head.appendChild(style);
     }
     function setStatus(text, tone = "") {
-      const status2 = document.getElementById(IDS3.status);
+      const status2 = document.getElementById(IDS4.status);
       if (!status2) return;
       status2.textContent = text;
       status2.dataset.tone = tone;
@@ -4700,10 +4735,10 @@
       if (!running) dialog.remove();
     }
     function renderDialog() {
-      document.getElementById(IDS3.dialog)?.remove();
+      document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
-      dialog.id = IDS3.dialog;
+      dialog.id = IDS4.dialog;
       dialog.innerHTML = `
       <div class="wkw-head">${team} WVL gesammelt ändern${tip("wvl")}</div>
       <form class="wkw-body" method="dialog">
@@ -4717,7 +4752,7 @@
           <input name="date" type="date">
         </label>
         <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Datumsfeld leer lassen, um die ${team} WVL zu entfernen statt sie zu setzen.</div>
-        <div id="${IDS3.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
+        <div id="${IDS4.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Datum anwenden</button>
@@ -4744,10 +4779,10 @@
       dateInput.focus();
     }
     function renderStatusDialog() {
-      document.getElementById(IDS3.dialog)?.remove();
+      document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
-      dialog.id = IDS3.dialog;
+      dialog.id = IDS4.dialog;
       const outConsequences = [
         `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
         declineInterviewsOnOut ? "Bei „Out“ werden offene Terminvorschläge abgelehnt." : "",
@@ -4778,7 +4813,7 @@
           <input name="outFeedbackText" type="text" maxlength="200">
         </label>
         <div class="wkw-note">Standardmäßig werden alle aktuell sichtbaren Matches aller Arbeitgeber geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. ${outConsequences}</div>
-        <div id="${IDS3.status}">Bitte Arbeitgeber und ${team} Status prüfen.</div>
+        <div id="${IDS4.status}">Bitte Arbeitgeber und ${team} Status prüfen.</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Status anwenden</button>
@@ -4814,10 +4849,10 @@
       statusSelect.focus();
     }
     function renderForwardDialog() {
-      document.getElementById(IDS3.dialog)?.remove();
+      document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
-      dialog.id = IDS3.dialog;
+      dialog.id = IDS4.dialog;
       dialog.innerHTML = `
       <div class="wkw-head">Terminvorschläge gesammelt weiterleiten${tip("forward")}</div>
       <form class="wkw-body" method="dialog">
@@ -4828,7 +4863,7 @@
           </select>
         </label>
         <div class="wkw-note">Alle Terminvorschläge mit Status „Vorschlag“ der ausgewählten sichtbaren Matches werden auf „Weitergeleitet“ gesetzt, wie mit dem Button „Weiterleiten“ im Termindialog. Vor dem Weiterleiten wird die genaue Anzahl angezeigt.</div>
-        <div id="${IDS3.status}">Bitte Arbeitgeber prüfen.</div>
+        <div id="${IDS4.status}">Bitte Arbeitgeber prüfen.</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
           <button type="button" data-action="apply">Weiterleiten</button>
@@ -4873,13 +4908,13 @@
       customInput.dispatchEvent(new Event("blur", { bubbles: true }));
     }
     function installNativeOutFeedbackDropdown(dialog) {
-      if (dialog.querySelector(`#${IDS3.feedbackShortcuts}`)) return;
+      if (dialog.querySelector(`#${IDS4.feedbackShortcuts}`)) return;
       const customInput = dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]');
       const othersRadio = dialog.querySelector('input[name="feedback"][value="others"]');
       const anchor = customInput?.closest(".MuiFormControl-root") || customInput?.parentElement || othersRadio?.closest("label") || othersRadio?.parentElement;
       if (!anchor) return;
       const shortcuts = document.createElement("label");
-      shortcuts.id = IDS3.feedbackShortcuts;
+      shortcuts.id = IDS4.feedbackShortcuts;
       shortcuts.innerHTML = `<span style="display:inline-flex;align-items:center;">${team}-Feedback${tip("outFeedback")}</span>
       <select name="werkia${team[0]}${team.slice(1).toLowerCase()}OutFeedback">
         <option value="">Bitte auswählen</option>
@@ -5177,25 +5212,25 @@
       header.appendChild(button);
     }
     function installHeaderButtons() {
-      if (!isTargetPage2()) return;
+      if (!isTargetPage3()) return;
       injectStyle();
       installButton(
         document.querySelector(`th.column-${columns.followUp}`),
-        IDS3.button,
+        IDS4.button,
         "Alle ändern",
         `${team}-WVL-Datum für alle sichtbaren Matches eines Arbeitgebers ändern`,
         renderDialog
       );
       installButton(
         document.querySelector(`th.column-${columns.status}`),
-        IDS3.statusButton,
+        IDS4.statusButton,
         "Alle ändern",
         `${team} Status für alle sichtbaren Matches eines Arbeitgebers ändern`,
         renderStatusDialog
       );
       installButton(
         document.querySelector(`th.column-${columns.interview}`),
-        IDS3.forwardButton,
+        IDS4.forwardButton,
         "Alle weiterleiten",
         "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten",
         renderForwardDialog
@@ -5207,8 +5242,8 @@
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        if (!isTargetPage2()) {
-          document.getElementById(IDS3.dialog)?.remove();
+        if (!isTargetPage3()) {
+          document.getElementById(IDS4.dialog)?.remove();
           return;
         }
         installHeaderButtons();
@@ -5281,6 +5316,328 @@
         forward: () => cemHelp.tipHtml("bulk-forward", { tone: "dark" })
       }
     });
+  }
+
+  // src/features/candidate-bulk-actions.js
+  var IDS2 = {
+    wvlButton: "werkia-cem-candidate-wvl-bulk-button",
+    statusButton: "werkia-cem-candidate-status-bulk-button",
+    dialog: "werkia-cem-candidate-bulk-dialog",
+    style: "werkia-cem-candidate-bulk-style",
+    status: "werkia-cem-candidate-bulk-status"
+  };
+  var ROW_SELECTOR2 = "tbody tr.RaDataTable-row";
+  var CANDIDATE_LINK_SELECTOR = 'a[href*="#/Candidate/"]';
+  var CANDIDATE_STATUS_OPTIONS = [
+    { value: "onboarding", label: "Onboarding" },
+    { value: "follow_up", label: "Follow up" },
+    { value: "no_phone", label: "No phone" },
+    { value: "send_reminder", label: "Send reminder" },
+    { value: "reached_no_documents", label: "Reached no documents" },
+    { value: "send_to_growth", label: "Aktiv (Push Growth)" },
+    { value: "cem", label: "CEM" },
+    { value: "inactive", label: "Inaktiv" },
+    { value: "disqualified", label: "Disqualified" },
+    { value: "hired", label: "Hired" },
+    { value: "blacklist", label: "Blacklist" },
+    { value: "interested_but_no_jobs", label: "Interested but no jobs" },
+    { value: "new_jobs", label: "New jobs" },
+    { value: "active", label: "Aktiv (OB fertig)" }
+  ];
+  var UPDATE_CANDIDATE_STATUS_MUTATION = `mutation updateCandidate($id: UUID!, $status: String) {
+  data: updateCandidate(id: $id, status: $status) {
+    id
+    status
+  }
+}`;
+  var UPDATE_CANDIDATE_FOLLOW_UP_MUTATION = `mutation updateCandidate($id: UUID!, $followUpDate: Date) {
+  data: updateCandidate(id: $id, followUpDate: $followUpDate) {
+    id
+    followUpDate
+  }
+}`;
+  function isTargetPage2(hash = location.hash) {
+    return /#\/CEM\/MyCandidates(?:[/?]|$)/i.test(hash);
+  }
+  function candidateIdFromHref(href) {
+    return String(href || "").match(/#\/Candidate\/([0-9a-f-]{36})(?:[/?]|$)/i)?.[1] || "";
+  }
+  function followUpConfirmed(actual, expected) {
+    if (expected === null) return actual == null || actual === "";
+    return String(actual || "").slice(0, 10) === expected;
+  }
+  function executeCandidateBulkActions(runtime) {
+    runtime.registerSource("cem/toolbox/src/features/candidate-bulk-actions.js");
+    let running = false;
+    let cancelRequested = false;
+    const tip = (id) => cemHelp.tipHtml(id, { tone: "dark" });
+    const normalize3 = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    function getCandidates() {
+      const seen = /* @__PURE__ */ new Set();
+      return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(":scope > td.column-status") && row.querySelector(":scope > td.column-followUpDate")).map((row) => {
+        const link = row.querySelector(`:scope > td ${CANDIDATE_LINK_SELECTOR}`);
+        const id = candidateIdFromHref(link?.getAttribute("href") || link?.href);
+        return id ? { id, name: normalize3(link.textContent) || id } : null;
+      }).filter((candidate) => candidate && !seen.has(candidate.id) && seen.add(candidate.id));
+    }
+    function injectStyle() {
+      if (document.getElementById(IDS2.style)) return;
+      const style = document.createElement("style");
+      style.id = IDS2.style;
+      const dialog = `#${IDS2.dialog}`;
+      style.textContent = `
+      #${IDS2.wvlButton}, #${IDS2.statusButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      #${IDS2.wvlButton}:hover, #${IDS2.statusButton}:hover { background: #fff3e0; }
+      ${dialog} { width: min(480px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
+      ${dialog}::backdrop { background: rgba(0,0,0,.38); }
+      ${dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
+      ${dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
+      ${dialog} label { display: grid; gap: 5px; font-weight: 700; }
+      ${dialog} select, ${dialog} input[type="date"] { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      ${dialog} .wkw-list { max-height: 240px; overflow: auto; border: 1px solid #ddd; border-radius: 5px; padding: 6px 10px; }
+      ${dialog} .wkw-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; padding: 3px 0; }
+      ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
+      ${dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
+      ${dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      ${dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
+      ${dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
+      ${dialog} button:disabled { opacity: .55; cursor: wait; }
+      #${IDS2.status}[data-tone="ok"] { color: #18752b; }
+      #${IDS2.status}[data-tone="error"] { color: #b3261e; }
+      #${IDS2.status}[data-tone="busy"] { color: #995000; }
+    `;
+      document.head.appendChild(style);
+    }
+    function setStatus(text, tone = "") {
+      const status2 = document.getElementById(IDS2.status);
+      if (!status2) return;
+      status2.textContent = text;
+      status2.dataset.tone = tone;
+    }
+    function candidateListHtml(candidates) {
+      return `
+      <div class="wkw-list">
+        <label class="wkw-all"><input type="checkbox" data-all checked> Alle (${candidates.length} sichtbare Kandidaten)</label>
+        ${candidates.map((candidate) => `<label><input type="checkbox" name="candidate" value="${escapeHtml(candidate.id)}" checked> ${escapeHtml(candidate.name)}</label>`).join("")}
+      </div>`;
+    }
+    function wireCandidateList(dialog) {
+      const all = dialog.querySelector("[data-all]");
+      const boxes = [...dialog.querySelectorAll('input[name="candidate"]')];
+      all.addEventListener("change", () => boxes.forEach((box) => {
+        box.checked = all.checked;
+      }));
+      boxes.forEach((box) => box.addEventListener("change", () => {
+        const checked = boxes.filter((item) => item.checked).length;
+        all.checked = checked === boxes.length;
+        all.indeterminate = checked > 0 && checked < boxes.length;
+      }));
+    }
+    function selectedCandidates(dialog, candidates) {
+      const ids = new Set([...dialog.querySelectorAll('input[name="candidate"]:checked')].map((box) => box.value));
+      return candidates.filter((candidate) => ids.has(candidate.id));
+    }
+    function setRunningControls(dialog, isRunning) {
+      dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
+        element.disabled = isRunning;
+      });
+      const stopButton = dialog.querySelector('[data-action="close"]');
+      stopButton.disabled = false;
+      stopButton.hidden = false;
+      stopButton.textContent = isRunning ? "Lauf stoppen" : "Abbrechen";
+    }
+    function finishDialog(dialog) {
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      setRunningControls(dialog, false);
+      applyButton.dataset.completed = "true";
+      applyButton.textContent = "Fertig – schließen";
+      dialog.querySelector('[data-action="close"]').hidden = true;
+      applyButton.focus();
+    }
+    function handleCloseOrCancel(dialog) {
+      if (!running) {
+        dialog.close();
+        return;
+      }
+      cancelRequested = true;
+      const stopButton = dialog.querySelector('[data-action="close"]');
+      stopButton.disabled = true;
+      stopButton.textContent = "Wird gestoppt …";
+      setStatus("Stopp angefordert. Der aktuelle Kandidat wird noch beendet; weitere bleiben unverändert.", "busy");
+    }
+    function handleDialogClose(dialog) {
+      if (dialog.dataset.needsReload === "true") {
+        dialog.remove();
+        if (!reloadAdminPanel()) window.alert('Änderung gespeichert. Der Adminpanel-Button "Neu laden" wurde nicht gefunden, bitte die Seite neu laden.');
+        return;
+      }
+      if (!running) dialog.remove();
+    }
+    function openDialog({ title, helpTopic, fieldHtml, note, applyLabel, onApply, focusSelector }) {
+      document.getElementById(IDS2.dialog)?.remove();
+      const candidates = getCandidates();
+      if (!candidates.length) return window.alert("Keine sichtbaren Kandidaten gefunden.");
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS2.dialog;
+      dialog.innerHTML = `
+      <div class="wkw-head">${title}${tip(helpTopic)}</div>
+      <form class="wkw-body" method="dialog">
+        ${candidateListHtml(candidates)}
+        ${fieldHtml}
+        <div class="wkw-note">${note}</div>
+        <div id="${IDS2.status}"></div>
+        <div class="wkw-actions">
+          <button type="button" data-action="close">Abbrechen</button>
+          <button type="button" data-action="apply">${applyLabel}</button>
+        </div>
+      </form>`;
+      document.body.appendChild(dialog);
+      wireCandidateList(dialog);
+      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
+      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
+        if (event.currentTarget.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        onApply(dialog, candidates);
+      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
+      dialog.showModal();
+      dialog.querySelector(focusSelector)?.focus();
+      return dialog;
+    }
+    async function runQueue(dialog, queue, label2, update) {
+      running = true;
+      cancelRequested = false;
+      dialog.querySelector('[data-action="apply"]').dataset.completed = "false";
+      setRunningControls(dialog, true);
+      let changed = 0;
+      const failures = [];
+      for (let index = 0; index < queue.length; index += 1) {
+        if (cancelRequested) break;
+        setStatus(`Ändere ${label2} ${index + 1} von ${queue.length} …`, "busy");
+        try {
+          await update(queue[index]);
+          changed += 1;
+        } catch (error) {
+          failures.push(`${queue[index].name}: ${error.message}`);
+        }
+      }
+      running = false;
+      if (changed > 0) dialog.dataset.needsReload = "true";
+      return { changed, failures };
+    }
+    function reportResult({ changed, failures }, successText) {
+      if (cancelRequested) {
+        setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Kandidaten blieben unverändert.`, "busy");
+      } else if (failures.length) {
+        setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else {
+        setStatus(successText(changed), "ok");
+      }
+    }
+    async function updateStatus(candidate, target) {
+      const result = await getCemGraphqlAdapter().request(UPDATE_CANDIDATE_STATUS_MUTATION, { id: candidate.id, status: target.value });
+      if (result?.data?.id !== candidate.id || result.data.status !== target.value) {
+        throw new Error(`Status wurde nicht auf „${target.label}“ bestätigt`);
+      }
+    }
+    async function updateFollowUp(candidate, date) {
+      const result = await getCemGraphqlAdapter().request(UPDATE_CANDIDATE_FOLLOW_UP_MUTATION, { id: candidate.id, followUpDate: date });
+      if (result?.data?.id !== candidate.id || !followUpConfirmed(result.data.followUpDate, date)) {
+        throw new Error(date ? `WVL wurde nicht auf ${date} bestätigt` : "WVL wurde nicht entfernt");
+      }
+    }
+    function renderStatusDialog() {
+      openDialog({
+        title: "Kandidat-Status gesammelt ändern",
+        helpTopic: "candidate-bulk-status",
+        fieldHtml: `
+        <label>Neuer Kandidat-Status
+          <select name="status">
+            <option value="__choose__">Bitte auswählen</option>
+            ${CANDIDATE_STATUS_OPTIONS.map((option) => `<option value="${option.value}">${option.label}</option>`).join("")}
+          </select>
+        </label>`,
+        note: "Geändert wird der Status der angehakten Kandidaten, so wie über das Status-Feld in der Zeile. Kandidaten, die danach nicht mehr zum Filter passen, verschwinden nach dem Neuladen aus der Liste.",
+        applyLabel: "Status anwenden",
+        focusSelector: '[name="status"]',
+        onApply: async (dialog, candidates) => {
+          if (running) return;
+          const target = CANDIDATE_STATUS_OPTIONS.find((option) => option.value === dialog.querySelector('[name="status"]').value);
+          const queue = selectedCandidates(dialog, candidates);
+          if (!queue.length) return setStatus("Bitte mindestens einen Kandidaten anhaken.", "error");
+          if (!target) return setStatus("Bitte einen Status auswählen.", "error");
+          if (!window.confirm(`${queue.length} Kandidaten auf Status „${target.label}“ setzen?`)) return;
+          const result = await runQueue(dialog, queue, "Status", (candidate) => updateStatus(candidate, target));
+          reportResult(result, (changed) => `${changed} Kandidaten erfolgreich auf „${target.label}“ gesetzt.`);
+          finishDialog(dialog);
+        }
+      });
+    }
+    function renderWvlDialog() {
+      const dialog = openDialog({
+        title: "Kandidat-WVL gesammelt ändern",
+        helpTopic: "candidate-bulk-wvl",
+        fieldHtml: '<label>Neues WVL-Datum<input name="date" type="date"></label>',
+        note: "Geändert wird die Kandidat-WVL (Spalte „WVL“) der angehakten Kandidaten, nicht die CEM WVL der Matches. Datumsfeld leer lassen, um die WVL zu entfernen.",
+        applyLabel: "WVL entfernen",
+        focusSelector: '[name="date"]',
+        onApply: async (dialogRef, candidates) => {
+          if (running) return;
+          const date = dialogRef.querySelector('[name="date"]').value || null;
+          const queue = selectedCandidates(dialogRef, candidates);
+          if (!queue.length) return setStatus("Bitte mindestens einen Kandidaten anhaken.", "error");
+          const formatted = date ? date.split("-").reverse().join(".") : "";
+          const question = date ? `Kandidat-WVL von ${queue.length} Kandidaten auf ${formatted} setzen?` : `Kandidat-WVL von ${queue.length} Kandidaten entfernen?`;
+          if (!window.confirm(question)) return;
+          const result = await runQueue(dialogRef, queue, "WVL", (candidate) => updateFollowUp(candidate, date));
+          reportResult(result, (changed) => date ? `${changed} Kandidat-WVL erfolgreich auf ${formatted} gesetzt.` : `${changed} Kandidat-WVL erfolgreich entfernt.`);
+          finishDialog(dialogRef);
+        }
+      });
+      if (!dialog) return;
+      const dateInput = dialog.querySelector('[name="date"]');
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      dateInput.addEventListener("input", () => {
+        applyButton.textContent = dateInput.value ? "Datum anwenden" : "WVL entfernen";
+      });
+    }
+    function installButton(header, id, title, render) {
+      if (!header || document.getElementById(id)) return;
+      const button = document.createElement("button");
+      button.id = id;
+      button.type = "button";
+      button.textContent = "Alle ändern";
+      button.title = title;
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        render();
+      });
+      header.appendChild(button);
+    }
+    function installHeaderButtons() {
+      injectStyle();
+      installButton(document.querySelector("th.column-status"), IDS2.statusButton, "Status für alle angehakten sichtbaren Kandidaten ändern", renderStatusDialog);
+      installButton(document.querySelector("th.column-followUpDate"), IDS2.wvlButton, "Kandidat-WVL für alle angehakten sichtbaren Kandidaten ändern", renderWvlDialog);
+    }
+    let scheduled = false;
+    const scheduleInstall = () => {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        if (!isTargetPage2()) {
+          if (!running) document.getElementById(IDS2.dialog)?.remove();
+          return;
+        }
+        installHeaderButtons();
+      }, 150);
+    };
+    runtime.createMutationObserver(scheduleInstall).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleInstall);
+    scheduleInstall();
   }
 
   // ../../shared/js/list-filter-presets/core.js
@@ -5439,7 +5796,7 @@
   }
 
   // ../../shared/js/list-filter-presets/index.js
-  var IDS2 = {
+  var IDS3 = {
     bar: "werkia-filter-presets-bar",
     select: "werkia-filter-presets-select",
     style: "werkia-filter-presets-style",
@@ -5482,33 +5839,33 @@
       const element = document.getElementById(id);
       return element?.dataset.werkiaPresetsOwner === owner ? element : null;
     };
-    const isTargetPage2 = () => isTargetRoute(location.hash, routes);
+    const isTargetPage3 = () => isTargetRoute(location.hash, routes);
     const currentRoute = () => routeFromHash(location.hash);
     const ownPresets = () => presetsForRoute(presetStorage.load(), currentRoute());
     function ensureStyle() {
-      if (document.getElementById(IDS2.style)) return;
+      if (document.getElementById(IDS3.style)) return;
       const style = document.createElement("style");
-      style.id = IDS2.style;
+      style.id = IDS3.style;
       style.textContent = `
-      #${IDS2.bar} { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 10px; padding:8px 10px; border:1px solid #d7dae6; border-radius:8px; background:#f7f8fc; font:400 13px/1.3 Arial,sans-serif; }
-      #${IDS2.bar} > strong { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#5a6178; }
-      #${IDS2.select} { min-width:230px; height:30px; padding:4px 8px; border:1px solid #c8ccdd; border-radius:6px; background:#fff; color:#1f2933; font:400 13px/1.3 Arial,sans-serif; }
-      #${IDS2.bar} button { min-height:30px; padding:5px 10px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
-      #${IDS2.bar} button:hover { background:#3643c7; }
-      #${IDS2.bar} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
-      #${IDS2.bar} button.werkia-filter-presets-secondary:hover { background:#d7dbf0; }
-      #${IDS2.dialog} { position:fixed; inset:0; z-index:2147483000; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.45); }
-      #${IDS2.dialog} .werkia-filter-presets-card { width:min(600px,92vw); max-height:82vh; overflow:auto; padding:18px; border-radius:10px; background:#fff; font:400 13px/1.4 Arial,sans-serif; }
-      #${IDS2.dialog} h2 { margin:0 0 12px; font-size:15px; }
-      #${IDS2.dialog} p { margin:0 0 10px; color:#6b7280; font-size:12px; }
-      #${IDS2.dialog} ul { margin:0 0 14px; padding:0; list-style:none; }
-      #${IDS2.dialog} li { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #eceef6; }
-      #${IDS2.dialog} .werkia-filter-presets-name { flex:1; font-weight:700; }
-      #${IDS2.dialog} .werkia-filter-presets-fields { flex:1; color:#6b7280; font-size:11px; }
-      #${IDS2.dialog} textarea { width:100%; min-height:120px; margin-bottom:10px; padding:8px; border:1px solid #c8ccdd; border-radius:6px; font:400 12px/1.4 monospace; }
-      #${IDS2.dialog} button { min-height:28px; padding:5px 10px; margin-right:6px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
-      #${IDS2.dialog} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
-      #${IDS2.dialog} button.werkia-filter-presets-danger { background:#f8d7da; color:#a02334; }
+      #${IDS3.bar} { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 10px; padding:8px 10px; border:1px solid #d7dae6; border-radius:8px; background:#f7f8fc; font:400 13px/1.3 Arial,sans-serif; }
+      #${IDS3.bar} > strong { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#5a6178; }
+      #${IDS3.select} { min-width:230px; height:30px; padding:4px 8px; border:1px solid #c8ccdd; border-radius:6px; background:#fff; color:#1f2933; font:400 13px/1.3 Arial,sans-serif; }
+      #${IDS3.bar} button { min-height:30px; padding:5px 10px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+      #${IDS3.bar} button:hover { background:#3643c7; }
+      #${IDS3.bar} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
+      #${IDS3.bar} button.werkia-filter-presets-secondary:hover { background:#d7dbf0; }
+      #${IDS3.dialog} { position:fixed; inset:0; z-index:2147483000; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.45); }
+      #${IDS3.dialog} .werkia-filter-presets-card { width:min(600px,92vw); max-height:82vh; overflow:auto; padding:18px; border-radius:10px; background:#fff; font:400 13px/1.4 Arial,sans-serif; }
+      #${IDS3.dialog} h2 { margin:0 0 12px; font-size:15px; }
+      #${IDS3.dialog} p { margin:0 0 10px; color:#6b7280; font-size:12px; }
+      #${IDS3.dialog} ul { margin:0 0 14px; padding:0; list-style:none; }
+      #${IDS3.dialog} li { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #eceef6; }
+      #${IDS3.dialog} .werkia-filter-presets-name { flex:1; font-weight:700; }
+      #${IDS3.dialog} .werkia-filter-presets-fields { flex:1; color:#6b7280; font-size:11px; }
+      #${IDS3.dialog} textarea { width:100%; min-height:120px; margin-bottom:10px; padding:8px; border:1px solid #c8ccdd; border-radius:6px; font:400 12px/1.4 monospace; }
+      #${IDS3.dialog} button { min-height:28px; padding:5px 10px; margin-right:6px; border:0; border-radius:6px; background:#4956df; color:#fff; cursor:pointer; font:700 12px/1 Arial,sans-serif; }
+      #${IDS3.dialog} button.werkia-filter-presets-secondary { background:#e7e9f6; color:#3643c7; }
+      #${IDS3.dialog} button.werkia-filter-presets-danger { background:#f8d7da; color:#a02334; }
     `;
       document.head.appendChild(style);
     }
@@ -5524,13 +5881,13 @@
       render();
     }
     function closeDialog() {
-      ownElement(IDS2.dialog)?.remove();
+      ownElement(IDS3.dialog)?.remove();
     }
     function renderManager() {
       closeDialog();
       const route = currentRoute();
       const overlay = document.createElement("div");
-      overlay.id = IDS2.dialog;
+      overlay.id = IDS3.dialog;
       overlay.dataset.werkiaPresetsOwner = owner;
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) closeDialog();
@@ -5608,12 +5965,12 @@
     }
     function buildBar() {
       const bar = document.createElement("div");
-      bar.id = IDS2.bar;
+      bar.id = IDS3.bar;
       bar.dataset.werkiaPresetsOwner = owner;
       const title = document.createElement("strong");
       title.textContent = label2;
       const select = document.createElement("select");
-      select.id = IDS2.select;
+      select.id = IDS3.select;
       select.addEventListener("change", () => {
         const preset = [...builtInPresets, ...ownPresets()].find((entry) => entry.id === select.value);
         if (preset) applyPreset(preset);
@@ -5671,13 +6028,13 @@
       select.value = active;
     }
     function render() {
-      if (!isTargetPage2()) {
-        ownElement(IDS2.bar)?.remove();
+      if (!isTargetPage3()) {
+        ownElement(IDS3.bar)?.remove();
         closeDialog();
         return;
       }
       ensureStyle();
-      let bar = document.getElementById(IDS2.bar);
+      let bar = document.getElementById(IDS3.bar);
       if (bar && bar.dataset.werkiaPresetsOwner !== owner) return;
       if (!bar) {
         const anchor = findListAnchor(document);
@@ -5685,7 +6042,7 @@
         bar = buildBar();
         anchor.parentElement.insertBefore(bar, anchor);
       }
-      fillSelect(bar.querySelector(`#${IDS2.select}`));
+      fillSelect(bar.querySelector(`#${IDS3.select}`));
     }
     let scheduled = false;
     const scheduleRender = () => {
@@ -6011,7 +6368,7 @@
 
   // ../../shared/js/no-go-check/index.js
   var POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
-  var ROW_SELECTOR2 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var ROW_SELECTOR3 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
   var LEVEL_STYLES = {
     direct: { badge: "border:2px solid #450a0a;background:#7f1d1d;color:#fff;", accent: "#7f1d1d", tint: "#f7dcdc" },
     group: { badge: "border:2px solid #7f1d1d;background:#b91c1c;color:#fff;", accent: "#b91c1c", tint: "#fae3e3" },
@@ -6114,7 +6471,7 @@
         loadCandidateNoGos(candidateId);
         return;
       }
-      const rows = [...document.querySelectorAll(ROW_SELECTOR2)];
+      const rows = [...document.querySelectorAll(ROW_SELECTOR3)];
       if (!noGos.length) {
         rows.forEach(clearRow);
         return;
@@ -6173,6 +6530,7 @@
     // First: installs the delegated ?-button handling the features below use.
     { id: "toolbox-help", execute: executeToolboxHelp },
     { id: "cem-bulk-match-actions", execute: executeBulkMatchActions2 },
+    { id: "cem-candidate-bulk-actions", execute: executeCandidateBulkActions },
     { id: "cem-ofm-contact-badges", execute: executeCemOfmContactBadges },
     { id: "cem-ofm-reverse-match-kam-status", execute: executeReverseMatchKamStatus },
     { id: "cem-ofm-company-flag", execute: executeCompanyFlag },

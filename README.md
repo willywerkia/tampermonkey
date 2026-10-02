@@ -37,6 +37,7 @@ Enthaltene Funktionen:
 
 - Kleine ?-Knoepfe an Dialogen, Leisten und Panels erklaeren die jeweilige Funktion. Der Hilfe-Knopf unten links und der Tampermonkey-Menueeintrag oeffnen eine Uebersicht aller Funktionen mit Kennzeichnung, ob sie nur anzeigen oder Daten aendern.
 - Setzt in CEM Meine Matches CEM WVL und CEM Status fuer alle sichtbaren Matches (optional nur eines Arbeitgebers) gleichzeitig. Bei Hired und Out wird die CEM WVL geleert, Out braucht einen Grund und lehnt offene Terminvorschlaege ab. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der sichtbaren Matches weiter.
+- Setzt in CEM Meine Kandidaten Kandidat-Status und Kandidat-WVL fuer mehrere sichtbare Kandidaten gleichzeitig. Der Dialog listet alle Kandidaten der aktuellen Seite zum An- und Abhaken.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Rueckmeldegeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
 - Markiert Vorschlaege, wenn beim Arbeitgeber bereits ein Match auf den Status "Senden" gestellt wurde. Bis 90 Tage bleibt die Zeile rot gefuellt, danach nur rot umrandet. Der Hinweis zeigt den Zeitpunkt der Statusaenderung und bei derselben Vakanz den KAM-Status.
 - Markiert Zeilen von Arbeitgebern mit besonderer Absprache (GA-TEC) farblich mit Hinweistext "[Absprache vor OFM]".
