@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.6.96
+// @version      1.7.97
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1637,7 +1637,7 @@
       ]
     };
   }
-  function bulkWvlTopic({ team, page, routes }) {
+  function bulkWvlTopic({ team, page, routes, extraNotes = [] }) {
     return {
       id: "bulk-wvl",
       title: `${team} WVL gesammelt ändern`,
@@ -1647,17 +1647,20 @@
       summary: `„Alle ändern“ im Spaltenkopf ${team} WVL setzt oder entfernt das Wiedervorlagedatum für viele Matches auf einmal.`,
       steps: [
         "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
-        "„Alle ändern“ klicken, einen Arbeitgeber wählen oder alle sichtbaren lassen, dann ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
+        "„Alle ändern“ klicken.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
       ],
       notes: [
         "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
         "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
-        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
+        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte.",
+        ...extraNotes
       ]
     };
   }
-  function bulkStatusTopic({ team, page, routes, declinesInterviews = false }) {
+  function bulkStatusTopic({ team, page, routes, declinesInterviews = false, freeTextReason = false, extraNotes = [] }) {
     return {
       id: "bulk-status",
       title: `${team} Status gesammelt ändern`,
@@ -1666,19 +1669,21 @@
       kind: "write",
       summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
       steps: [
-        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
-        `Den neuen ${team} Status wählen. Bei „Out“ ist ein Grund Pflicht.`,
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        `Den neuen ${team} Status wählen. „Leer“ entfernt den Status. Bei „Out“ ist ein Grund Pflicht${freeTextReason ? ", bei „Anderes“ zusätzlich ein eigener Text" : ""}.`,
         "Die Rückfrage prüfen und bestätigen."
       ],
       notes: [
         `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
         declinesInterviews ? "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt." : "",
-        "Betroffen sind nur die aktuell sichtbaren Zeilen.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert."
+        "Zur Auswahl stehen nur die aktuell sichtbaren Zeilen.",
+        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte.",
+        ...extraNotes
       ].filter(Boolean)
     };
   }
-  function bulkForwardTopic({ page, routes }) {
+  function bulkForwardTopic({ page, routes, extraNotes = [] }) {
     return {
       id: "bulk-forward",
       title: "Terminvorschläge gesammelt weiterleiten",
@@ -1687,17 +1692,18 @@
       kind: "write",
       summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
       steps: [
-        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
         "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
       ],
       notes: [
         "Termine mit einem anderen Status bleiben unberührt.",
-        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Weitergeleitete Termine werden sofort blau eingefärbt."
+        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Weitergeleitete Termine werden sofort blau eingefärbt.",
+        ...extraNotes
       ]
     };
   }
-  function bulkDeclinePastTopic({ page, routes }) {
+  function bulkDeclinePastTopic({ page, routes, extraNotes = [] }) {
     return {
       id: "bulk-decline-past",
       title: "Vergangene Terminvorschläge ablehnen",
@@ -1706,14 +1712,15 @@
       kind: "write",
       summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
       steps: [
-        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
         "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
       ],
       notes: [
         "Hat ein Vorschlag noch mindestens einen Termin in der Zukunft, bleibt er stehen.",
         "Weitergeleitete, bestätigte und stattgefundene Termine bleiben unberührt.",
-        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Sind alle Vorschläge eines Matches abgelehnt, werden seine Pills ausgegraut und durchgestrichen."
+        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Sind alle Vorschläge eines Matches abgelehnt, werden seine Pills ausgegraut und durchgestrichen.",
+        ...extraNotes
       ]
     };
   }
@@ -1870,6 +1877,7 @@
   var onMyMatches = [ROUTES.cemMyMatches];
   var BULK_PAGES = "CEM › Meine Kandidaten (aufgeklappte Matches)";
   var onBulkPages = [ROUTES.cemMyMatches, ROUTES.cemMyCandidates];
+  var bulkPageNotes = ["In Meine Kandidaten sitzen die Knöpfe im Kopf der ersten aufgeklappten Match-Tabelle. Der Dialog listet die Matches aller aufgeklappten Kandidaten; der Kandidat-Status und die Kandidat-WVL bleiben dabei unverändert."];
   var CEM_HELP_TOPICS = [
     {
       id: "vacancy-candidate-info",
@@ -1885,10 +1893,10 @@
         "Geladene Infos bleiben 4 Stunden im Browser gespeichert. Im Adminpanel wird nichts geändert."
       ]
     },
-    bulkWvlTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages }),
-    bulkStatusTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages, declinesInterviews: true }),
-    bulkForwardTopic({ page: BULK_PAGES, routes: onBulkPages }),
-    bulkDeclinePastTopic({ page: BULK_PAGES, routes: onBulkPages }),
+    bulkWvlTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages, extraNotes: bulkPageNotes }),
+    bulkStatusTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages, declinesInterviews: true, freeTextReason: true, extraNotes: bulkPageNotes }),
+    bulkForwardTopic({ page: BULK_PAGES, routes: onBulkPages, extraNotes: bulkPageNotes }),
+    bulkDeclinePastTopic({ page: BULK_PAGES, routes: onBulkPages, extraNotes: bulkPageNotes }),
     {
       id: "candidate-bulk-status",
       title: "Kandidat-Status gesammelt ändern",
@@ -4495,6 +4503,238 @@
     return true;
   }
 
+  // ../../shared/js/bulk-match-actions/dialog-kit.js
+  function checklistHtml({ items, allLabel }) {
+    const groups = /* @__PURE__ */ new Map();
+    items.forEach((item) => {
+      const key = item.groupKey ?? item.group ?? "";
+      if (!groups.has(key)) groups.set(key, { label: item.group || "", entries: [] });
+      groups.get(key).entries.push(item);
+    });
+    const entry = (item) => `<label class="wkw-item"><input type="checkbox" name="item" value="${escapeHtml(item.value)}" checked> ${escapeHtml(item.label)}</label>`;
+    const body = [...groups.values()].map(({ label: label2, entries }) => label2 ? `<div class="wkw-group"><label class="wkw-group-head"><input type="checkbox" data-group checked> ${escapeHtml(label2)} (${entries.length})</label>${entries.map(entry).join("")}</div>` : entries.map(entry).join("")).join("");
+    return `
+    <div class="wkw-list">
+      <label class="wkw-all"><input type="checkbox" data-all checked> ${escapeHtml(allLabel)}</label>
+      ${body}
+    </div>`;
+  }
+  function syncBox(box, children) {
+    const checked = children.filter((child) => child.checked).length;
+    box.checked = checked === children.length && checked > 0;
+    box.indeterminate = checked > 0 && checked < children.length;
+  }
+  function wireChecklist(root) {
+    const all = root.querySelector("[data-all]");
+    const items = [...root.querySelectorAll('input[name="item"]')];
+    const groups = [...root.querySelectorAll(".wkw-group")].map((group) => ({
+      box: group.querySelector("[data-group]"),
+      items: [...group.querySelectorAll('input[name="item"]')]
+    }));
+    const sync = () => {
+      groups.forEach((group) => syncBox(group.box, group.items));
+      syncBox(all, items);
+    };
+    all.addEventListener("change", () => {
+      items.forEach((item) => {
+        item.checked = all.checked;
+      });
+      sync();
+    });
+    groups.forEach((group) => group.box.addEventListener("change", () => {
+      group.items.forEach((item) => {
+        item.checked = group.box.checked;
+      });
+      sync();
+    }));
+    items.forEach((item) => item.addEventListener("change", sync));
+  }
+  function checkedValues(root) {
+    return new Set([...root.querySelectorAll('input[name="item"]:checked')].map((box) => box.value));
+  }
+  function createBulkDialogKit({ ids, buttonIds = [], extraCss = "", stopNoun = "Zeile", reloadMissingText }) {
+    const state = { running: false, cancelRequested: false };
+    function injectStyle() {
+      if (document.getElementById(ids.style)) return;
+      const style = document.createElement("style");
+      style.id = ids.style;
+      const dialog = `#${ids.dialog}`;
+      const buttons = buttonIds.map((id) => `#${id}`).join(", ");
+      style.textContent = `
+      ${buttons ? `${buttons} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      ${buttonIds.map((id) => `#${id}:hover`).join(", ")} { background: #fff3e0; }` : ""}
+      ${dialog} { width: min(500px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
+      ${dialog}::backdrop { background: rgba(0,0,0,.38); }
+      ${dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
+      ${dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
+      ${dialog} .wkw-body [hidden] { display: none !important; }
+      ${dialog} label { display: grid; gap: 5px; font-weight: 700; }
+      ${dialog} select, ${dialog} input:not([type="checkbox"]) { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      ${dialog} .wkw-list { max-height: 260px; overflow: auto; border: 1px solid #ddd; border-radius: 5px; padding: 6px 10px; }
+      ${dialog} .wkw-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; padding: 3px 0; }
+      ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
+      ${dialog} .wkw-list label.wkw-group-head { font-weight: 700; margin-top: 4px; }
+      ${dialog} .wkw-group label.wkw-item { padding-left: 22px; }
+      ${dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
+      ${dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      ${dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
+      ${dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
+      ${dialog} button:disabled { opacity: .55; cursor: wait; }
+      #${ids.status}[data-tone="ok"] { color: #18752b; }
+      #${ids.status}[data-tone="error"] { color: #b3261e; }
+      #${ids.status}[data-tone="busy"] { color: #995000; }
+      ${extraCss}
+    `;
+      document.head.appendChild(style);
+    }
+    function setStatus(text, tone = "") {
+      const status2 = document.getElementById(ids.status);
+      if (!status2) return;
+      status2.textContent = text;
+      status2.dataset.tone = tone;
+    }
+    function setRunningControls(dialog, isRunning) {
+      dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
+        element.disabled = isRunning;
+      });
+      const stopButton = dialog.querySelector('[data-action="close"]');
+      if (stopButton) {
+        stopButton.disabled = false;
+        stopButton.hidden = false;
+        stopButton.textContent = isRunning ? "Lauf stoppen" : "Abbrechen";
+      }
+    }
+    function begin(dialog) {
+      state.running = true;
+      state.cancelRequested = false;
+      dialog.querySelector('[data-action="apply"]').dataset.completed = "false";
+      setRunningControls(dialog, true);
+    }
+    function end() {
+      state.running = false;
+    }
+    function abort(dialog) {
+      state.running = false;
+      setRunningControls(dialog, false);
+    }
+    function finish(dialog) {
+      const applyButton = dialog.querySelector('[data-action="apply"]');
+      setRunningControls(dialog, false);
+      applyButton.dataset.completed = "true";
+      applyButton.textContent = "Fertig – schließen";
+      dialog.querySelector('[data-action="close"]').hidden = true;
+      applyButton.focus();
+    }
+    function handleCloseOrCancel(dialog) {
+      if (!state.running) {
+        dialog.close();
+        return;
+      }
+      state.cancelRequested = true;
+      const stopButton = dialog.querySelector('[data-action="close"]');
+      if (stopButton) {
+        stopButton.disabled = true;
+        stopButton.textContent = "Wird gestoppt …";
+      }
+      setStatus(`Stopp angefordert. Die aktuelle ${stopNoun} wird noch beendet; weitere bleiben unverändert.`, "busy");
+    }
+    function handleDialogClose(dialog) {
+      if (dialog.dataset.needsReload === "true") {
+        dialog.remove();
+        if (!reloadAdminPanel()) window.alert(reloadMissingText || 'Änderung gespeichert. Der Adminpanel-Button "Neu laden" wurde nicht gefunden, bitte die Seite neu laden.');
+        return;
+      }
+      if (!state.running) dialog.remove();
+    }
+    function open({ title, tipHtml = "", checklist = null, fieldsHtml = "", note = "", initialStatus = "", applyLabel, onApply, focusSelector }) {
+      document.getElementById(ids.dialog)?.remove();
+      injectStyle();
+      const dialog = document.createElement("dialog");
+      dialog.id = ids.dialog;
+      dialog.innerHTML = `
+      <div class="wkw-head">${title}${tipHtml}</div>
+      <form class="wkw-body" method="dialog">
+        ${checklist ? checklistHtml(checklist) : ""}
+        ${fieldsHtml}
+        ${note ? `<div class="wkw-note">${note}</div>` : ""}
+        <div id="${ids.status}">${initialStatus}</div>
+        <div class="wkw-actions">
+          <button type="button" data-action="close">Abbrechen</button>
+          <button type="button" data-action="apply">${applyLabel}</button>
+        </div>
+      </form>`;
+      document.body.appendChild(dialog);
+      if (checklist) wireChecklist(dialog);
+      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
+      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
+        if (event.currentTarget.dataset.completed === "true") {
+          dialog.close();
+          return;
+        }
+        if (!state.running) onApply(dialog);
+      });
+      dialog.addEventListener("close", () => handleDialogClose(dialog));
+      dialog.showModal();
+      dialog.querySelector(focusSelector || '[data-action="apply"]')?.focus();
+      return dialog;
+    }
+    async function runQueue(dialog, queue, { progress, label: label2 = (item) => item.label, update }) {
+      begin(dialog);
+      let changed = 0;
+      const failures = [];
+      for (let index = 0; index < queue.length; index += 1) {
+        if (state.cancelRequested) break;
+        setStatus(progress(index + 1, queue.length), "busy");
+        try {
+          await update(queue[index], index);
+          changed += 1;
+        } catch (error) {
+          failures.push(`${label2(queue[index], index)}: ${error.message}`);
+        }
+      }
+      end();
+      return { changed, failures };
+    }
+    function report({ changed, failures }, { doneWord = "geändert", restText = "Die übrigen blieben unverändert.", successText }) {
+      if (state.cancelRequested) {
+        setStatus(`Lauf gestoppt: ${changed} ${doneWord}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. ${restText}`, "busy");
+      } else if (failures.length) {
+        setStatus(`${changed} ${doneWord}, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+      } else {
+        setStatus(successText(changed), "ok");
+      }
+    }
+    function installButton(header, id, label2, title, onClick) {
+      if (!header || document.getElementById(id)) return;
+      injectStyle();
+      const button = document.createElement("button");
+      button.id = id;
+      button.type = "button";
+      button.textContent = label2;
+      button.title = title;
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+      header.appendChild(button);
+    }
+    return {
+      state,
+      injectStyle,
+      setStatus,
+      setRunningControls,
+      begin,
+      end,
+      abort,
+      finish,
+      open,
+      runQueue,
+      report,
+      installButton
+    };
+  }
+
   // ../../shared/js/bulk-match-actions/core.js
   var OPEN_INTERVIEW_STATUSES = ["suggestion", "forwarded", "confirmed", "conducted", "not_reconfirmed"];
   var ALL_INTERVIEWS_QUERY = `query allInterviews($filter: InterviewsFilter!, $sortField: String, $sortOrder: String, $page: Float, $perPage: Float) {
@@ -4623,6 +4863,8 @@
   // ../../shared/js/bulk-match-actions/index.js
   var ROW_SELECTOR = "tbody tr.RaDataTable-row";
   var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
+  var CANDIDATE_LINK_SELECTOR = 'a[href*="#/Candidate/"]';
+  var JOB_POSITION_LINK_SELECTOR = 'a[href*="#/JobPosition/"]';
   function executeBulkMatchActions(runtime, sourcePath, config) {
     runtime.registerSource(sourcePath);
     const {
@@ -4645,8 +4887,6 @@
     const STATUS_MUTATION = buildStatusMutation(fields.status);
     const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
     const WVL_MUTATION = buildFollowUpMutation(fields.followUp);
-    let running = false;
-    let cancelRequested = false;
     const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     async function waitFor(find, timeoutMs = 3e3, intervalMs = 50) {
       const started = Date.now();
@@ -4687,156 +4927,94 @@
         name: normalize2(link.textContent) || "Unbekannter Arbeitgeber"
       };
     }
+    function candidateNameFromRow(row) {
+      const own = row.querySelector(CANDIDATE_LINK_SELECTOR);
+      if (own) return normalize2(own.textContent);
+      const parentRow = row.closest("table")?.closest("tr")?.previousElementSibling;
+      return normalize2(parentRow?.querySelector(CANDIDATE_LINK_SELECTOR)?.textContent);
+    }
+    function labelFromRow(row) {
+      const candidate = candidateNameFromRow(row);
+      const vacancy = normalize2(row.querySelector(JOB_POSITION_LINK_SELECTOR)?.textContent);
+      const label2 = [candidate, vacancy].filter(Boolean).join(" – ");
+      return label2.length > 90 ? `${label2.slice(0, 89)}…` : label2;
+    }
     function matchIdFromRow(row) {
       const link = row.querySelector('a[href*="#/Match/"]');
       return link?.href.match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
     }
-    function getEmployerChoices() {
-      const choices = /* @__PURE__ */ new Map();
-      getRows().forEach((row) => {
-        const employer = employerFromRow(row);
-        if (!employer) return;
-        if (!choices.has(employer.id)) choices.set(employer.id, { ...employer, rows: [] });
-        choices.get(employer.id).rows.push(row);
-      });
-      return [...choices.values()];
-    }
-    function injectStyle() {
-      if (document.getElementById(IDS4.style)) return;
-      const style = document.createElement("style");
-      style.id = IDS4.style;
-      style.textContent = `
-      #${IDS4.button}, #${IDS4.statusButton}, #${IDS4.forwardButton}, #${IDS4.declinePastButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-      #${IDS4.button}:hover, #${IDS4.statusButton}:hover, #${IDS4.forwardButton}:hover, #${IDS4.declinePastButton}:hover { background: #fff3e0; }
-      #${IDS4.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
-      #${IDS4.dialog}::backdrop { background: rgba(0,0,0,.38); }
-      #${IDS4.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
-      #${IDS4.dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
-      #${IDS4.dialog} .wkw-body [hidden] { display: none !important; }
-      #${IDS4.dialog} label { display: grid; gap: 5px; font-weight: 700; }
-      #${IDS4.dialog} select, #${IDS4.dialog} input { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
-      #${IDS4.dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
-      #${IDS4.dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
-      #${IDS4.dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
-      #${IDS4.dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
-      #${IDS4.dialog} button:disabled { opacity: .55; cursor: wait; }
-      #${IDS4.status}[data-tone="ok"] { color: #18752b; }
-      #${IDS4.status}[data-tone="error"] { color: #b3261e; }
-      #${IDS4.status}[data-tone="busy"] { color: #995000; }
+    const kit = createBulkDialogKit({
+      ids: IDS4,
+      buttonIds: [IDS4.button, IDS4.statusButton, IDS4.forwardButton, IDS4.declinePastButton],
+      stopNoun: "Zeile",
+      reloadMissingText: 'Änderung geprüft. Der interne Adminpanel-Button "Neu laden" wurde nicht gefunden.',
+      extraCss: `
       #${IDS4.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
-      #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
-    `;
-      document.head.appendChild(style);
+      #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }`
+    });
+    const { setStatus } = kit;
+    function visibleMatches() {
+      const seen = /* @__PURE__ */ new Set();
+      return getRows().map((row, index) => {
+        const matchId = matchIdFromRow(row);
+        if (!matchId || seen.has(matchId)) return null;
+        seen.add(matchId);
+        const employer = employerFromRow(row) || { id: "", name: "Ohne Arbeitgeber" };
+        return { matchId, employer, label: labelFromRow(row) || `Match ${index + 1}` };
+      }).filter(Boolean);
     }
-    function setStatus(text, tone = "") {
-      const status2 = document.getElementById(IDS4.status);
-      if (!status2) return;
-      status2.textContent = text;
-      status2.dataset.tone = tone;
+    function matchChecklist(matches) {
+      return {
+        allLabel: `Alle (${matches.length} sichtbare Matches)`,
+        items: matches.map((match) => ({
+          value: match.matchId,
+          label: match.label,
+          group: match.employer.name,
+          groupKey: match.employer.id || match.employer.name
+        }))
+      };
     }
-    function handleCloseOrCancel(dialog) {
-      if (!running) {
-        dialog.close();
-        return;
-      }
-      cancelRequested = true;
-      const stopButton = dialog.querySelector('[data-action="close"]');
-      if (stopButton) {
-        stopButton.disabled = true;
-        stopButton.textContent = "Wird gestoppt …";
-      }
-      setStatus("Stopp angefordert. Die aktuelle Zeile wird noch beendet; weitere Matches bleiben unverändert.", "busy");
+    function selectedMatches(dialog, matches) {
+      const ids = checkedValues(dialog);
+      return matches.filter((match) => ids.has(match.matchId));
     }
-    function setRunningControls(dialog, isRunning) {
-      dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
-        element.disabled = isRunning;
+    function scopeText(selection) {
+      const employers = new Set(selection.map((match) => match.employer.id || match.employer.name));
+      if (employers.size === 1) return `${selection.length} ausgewählte Matches von „${selection[0].employer.name}“`;
+      return `${selection.length} ausgewählte Matches von ${employers.size} Arbeitgebern`;
+    }
+    const SELECTION_HINT = "Alle sichtbaren Matches sind angehakt. Ein Haken am Arbeitgeber wählt alle seine Matches ab oder an.";
+    function renderWvlDialog() {
+      const matches = visibleMatches();
+      const dialog = kit.open({
+        title: `${team} WVL gesammelt ändern`,
+        tipHtml: tip("wvl"),
+        checklist: matchChecklist(matches),
+        fieldsHtml: `<label>Neues ${team}-WVL-Datum<input name="date" type="date"></label>`,
+        note: `${SELECTION_HINT} Datumsfeld leer lassen, um die ${team} WVL zu entfernen statt sie zu setzen.`,
+        initialStatus: "Bitte Auswahl und Datum prüfen (leer lassen zum Entfernen).",
+        applyLabel: "Datum entfernen",
+        focusSelector: 'input[name="date"]',
+        onApply: (dialogRef) => applyWvl(dialogRef, matches)
       });
-      const stopButton = dialog.querySelector('[data-action="close"]');
-      if (stopButton) {
-        stopButton.disabled = false;
-        stopButton.hidden = false;
-        stopButton.textContent = isRunning ? "Lauf stoppen" : "Abbrechen";
-      }
-    }
-    function finishDialog(dialog) {
-      const applyButton = dialog.querySelector('[data-action="apply"]');
-      setRunningControls(dialog, false);
-      applyButton.dataset.completed = "true";
-      applyButton.textContent = "Fertig – schließen";
-      dialog.querySelector('[data-action="close"]').hidden = true;
-      applyButton.focus();
-    }
-    function handleDialogClose(dialog) {
-      if (dialog.dataset.needsReload === "true") {
-        dialog.remove();
-        if (!reloadAdminPanel()) window.alert('Änderung geprüft. Der interne Adminpanel-Button "Neu laden" wurde nicht gefunden.');
-        return;
-      }
-      if (!running) dialog.remove();
-    }
-    function renderDialog() {
-      document.getElementById(IDS4.dialog)?.remove();
-      const choices = getEmployerChoices();
-      const dialog = document.createElement("dialog");
-      dialog.id = IDS4.dialog;
-      dialog.innerHTML = `
-      <div class="wkw-head">${team} WVL gesammelt ändern${tip("wvl")}</div>
-      <form class="wkw-body" method="dialog">
-        <label>Arbeitgeber
-          <select name="employer" required>
-            <option value="__all__">Alle Arbeitgeber (${getRows().length} sichtbare Matches)</option>
-            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
-          </select>
-        </label>
-        <label>Neues ${team}-WVL-Datum
-          <input name="date" type="date">
-        </label>
-        <div class="wkw-note">Standardmäßig werden alle aktuell geladenen Tabellenzeilen geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. Datumsfeld leer lassen, um die ${team} WVL zu entfernen statt sie zu setzen.</div>
-        <div id="${IDS4.status}">Bitte Arbeitgeber und Datum prüfen (leer lassen zum Entfernen).</div>
-        <div class="wkw-actions">
-          <button type="button" data-action="close">Abbrechen</button>
-          <button type="button" data-action="apply">Datum anwenden</button>
-        </div>
-      </form>`;
-      document.body.appendChild(dialog);
       const dateInput = dialog.querySelector('input[name="date"]');
       const applyButton = dialog.querySelector('[data-action="apply"]');
-      const syncApplyLabel = () => {
+      dateInput.addEventListener("input", () => {
         applyButton.textContent = dateInput.value ? "Datum anwenden" : "Datum entfernen";
-      };
-      dateInput.addEventListener("input", syncApplyLabel);
-      syncApplyLabel();
-      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
-      applyButton.addEventListener("click", (event) => {
-        if (event.currentTarget.dataset.completed === "true") {
-          dialog.close();
-          return;
-        }
-        applyFromDialog(dialog);
       });
-      dialog.addEventListener("close", () => handleDialogClose(dialog));
-      dialog.showModal();
-      dateInput.focus();
     }
     function renderStatusDialog() {
-      document.getElementById(IDS4.dialog)?.remove();
-      const choices = getEmployerChoices();
-      const dialog = document.createElement("dialog");
-      dialog.id = IDS4.dialog;
+      const matches = visibleMatches();
       const outConsequences = [
         `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
         declineInterviewsOnOut ? "Bei „Out“ werden offene Terminvorschläge abgelehnt." : "",
         "Für „Out“ muss ein Grund ausgewählt werden."
       ].filter(Boolean).join(" ");
-      dialog.innerHTML = `
-      <div class="wkw-head">${team} Status gesammelt ändern${tip("status")}</div>
-      <form class="wkw-body" method="dialog">
-        <label>Arbeitgeber
-          <select name="employer" required>
-            <option value="__all__">Alle sichtbaren Arbeitgeber (${getRows().length} sichtbare Matches)</option>
-            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
-          </select>
-        </label>
+      const dialog = kit.open({
+        title: `${team} Status gesammelt ändern`,
+        tipHtml: tip("status"),
+        checklist: matchChecklist(matches),
+        fieldsHtml: `
         <label>Neuer ${team} Status
           <select name="status" required>
             <option value="__choose__">Bitte auswählen</option>
@@ -4851,15 +5029,13 @@
         </label>
         <label data-out-feedback-text hidden>Eigener Grund
           <input name="outFeedbackText" type="text" maxlength="200">
-        </label>
-        <div class="wkw-note">Standardmäßig werden alle aktuell sichtbaren Matches aller Arbeitgeber geändert. Alternativ kann ein einzelner Arbeitgeber ausgewählt werden. ${outConsequences}</div>
-        <div id="${IDS4.status}">Bitte Arbeitgeber und ${team} Status prüfen.</div>
-        <div class="wkw-actions">
-          <button type="button" data-action="close">Abbrechen</button>
-          <button type="button" data-action="apply">Status anwenden</button>
-        </div>
-      </form>`;
-      document.body.appendChild(dialog);
+        </label>`,
+        note: `${SELECTION_HINT} ${outConsequences}`,
+        initialStatus: `Bitte Auswahl und ${team} Status prüfen.`,
+        applyLabel: "Status anwenden",
+        focusSelector: '[name="status"]',
+        onApply: (dialogRef) => applyStatus(dialogRef, matches)
+      });
       const statusSelect = dialog.querySelector('[name="status"]');
       const reasonLabel = dialog.querySelector("[data-out-feedback]");
       const reasonSelect = dialog.querySelector('[name="outFeedback"]');
@@ -4876,51 +5052,18 @@
       statusSelect.addEventListener("change", syncOutFeedback);
       reasonSelect.addEventListener("change", syncOutFeedback);
       syncOutFeedback();
-      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
-      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
-        if (event.currentTarget.dataset.completed === "true") {
-          dialog.close();
-          return;
-        }
-        applyStatusFromDialog(dialog);
-      });
-      dialog.addEventListener("close", () => handleDialogClose(dialog));
-      dialog.showModal();
-      statusSelect.focus();
     }
     function renderInterviewDialog(action) {
-      document.getElementById(IDS4.dialog)?.remove();
-      const choices = getEmployerChoices();
-      const dialog = document.createElement("dialog");
-      dialog.id = IDS4.dialog;
-      dialog.innerHTML = `
-      <div class="wkw-head">${action.title}${tip(action.helpKey)}</div>
-      <form class="wkw-body" method="dialog">
-        <label>Arbeitgeber
-          <select name="employer" required>
-            <option value="__all__">Alle sichtbaren Arbeitgeber (${getRows().length} sichtbare Matches)</option>
-            ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
-          </select>
-        </label>
-        <div class="wkw-note">${action.note}</div>
-        <div id="${IDS4.status}">Bitte Arbeitgeber prüfen.</div>
-        <div class="wkw-actions">
-          <button type="button" data-action="close">Abbrechen</button>
-          <button type="button" data-action="apply">${action.applyLabel}</button>
-        </div>
-      </form>`;
-      document.body.appendChild(dialog);
-      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
-      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
-        if (event.currentTarget.dataset.completed === "true") {
-          dialog.close();
-          return;
-        }
-        applyInterviewActionFromDialog(dialog, action);
+      const matches = visibleMatches();
+      kit.open({
+        title: action.title,
+        tipHtml: tip(action.helpKey),
+        checklist: matchChecklist(matches),
+        note: `${SELECTION_HINT} ${action.note}`,
+        initialStatus: "Bitte Auswahl prüfen.",
+        applyLabel: action.applyLabel,
+        onApply: (dialogRef) => applyInterviewAction(dialogRef, matches, action)
       });
-      dialog.addEventListener("close", () => handleDialogClose(dialog));
-      dialog.showModal();
-      dialog.querySelector('[name="employer"]').focus();
     }
     function visibleOutFeedbackDialogs() {
       return [...document.querySelectorAll('[role="dialog"]')].filter((dialog) => visibleOverlay(dialog) && dialog.querySelector('input[name="feedback"]'));
@@ -5017,7 +5160,7 @@
       const interviewIds = await openInterviewIdsForMatch(matchId);
       let declined = 0;
       for (const interviewId of interviewIds) {
-        if (cancelRequested) break;
+        if (kit.state.cancelRequested) break;
         await declineInterview(matchId, interviewId);
         declined += 1;
       }
@@ -5096,83 +5239,66 @@
         markCell: markSuggestionChipsDeclined
       }
     };
-    async function applyInterviewActionFromDialog(dialog, action) {
-      if (running) return;
-      const employerId = dialog.querySelector('[name="employer"]').value;
-      const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
-      if (!choice?.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
-      running = true;
-      cancelRequested = false;
-      const applyButton = dialog.querySelector('[data-action="apply"]');
-      applyButton.dataset.completed = "false";
-      setRunningControls(dialog, true);
-      const matchIds = [...new Set(choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean))];
+    async function applyInterviewAction(dialog, matches, action) {
+      const selection = selectedMatches(dialog, matches);
+      if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
+      kit.begin(dialog);
       const queue = [];
       const failures = [];
       const pendingByMatch = /* @__PURE__ */ new Map();
-      for (let index = 0; index < matchIds.length; index += 1) {
-        if (cancelRequested) break;
-        setStatus(`Lade Terminvorschläge ${index + 1} von ${matchIds.length} …`, "busy");
+      for (let index = 0; index < selection.length; index += 1) {
+        if (kit.state.cancelRequested) break;
+        const { matchId } = selection[index];
+        setStatus(`Lade Terminvorschläge ${index + 1} von ${selection.length} …`, "busy");
         try {
-          const interviews = await suggestedInterviewsForMatch(matchIds[index]);
-          pendingByMatch.set(matchIds[index], interviews.length);
-          interviews.filter(action.select).forEach((interview) => queue.push({ matchId: matchIds[index], interview }));
+          const interviews = await suggestedInterviewsForMatch(matchId);
+          pendingByMatch.set(matchId, interviews.length);
+          interviews.filter(action.select).forEach((interview) => queue.push({ matchId, interview }));
         } catch (error) {
-          failures.push(`Laden ${index + 1}: ${error.message}`);
+          failures.push(`Laden ${selection[index].label}: ${error.message}`);
         }
       }
-      if (cancelRequested) {
-        running = false;
+      kit.end();
+      if (kit.state.cancelRequested) {
         setStatus(`Lauf gestoppt, bevor etwas ${action.done} wurde.`, "busy");
-        return finishDialog(dialog);
+        return kit.finish(dialog);
       }
       if (!queue.length) {
-        running = false;
         setStatus(failures.length ? `Keine Vorschläge ${action.done}, ${failures.length} Matches nicht ladbar. ${failures.slice(0, 3).join(" | ")}` : action.empty, failures.length ? "error" : "ok");
-        return finishDialog(dialog);
+        return kit.finish(dialog);
       }
       const matchCount = new Set(queue.map((item) => item.matchId)).size;
-      const scopeText = employerId === "__all__" ? "aller sichtbaren Arbeitgeber" : `von „${choice.name}“`;
       const failureText = failures.length ? ` (${failures.length} Matches konnten nicht geladen werden und bleiben unverändert.)` : "";
-      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches ${scopeText} ${action.verb}?${failureText}`)) {
-        running = false;
-        setRunningControls(dialog, false);
+      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches (${scopeText(selection)}) ${action.verb}?${failureText}`)) {
+        kit.abort(dialog);
         return setStatus(`Nichts ${action.done}.`, "");
       }
-      let written = 0;
-      for (let index = 0; index < queue.length; index += 1) {
-        if (cancelRequested) break;
-        setStatus(`${action.progress} ${index + 1} von ${queue.length} …`, "busy");
-        try {
-          await action.write(queue[index].matchId, queue[index].interview);
-          written += 1;
-          const remaining = pendingByMatch.get(queue[index].matchId) - 1;
-          pendingByMatch.set(queue[index].matchId, remaining);
-          if (remaining === 0) markRow(queue[index].matchId, action.markCell);
-        } catch (error) {
-          failures.push(`${index + 1}: ${error.message}`);
+      const result = await kit.runQueue(dialog, queue, {
+        progress: (current, total) => `${action.progress} ${current} von ${total} …`,
+        label: (_item, index) => String(index + 1),
+        update: async (item) => {
+          await action.write(item.matchId, item.interview);
+          const remaining = pendingByMatch.get(item.matchId) - 1;
+          pendingByMatch.set(item.matchId, remaining);
+          if (remaining === 0) markRow(item.matchId, action.markCell);
         }
-      }
-      running = false;
-      if (cancelRequested) {
-        setStatus(`Lauf gestoppt: ${written} ${action.done}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Vorschläge blieben unverändert.`, "busy");
-      } else if (failures.length) {
-        setStatus(`${written} ${action.done}, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
-      } else {
-        setStatus(`${written} ${action.noun} erfolgreich ${action.done}.`, "ok");
-      }
-      finishDialog(dialog);
+      });
+      result.failures.unshift(...failures);
+      kit.report(result, {
+        doneWord: action.done,
+        restText: "Die übrigen Vorschläge blieben unverändert.",
+        successText: (count) => `${count} ${action.noun} erfolgreich ${action.done}.`
+      });
+      kit.finish(dialog);
     }
-    async function applyStatusFromDialog(dialog) {
-      if (running) return;
-      const employerId = dialog.querySelector('[name="employer"]').value;
+    async function applyStatus(dialog, matches) {
+      const selection = selectedMatches(dialog, matches);
       const targetValue = dialog.querySelector('[name="status"]').value;
       const targetStatus = statusOptions.find((status2) => status2.value === targetValue);
       const outFeedbackValue = dialog.querySelector('[name="outFeedback"]').value;
       const outFeedback = outFeedbackOptions.find((reason) => reason.value === outFeedbackValue);
       const outFeedbackText = normalize2(dialog.querySelector('[name="outFeedbackText"]').value);
-      const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
-      if (!choice?.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
+      if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
       if (!targetStatus || targetValue === "__choose__") return setStatus(`Bitte einen ${team} Status auswählen.`, "error");
       const isOut = targetStatus.value === "out";
       if (isOut && (!outFeedback || outFeedbackValue === "__choose__")) {
@@ -5185,138 +5311,63 @@
       const clearsWvl = statusClearsWvl(targetStatus.value);
       const cleanupText = clearsWvl ? ` Die ${team} WVL dieser Matches wird ebenfalls gelöscht.` : "";
       const interviewText = declinesInterviews ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
-      const employerCount = new Set(choice.rows.map((row) => employerFromRow(row)?.id).filter(Boolean)).size;
-      const scopeText = employerId === "__all__" ? `${choice.rows.length} sichtbare Matches von ${employerCount} Arbeitgebern` : `${choice.rows.length} sichtbare Matches von „${choice.name}“`;
       const reasonLabel = isOut ? outFeedback.freeText ? outFeedbackText : outFeedback.label : "";
       const reasonText = isOut ? ` Grund: „${reasonLabel}“.` : "";
-      if (!window.confirm(`${scopeText} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
-      running = true;
-      cancelRequested = false;
-      const applyButton = dialog.querySelector('[data-action="apply"]');
-      applyButton.dataset.completed = "false";
-      setRunningControls(dialog, true);
-      let changed = 0;
+      if (!window.confirm(`${scopeText(selection)} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
       let declinedInterviews = 0;
-      const failures = [];
       const feedback = isOut ? resolveOutFeedback(outFeedback, outFeedbackText) : null;
-      const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
-      for (let index = 0; index < queue.length; index += 1) {
-        if (cancelRequested) break;
-        setStatus(`Ändere Status ${index + 1} von ${queue.length} …`, "busy");
-        try {
-          await updateMatchStatus(queue[index], targetStatus, feedback);
-          if (clearsWvl) await updateMatchFollowUpDate(queue[index], null);
+      const result = await kit.runQueue(dialog, selection, {
+        progress: (current, total) => `Ändere Status ${current} von ${total} …`,
+        update: async (match, index) => {
+          await updateMatchStatus(match.matchId, targetStatus, feedback);
+          if (clearsWvl) await updateMatchFollowUpDate(match.matchId, null);
           if (declinesInterviews) {
-            setStatus(`Lehne Terminvorschläge ${index + 1} von ${queue.length} ab …`, "busy");
-            declinedInterviews += await declineOpenInterviewsForMatch(queue[index]);
+            setStatus(`Lehne Terminvorschläge ${index + 1} von ${selection.length} ab …`, "busy");
+            declinedInterviews += await declineOpenInterviewsForMatch(match.matchId);
           }
-          changed += 1;
-        } catch (error) {
-          failures.push(`${index + 1}: ${error.message}`);
         }
-      }
-      running = false;
-      if (changed > 0) dialog.dataset.needsReload = "true";
-      if (cancelRequested) {
-        setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Matches blieben unverändert.`, "busy");
-      } else if (failures.length) {
-        setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
-      } else {
-        const interviewSummary = declinesInterviews ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : "";
-        setStatus(`${changed} ${team}-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${interviewSummary}`, "ok");
-      }
-      finishDialog(dialog);
+      });
+      if (result.changed > 0) dialog.dataset.needsReload = "true";
+      kit.report(result, {
+        restText: "Die übrigen Matches blieben unverändert.",
+        successText: (count) => `${count} ${team}-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${declinesInterviews ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : ""}`
+      });
+      kit.finish(dialog);
     }
-    async function applyFromDialog(dialog) {
-      if (running) return;
-      const employerId = dialog.querySelector('[name="employer"]').value;
+    async function applyWvl(dialog, matches) {
+      const selection = selectedMatches(dialog, matches);
       const isoDate = dialog.querySelector('[name="date"]').value;
       const clearing = !isoDate;
       const date = clearing ? null : parseIsoDate(isoDate);
-      const choice = employerId === "__all__" ? { id: "__all__", name: "Alle Arbeitgeber", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
-      if (!choice || !choice.rows.length) return setStatus("Keine passenden sichtbaren Zeilen gefunden.", "error");
+      if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
       if (!clearing && !date) return setStatus("Bitte ein gültiges Datum auswählen oder das Feld leer lassen.", "error");
       const formatted = date ? `${date.day}.${date.month}.${date.year}` : "";
-      const confirmText = clearing ? `${choice.rows.length} sichtbare Matches von „${choice.name}“ die ${team} WVL entfernen?` : `${choice.rows.length} sichtbare Matches von „${choice.name}“ auf ${formatted} setzen?`;
+      const confirmText = clearing ? `Bei ${scopeText(selection)} die ${team} WVL entfernen?` : `${scopeText(selection)} auf ${formatted} setzen?`;
       if (!window.confirm(confirmText)) return;
-      running = true;
-      cancelRequested = false;
-      const applyButton = dialog.querySelector('[data-action="apply"]');
-      applyButton.dataset.completed = "false";
-      applyButton.textContent = clearing ? "Datum entfernen" : "Datum anwenden";
-      setRunningControls(dialog, true);
-      let changed = 0;
-      const failures = [];
-      const queue = choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean);
-      for (let index = 0; index < queue.length; index += 1) {
-        if (cancelRequested) break;
-        setStatus(`Ändere ${index + 1} von ${queue.length} …`, "busy");
-        try {
-          await updateMatchFollowUpDate(queue[index], isoDate || null);
-          changed += 1;
-        } catch (error) {
-          failures.push(`${index + 1}: ${error.message}`);
-        }
-      }
-      running = false;
-      if (changed > 0) dialog.dataset.needsReload = "true";
-      if (cancelRequested) {
-        setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Matches blieben unverändert.`, "busy");
-      } else if (failures.length) {
-        setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
-      } else if (clearing) {
-        setStatus(`${changed} ${team}-WVL-Daten erfolgreich entfernt.`, "ok");
-      } else {
-        setStatus(`${changed} ${team}-WVL-Daten erfolgreich auf ${formatted} gesetzt.`, "ok");
-      }
-      finishDialog(dialog);
+      const result = await kit.runQueue(dialog, selection, {
+        progress: (current, total) => `Ändere ${current} von ${total} …`,
+        update: (match) => updateMatchFollowUpDate(match.matchId, isoDate || null)
+      });
+      if (result.changed > 0) dialog.dataset.needsReload = "true";
+      kit.report(result, {
+        restText: "Die übrigen Matches blieben unverändert.",
+        successText: (count) => clearing ? `${count} ${team}-WVL-Daten erfolgreich entfernt.` : `${count} ${team}-WVL-Daten erfolgreich auf ${formatted} gesetzt.`
+      });
+      kit.finish(dialog);
     }
-    function installButton(header, id, label2, title, render) {
-      if (!header || document.getElementById(id)) return;
-      const button = document.createElement("button");
-      button.id = id;
-      button.type = "button";
-      button.textContent = label2;
-      button.title = title;
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
+    function installButton(column, id, label2, title, render) {
+      kit.installButton(document.querySelector(`th.column-${column}`), id, label2, title, () => {
         if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
         render();
       });
-      header.appendChild(button);
     }
     function installHeaderButtons() {
       if (!isTargetPage3()) return;
-      injectStyle();
-      installButton(
-        document.querySelector(`th.column-${columns.followUp}`),
-        IDS4.button,
-        "Alle ändern",
-        `${team}-WVL-Datum für alle sichtbaren Matches eines Arbeitgebers ändern`,
-        renderDialog
-      );
-      installButton(
-        document.querySelector(`th.column-${columns.status}`),
-        IDS4.statusButton,
-        "Alle ändern",
-        `${team} Status für alle sichtbaren Matches eines Arbeitgebers ändern`,
-        renderStatusDialog
-      );
-      installButton(
-        document.querySelector(`th.column-${columns.interview}`),
-        IDS4.forwardButton,
-        "Alle weiterleiten",
-        "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten",
-        () => renderInterviewDialog(INTERVIEW_ACTIONS.forward)
-      );
-      installButton(
-        document.querySelector(`th.column-${columns.interview}`),
-        IDS4.declinePastButton,
-        "Vergangene ablehnen",
-        "Terminvorschläge, deren Termine alle in der Vergangenheit liegen, für alle sichtbaren Matches eines Arbeitgebers ablehnen",
-        () => renderInterviewDialog(INTERVIEW_ACTIONS.declinePast)
-      );
+      kit.injectStyle();
+      installButton(columns.followUp, IDS4.button, "Alle ändern", `${team}-WVL-Datum für angehakte sichtbare Matches ändern`, renderWvlDialog);
+      installButton(columns.status, IDS4.statusButton, "Alle ändern", `${team} Status für angehakte sichtbare Matches ändern`, renderStatusDialog);
+      installButton(columns.interview, IDS4.forwardButton, "Alle weiterleiten", "Terminvorschläge mit Status „Vorschlag“ für angehakte sichtbare Matches weiterleiten", () => renderInterviewDialog(INTERVIEW_ACTIONS.forward));
+      installButton(columns.interview, IDS4.declinePastButton, "Vergangene ablehnen", "Terminvorschläge, deren Termine alle in der Vergangenheit liegen, für angehakte sichtbare Matches ablehnen", () => renderInterviewDialog(INTERVIEW_ACTIONS.declinePast));
     }
     let scheduled = false;
     const scheduleInstall = () => {
@@ -5411,7 +5462,7 @@
     status: "werkia-cem-candidate-bulk-status"
   };
   var ROW_SELECTOR2 = "tbody tr.RaDataTable-row";
-  var CANDIDATE_LINK_SELECTOR = 'a[href*="#/Candidate/"]';
+  var CANDIDATE_LINK_SELECTOR2 = 'a[href*="#/Candidate/"]';
   var CANDIDATE_STATUS_OPTIONS = [
     { value: "onboarding", label: "Onboarding" },
     { value: "follow_up", label: "Follow up" },
@@ -5452,174 +5503,42 @@
   }
   function executeCandidateBulkActions(runtime) {
     runtime.registerSource("cem/toolbox/src/features/candidate-bulk-actions.js");
-    let running = false;
-    let cancelRequested = false;
+    const kit = createBulkDialogKit({ ids: IDS2, buttonIds: [IDS2.wvlButton, IDS2.statusButton], stopNoun: "Kandidat" });
+    const { setStatus } = kit;
     const tip = (id) => cemHelp.tipHtml(id, { tone: "dark" });
     const normalize3 = (value) => String(value || "").replace(/\s+/g, " ").trim();
     function getCandidates() {
       const seen = /* @__PURE__ */ new Set();
       return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(":scope > td.column-status") && row.querySelector(":scope > td.column-followUpDate")).map((row) => {
-        const link = row.querySelector(`:scope > td ${CANDIDATE_LINK_SELECTOR}`);
+        const link = row.querySelector(`:scope > td ${CANDIDATE_LINK_SELECTOR2}`);
         const id = candidateIdFromHref(link?.getAttribute("href") || link?.href);
         return id ? { id, name: normalize3(link.textContent) || id } : null;
       }).filter((candidate) => candidate && !seen.has(candidate.id) && seen.add(candidate.id));
     }
-    function injectStyle() {
-      if (document.getElementById(IDS2.style)) return;
-      const style = document.createElement("style");
-      style.id = IDS2.style;
-      const dialog = `#${IDS2.dialog}`;
-      style.textContent = `
-      #${IDS2.wvlButton}, #${IDS2.statusButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-      #${IDS2.wvlButton}:hover, #${IDS2.statusButton}:hover { background: #fff3e0; }
-      ${dialog} { width: min(480px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
-      ${dialog}::backdrop { background: rgba(0,0,0,.38); }
-      ${dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
-      ${dialog} .wkw-body { padding: 18px; display: grid; gap: 14px; }
-      ${dialog} label { display: grid; gap: 5px; font-weight: 700; }
-      ${dialog} select, ${dialog} input[type="date"] { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
-      ${dialog} .wkw-list { max-height: 240px; overflow: auto; border: 1px solid #ddd; border-radius: 5px; padding: 6px 10px; }
-      ${dialog} .wkw-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; padding: 3px 0; }
-      ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
-      ${dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
-      ${dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
-      ${dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
-      ${dialog} button[data-action="apply"] { border-color: #ef6c00; background: #ef6c00; color: #fff; }
-      ${dialog} button:disabled { opacity: .55; cursor: wait; }
-      #${IDS2.status}[data-tone="ok"] { color: #18752b; }
-      #${IDS2.status}[data-tone="error"] { color: #b3261e; }
-      #${IDS2.status}[data-tone="busy"] { color: #995000; }
-    `;
-      document.head.appendChild(style);
-    }
-    function setStatus(text, tone = "") {
-      const status2 = document.getElementById(IDS2.status);
-      if (!status2) return;
-      status2.textContent = text;
-      status2.dataset.tone = tone;
-    }
-    function candidateListHtml(candidates) {
-      return `
-      <div class="wkw-list">
-        <label class="wkw-all"><input type="checkbox" data-all checked> Alle (${candidates.length} sichtbare Kandidaten)</label>
-        ${candidates.map((candidate) => `<label><input type="checkbox" name="candidate" value="${escapeHtml(candidate.id)}" checked> ${escapeHtml(candidate.name)}</label>`).join("")}
-      </div>`;
-    }
-    function wireCandidateList(dialog) {
-      const all = dialog.querySelector("[data-all]");
-      const boxes = [...dialog.querySelectorAll('input[name="candidate"]')];
-      all.addEventListener("change", () => boxes.forEach((box) => {
-        box.checked = all.checked;
-      }));
-      boxes.forEach((box) => box.addEventListener("change", () => {
-        const checked = boxes.filter((item) => item.checked).length;
-        all.checked = checked === boxes.length;
-        all.indeterminate = checked > 0 && checked < boxes.length;
-      }));
+    function candidateChecklist(candidates) {
+      return {
+        allLabel: `Alle (${candidates.length} sichtbare Kandidaten)`,
+        items: candidates.map((candidate) => ({ value: candidate.id, label: candidate.name }))
+      };
     }
     function selectedCandidates(dialog, candidates) {
-      const ids = new Set([...dialog.querySelectorAll('input[name="candidate"]:checked')].map((box) => box.value));
+      const ids = checkedValues(dialog);
       return candidates.filter((candidate) => ids.has(candidate.id));
     }
-    function setRunningControls(dialog, isRunning) {
-      dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
-        element.disabled = isRunning;
-      });
-      const stopButton = dialog.querySelector('[data-action="close"]');
-      stopButton.disabled = false;
-      stopButton.hidden = false;
-      stopButton.textContent = isRunning ? "Lauf stoppen" : "Abbrechen";
-    }
-    function finishDialog(dialog) {
-      const applyButton = dialog.querySelector('[data-action="apply"]');
-      setRunningControls(dialog, false);
-      applyButton.dataset.completed = "true";
-      applyButton.textContent = "Fertig – schließen";
-      dialog.querySelector('[data-action="close"]').hidden = true;
-      applyButton.focus();
-    }
-    function handleCloseOrCancel(dialog) {
-      if (!running) {
-        dialog.close();
-        return;
-      }
-      cancelRequested = true;
-      const stopButton = dialog.querySelector('[data-action="close"]');
-      stopButton.disabled = true;
-      stopButton.textContent = "Wird gestoppt …";
-      setStatus("Stopp angefordert. Der aktuelle Kandidat wird noch beendet; weitere bleiben unverändert.", "busy");
-    }
-    function handleDialogClose(dialog) {
-      if (dialog.dataset.needsReload === "true") {
-        dialog.remove();
-        if (!reloadAdminPanel()) window.alert('Änderung gespeichert. Der Adminpanel-Button "Neu laden" wurde nicht gefunden, bitte die Seite neu laden.');
-        return;
-      }
-      if (!running) dialog.remove();
-    }
-    function openDialog({ title, helpTopic, fieldHtml, note, applyLabel, onApply, focusSelector }) {
-      document.getElementById(IDS2.dialog)?.remove();
+    function openDialog({ onApply, ...options }) {
       const candidates = getCandidates();
       if (!candidates.length) return window.alert("Keine sichtbaren Kandidaten gefunden.");
-      const dialog = document.createElement("dialog");
-      dialog.id = IDS2.dialog;
-      dialog.innerHTML = `
-      <div class="wkw-head">${title}${tip(helpTopic)}</div>
-      <form class="wkw-body" method="dialog">
-        ${candidateListHtml(candidates)}
-        ${fieldHtml}
-        <div class="wkw-note">${note}</div>
-        <div id="${IDS2.status}"></div>
-        <div class="wkw-actions">
-          <button type="button" data-action="close">Abbrechen</button>
-          <button type="button" data-action="apply">${applyLabel}</button>
-        </div>
-      </form>`;
-      document.body.appendChild(dialog);
-      wireCandidateList(dialog);
-      dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
-      dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
-        if (event.currentTarget.dataset.completed === "true") {
-          dialog.close();
-          return;
-        }
-        onApply(dialog, candidates);
+      return kit.open({
+        ...options,
+        checklist: candidateChecklist(candidates),
+        onApply: (dialog) => onApply(dialog, candidates)
       });
-      dialog.addEventListener("close", () => handleDialogClose(dialog));
-      dialog.showModal();
-      dialog.querySelector(focusSelector)?.focus();
-      return dialog;
     }
-    async function runQueue(dialog, queue, label2, update) {
-      running = true;
-      cancelRequested = false;
-      dialog.querySelector('[data-action="apply"]').dataset.completed = "false";
-      setRunningControls(dialog, true);
-      let changed = 0;
-      const failures = [];
-      for (let index = 0; index < queue.length; index += 1) {
-        if (cancelRequested) break;
-        setStatus(`Ändere ${label2} ${index + 1} von ${queue.length} …`, "busy");
-        try {
-          await update(queue[index]);
-          changed += 1;
-        } catch (error) {
-          failures.push(`${queue[index].name}: ${error.message}`);
-        }
-      }
-      running = false;
-      if (changed > 0) dialog.dataset.needsReload = "true";
-      return { changed, failures };
-    }
-    function reportResult({ changed, failures }, successText) {
-      if (cancelRequested) {
-        setStatus(`Lauf gestoppt: ${changed} geändert${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Kandidaten blieben unverändert.`, "busy");
-      } else if (failures.length) {
-        setStatus(`${changed} geändert, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
-      } else {
-        setStatus(successText(changed), "ok");
-      }
-    }
+    const runOptions = (label2) => ({
+      progress: (current, total) => `Ändere ${label2} ${current} von ${total} …`,
+      label: (candidate) => candidate.name
+    });
+    const restText = "Die übrigen Kandidaten blieben unverändert.";
     async function updateStatus(candidate, target) {
       const result = await getCemGraphqlAdapter().request(UPDATE_CANDIDATE_STATUS_MUTATION, { id: candidate.id, status: target.value });
       if (result?.data?.id !== candidate.id || result.data.status !== target.value) {
@@ -5635,8 +5554,8 @@
     function renderStatusDialog() {
       openDialog({
         title: "Kandidat-Status gesammelt ändern",
-        helpTopic: "candidate-bulk-status",
-        fieldHtml: `
+        tipHtml: tip("candidate-bulk-status"),
+        fieldsHtml: `
         <label>Neuer Kandidat-Status
           <select name="status">
             <option value="__choose__">Bitte auswählen</option>
@@ -5647,37 +5566,40 @@
         applyLabel: "Status anwenden",
         focusSelector: '[name="status"]',
         onApply: async (dialog, candidates) => {
-          if (running) return;
           const target = CANDIDATE_STATUS_OPTIONS.find((option) => option.value === dialog.querySelector('[name="status"]').value);
           const queue = selectedCandidates(dialog, candidates);
           if (!queue.length) return setStatus("Bitte mindestens einen Kandidaten anhaken.", "error");
           if (!target) return setStatus("Bitte einen Status auswählen.", "error");
           if (!window.confirm(`${queue.length} Kandidaten auf Status „${target.label}“ setzen?`)) return;
-          const result = await runQueue(dialog, queue, "Status", (candidate) => updateStatus(candidate, target));
-          reportResult(result, (changed) => `${changed} Kandidaten erfolgreich auf „${target.label}“ gesetzt.`);
-          finishDialog(dialog);
+          const result = await kit.runQueue(dialog, queue, { ...runOptions("Status"), update: (candidate) => updateStatus(candidate, target) });
+          if (result.changed > 0) dialog.dataset.needsReload = "true";
+          kit.report(result, { restText, successText: (changed) => `${changed} Kandidaten erfolgreich auf „${target.label}“ gesetzt.` });
+          kit.finish(dialog);
         }
       });
     }
     function renderWvlDialog() {
       const dialog = openDialog({
         title: "Kandidat-WVL gesammelt ändern",
-        helpTopic: "candidate-bulk-wvl",
-        fieldHtml: '<label>Neues WVL-Datum<input name="date" type="date"></label>',
+        tipHtml: tip("candidate-bulk-wvl"),
+        fieldsHtml: '<label>Neues WVL-Datum<input name="date" type="date"></label>',
         note: "Geändert wird die Kandidat-WVL (Spalte „WVL“) der angehakten Kandidaten, nicht die CEM WVL der Matches. Datumsfeld leer lassen, um die WVL zu entfernen.",
         applyLabel: "WVL entfernen",
         focusSelector: '[name="date"]',
         onApply: async (dialogRef, candidates) => {
-          if (running) return;
           const date = dialogRef.querySelector('[name="date"]').value || null;
           const queue = selectedCandidates(dialogRef, candidates);
           if (!queue.length) return setStatus("Bitte mindestens einen Kandidaten anhaken.", "error");
           const formatted = date ? date.split("-").reverse().join(".") : "";
           const question = date ? `Kandidat-WVL von ${queue.length} Kandidaten auf ${formatted} setzen?` : `Kandidat-WVL von ${queue.length} Kandidaten entfernen?`;
           if (!window.confirm(question)) return;
-          const result = await runQueue(dialogRef, queue, "WVL", (candidate) => updateFollowUp(candidate, date));
-          reportResult(result, (changed) => date ? `${changed} Kandidat-WVL erfolgreich auf ${formatted} gesetzt.` : `${changed} Kandidat-WVL erfolgreich entfernt.`);
-          finishDialog(dialogRef);
+          const result = await kit.runQueue(dialogRef, queue, { ...runOptions("WVL"), update: (candidate) => updateFollowUp(candidate, date) });
+          if (result.changed > 0) dialogRef.dataset.needsReload = "true";
+          kit.report(result, {
+            restText,
+            successText: (changed) => date ? `${changed} Kandidat-WVL erfolgreich auf ${formatted} gesetzt.` : `${changed} Kandidat-WVL erfolgreich entfernt.`
+          });
+          kit.finish(dialogRef);
         }
       });
       if (!dialog) return;
@@ -5687,24 +5609,10 @@
         applyButton.textContent = dateInput.value ? "Datum anwenden" : "WVL entfernen";
       });
     }
-    function installButton(header, id, title, render) {
-      if (!header || document.getElementById(id)) return;
-      const button = document.createElement("button");
-      button.id = id;
-      button.type = "button";
-      button.textContent = "Alle ändern";
-      button.title = title;
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        render();
-      });
-      header.appendChild(button);
-    }
     function installHeaderButtons() {
-      injectStyle();
-      installButton(document.querySelector("th.column-status"), IDS2.statusButton, "Status für alle angehakten sichtbaren Kandidaten ändern", renderStatusDialog);
-      installButton(document.querySelector("th.column-followUpDate"), IDS2.wvlButton, "Kandidat-WVL für alle angehakten sichtbaren Kandidaten ändern", renderWvlDialog);
+      kit.injectStyle();
+      kit.installButton(document.querySelector("th.column-status"), IDS2.statusButton, "Alle ändern", "Status für alle angehakten sichtbaren Kandidaten ändern", renderStatusDialog);
+      kit.installButton(document.querySelector("th.column-followUpDate"), IDS2.wvlButton, "Alle ändern", "Kandidat-WVL für alle angehakten sichtbaren Kandidaten ändern", renderWvlDialog);
     }
     let scheduled = false;
     const scheduleInstall = () => {
@@ -5713,7 +5621,7 @@
       runtime.setTimeout(() => {
         scheduled = false;
         if (!isTargetPage2()) {
-          if (!running) document.getElementById(IDS2.dialog)?.remove();
+          if (!kit.state.running) document.getElementById(IDS2.dialog)?.remove();
           return;
         }
         installHeaderButtons();

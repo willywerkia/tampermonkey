@@ -11,7 +11,7 @@ Installation: die gewuenschte `.user.js`-Datei unten anklicken - Tampermonkey er
 Enthaltene Funktionen:
 
 - Kleine ?-Knoepfe an Dialogen, Leisten und Panels erklaeren die jeweilige Funktion. Der Hilfe-Knopf unten links und der Tampermonkey-Menueeintrag oeffnen eine Uebersicht aller Funktionen mit Kennzeichnung, ob sie nur anzeigen oder Daten aendern.
-- Setzt Wiedervorlagedatum und KAM-Status fuer mehrere Zeilen in der Matches-Liste gleichzeitig. Bei Out werden offene Terminvorschlaege abgelehnt. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der sichtbaren Matches (optional nur eines Arbeitgebers) weiter. "Vergangene ablehnen" lehnt Terminvorschlaege mit Status Vorschlag ab, deren Termine alle in der Vergangenheit liegen.
+- Setzt Wiedervorlagedatum und KAM-Status fuer die angehakten Zeilen der Matches-Liste gleichzeitig (Haken-Liste nach Arbeitgeber gruppiert). Bei Out werden offene Terminvorschlaege abgelehnt. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der angehakten Matches weiter. "Vergangene ablehnen" lehnt Terminvorschlaege mit Status Vorschlag ab, deren Termine alle in der Vergangenheit liegen.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Kontakthaeufigkeit (z. B. "Direkter Kontakt", "Kein Kontakt").
 - Zeigt in Meine Matches unter dem KAM Status den CEM Status und die zustaendige CEM-Person. Ein Klick auf den Namen kopiert ihn.
 - Technische Hintergrundfunktion ohne eigene Anzeige - merkt sich Kandidat/Vakanz des offenen Fragebogens fuer andere Funktionen.
@@ -36,7 +36,7 @@ Enthaltene Funktionen:
 Enthaltene Funktionen:
 
 - Kleine ?-Knoepfe an Dialogen, Leisten und Panels erklaeren die jeweilige Funktion. Der Hilfe-Knopf unten links und der Tampermonkey-Menueeintrag oeffnen eine Uebersicht aller Funktionen mit Kennzeichnung, ob sie nur anzeigen oder Daten aendern.
-- Setzt in CEM Meine Matches CEM WVL und CEM Status fuer alle sichtbaren Matches (optional nur eines Arbeitgebers) gleichzeitig. Bei Hired und Out wird die CEM WVL geleert, Out braucht einen Grund und lehnt offene Terminvorschlaege ab. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der sichtbaren Matches weiter. "Vergangene ablehnen" lehnt Terminvorschlaege mit Status Vorschlag ab, deren Termine alle in der Vergangenheit liegen.
+- Setzt in CEM Meine Matches CEM WVL und CEM Status fuer die angehakten sichtbaren Matches gleichzeitig (Haken-Liste nach Arbeitgeber gruppiert, in Meine Kandidaten die Matches aller aufgeklappten Kandidaten). Bei Hired und Out wird die CEM WVL geleert, Out braucht einen Grund und lehnt offene Terminvorschlaege ab. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der angehakten Matches weiter. "Vergangene ablehnen" lehnt Terminvorschlaege mit Status Vorschlag ab, deren Termine alle in der Vergangenheit liegen.
 - Setzt in CEM Meine Kandidaten Kandidat-Status und Kandidat-WVL fuer mehrere sichtbare Kandidaten gleichzeitig. Der Dialog listet alle Kandidaten der aktuellen Seite zum An- und Abhaken.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Rueckmeldegeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
 - Markiert Vorschlaege, wenn beim Arbeitgeber bereits ein Match auf den Status "Senden" gestellt wurde. Bis 90 Tage bleibt die Zeile rot gefuellt, danach nur rot umrandet. Der Hinweis zeigt den Zeitpunkt der Statusaenderung und bei derselben Vakanz den KAM-Status.
