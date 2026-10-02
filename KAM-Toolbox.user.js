@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.4.98
+// @version      1.4.99
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1752,10 +1752,10 @@
       page: MY_MATCHES,
       routes: onMyMatches,
       kind: "external",
-      summary: "Unter dem Vakanztitel stehen „Dringend“ und „Push“. Beide posten über den OPS-Bot in Slack, für die Vakanz der Zeile.",
+      summary: "In der Terminspalte stehen neben VTA und VTV „Dringend“ und „Push“, in Zeilen ohne Termin allein. Beide posten über den OPS-Bot in Slack, für die Vakanz der Zeile.",
       notes: [
         "„Dringend“ schreibt den Befehl in den Dringend-Channel. Der Bot setzt dort den Tag [dringende Suche] und fragt nach 14 Tagen nach, ob die Suche noch dringend ist.",
-        "Rot mit Haken heißt: Die Vakanz ist dringend. Ein Klick darauf beendet die dringende Suche nach einer Rückfrage. Gelb heißt: angefragt, der Bot hat noch nicht bestätigt.",
+        "Rot umrandet: nicht dringend. Rot mit Haken: Die Vakanz ist dringend. Ein Klick darauf beendet die dringende Suche nach einer Rückfrage. Gelb heißt: angefragt, der Bot hat noch nicht bestätigt.",
         "Nur veröffentlichte Vakanzen können dringend werden.",
         "„Push“ postet eine Push Request an @push in #push-requests. Danach steht „Push ✓“ am Knopf, ein zweiter Versand braucht deine Bestätigung."
       ]
@@ -2274,7 +2274,7 @@
     } = config;
     const tip = (key) => helpTip[key]?.() || "";
     const WVL_CELL_SELECTOR3 = `td.column-${columns.followUp}`;
-    const INTERVIEW_CELL_SELECTOR = `td.column-${columns.interview}`;
+    const INTERVIEW_CELL_SELECTOR2 = `td.column-${columns.interview}`;
     const STATUS_MUTATION = buildStatusMutation(fields.status);
     const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
     const WVL_MUTATION = buildFollowUpMutation(fields.followUp);
@@ -2590,7 +2590,7 @@
       return interviews;
     }
     function markRow(matchId, markCell) {
-      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markCell(row.querySelector(INTERVIEW_CELL_SELECTOR)));
+      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markCell(row.querySelector(INTERVIEW_CELL_SELECTOR2)));
     }
     async function forwardInterview(matchId, interview) {
       const request = getRequest();
@@ -6143,6 +6143,10 @@
   var JOB_TITLE_LINK_SELECTOR2 = '.column-jobPositionId a[href*="#/JobPosition/"]';
   var MATCH_LINK_SELECTOR4 = 'a[href*="#/Match/"]';
   var BAR_CLASS = "werkia-kam-match-actions";
+  var FALLBACK_BLOCK_CLASS = "werkia-kam-match-actions-block";
+  var VT_BLOCK_SELECTOR = ".werkia-slack-exports";
+  var VT_BUTTON_SELECTOR = ".werkia-slack-export";
+  var INTERVIEW_CELL_SELECTOR = "td.column-interview";
   var STYLE_ID5 = "werkia-kam-match-actions-style";
   var STORE_KEY = "werkia_kam_match_actions_v1";
   var REFRESH_INTERVAL_MS4 = 5 * 60 * 1e3;
@@ -6251,14 +6255,19 @@
       const style = document.createElement("style");
       style.id = STYLE_ID5;
       style.textContent = `
-      .${BAR_CLASS} { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-top:4px; }
-      .${BAR_CLASS} button { min-height:20px; padding:2px 7px; border:1px solid #9ca3af; border-radius:5px; background:#fff; color:#374151; cursor:pointer; font:700 10.5px/1 Arial,sans-serif; white-space:nowrap; }
-      .${BAR_CLASS} button:hover:not(:disabled) { background:#f3f4f6; }
-      .${BAR_CLASS} button:disabled { cursor:default; opacity:.65; }
+      .${FALLBACK_BLOCK_CLASS} { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+      .${BAR_CLASS} { display:contents; }
+      .${BAR_CLASS} button { min-height:24px; padding:3px 8px; border:1px solid #4956df; border-radius:5px; background:#4956df; color:#fff; cursor:pointer; font:700 11px/1 Arial,sans-serif; white-space:nowrap; }
+      .${BAR_CLASS} button:hover:not(:disabled) { background:#3643c7; }
+      .${BAR_CLASS} button:disabled { cursor:default; opacity:.6; }
+      .${BAR_CLASS} button[data-action="urgent"][data-state="off"],
+      .${BAR_CLASS} button[data-action="urgent"][data-state="loading"] { border-color:#dc2626; background:#fff; color:#dc2626; }
+      .${BAR_CLASS} button[data-action="urgent"][data-state="off"]:hover:not(:disabled) { background:#fef2f2; }
       .${BAR_CLASS} button[data-state="on"] { border-color:#dc2626; background:#dc2626; color:#fff; opacity:1; }
       .${BAR_CLASS} button[data-state="on"]:hover { background:#b91c1c; }
       .${BAR_CLASS} button[data-state="pending"] { border-color:#d97706; background:#fef3c7; color:#92400e; opacity:1; }
-      .${BAR_CLASS} button[data-state="sent"] { border-color:#4956df; color:#4956df; }
+      .${BAR_CLASS} button[data-state="sent"] { background:#fff; color:#4956df; }
+      .${BAR_CLASS} button[data-state="sent"]:hover:not(:disabled) { background:#eef0fd; }
     `;
       document.head.appendChild(style);
     }
@@ -6312,11 +6321,35 @@
         flash(button, "Fehler");
       }
     }
+    function placeBar(row, bar) {
+      const vtBlock = row.querySelector(VT_BLOCK_SELECTOR);
+      if (vtBlock) {
+        if (bar.parentElement !== vtBlock) {
+          const lastVtButton = [...vtBlock.querySelectorAll(VT_BUTTON_SELECTOR)].pop();
+          if (lastVtButton) lastVtButton.after(bar);
+          else vtBlock.appendChild(bar);
+        }
+        row.querySelectorAll(`.${FALLBACK_BLOCK_CLASS}`).forEach((block) => block.remove());
+        return;
+      }
+      let fallback = row.querySelector(`.${FALLBACK_BLOCK_CLASS}`);
+      if (!fallback) {
+        const cell = row.querySelector(INTERVIEW_CELL_SELECTOR) || row.querySelector(".column-jobPositionId");
+        if (!cell) return;
+        fallback = document.createElement("div");
+        fallback.className = FALLBACK_BLOCK_CLASS;
+        cell.appendChild(fallback);
+      }
+      if (bar.parentElement !== fallback) fallback.appendChild(bar);
+    }
     function ensureBar(row) {
       const { jobPositionId, matchId } = rowIds(row);
       if (!jobPositionId) return null;
       let bar = row.querySelector(`.${BAR_CLASS}`);
-      if (bar && bar.dataset.jobPositionId === jobPositionId) return bar;
+      if (bar && bar.dataset.jobPositionId === jobPositionId) {
+        placeBar(row, bar);
+        return bar;
+      }
       bar?.remove();
       bar = document.createElement("div");
       bar.className = BAR_CLASS;
@@ -6333,7 +6366,7 @@
       bar.append(urgent, push);
       const tip = kamHelp.tip("match-slack-actions");
       if (tip) bar.appendChild(tip);
-      row.querySelector(".column-jobPositionId")?.appendChild(bar);
+      placeBar(row, bar);
       return bar;
     }
     function render() {
@@ -6387,7 +6420,7 @@
       }, PENDING_POLL_MS);
     }
     function removeBars() {
-      document.querySelectorAll(`.${BAR_CLASS}`).forEach((element) => element.remove());
+      document.querySelectorAll(`.${BAR_CLASS}, .${FALLBACK_BLOCK_CLASS}`).forEach((element) => element.remove());
     }
     function sync() {
       if (!isTargetPage8()) {
