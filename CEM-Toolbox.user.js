@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.6.93
+// @version      1.6.94
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1697,6 +1697,26 @@
       ]
     };
   }
+  function bulkDeclinePastTopic({ page, routes }) {
+    return {
+      id: "bulk-decline-past",
+      title: "Vergangene Terminvorschläge ablehnen",
+      page,
+      routes,
+      kind: "write",
+      summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
+      steps: [
+        "Einen Arbeitgeber wählen oder alle sichtbaren Matches lassen.",
+        "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
+        "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
+      ],
+      notes: [
+        "Hat ein Vorschlag noch mindestens einen Termin in der Zukunft, bleibt er stehen.",
+        "Weitergeleitete, bestätigte und stattgefundene Termine bleiben unberührt.",
+        "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Sind alle Vorschläge eines Matches abgelehnt, werden seine Pills ausgegraut und durchgestrichen."
+      ]
+    };
+  }
   function offlineMatchBulkTopic() {
     return {
       id: "offline-match-bulk",
@@ -1868,6 +1888,7 @@
     bulkWvlTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages }),
     bulkStatusTopic({ team: "CEM", page: BULK_PAGES, routes: onBulkPages, declinesInterviews: true }),
     bulkForwardTopic({ page: BULK_PAGES, routes: onBulkPages }),
+    bulkDeclinePastTopic({ page: BULK_PAGES, routes: onBulkPages }),
     {
       id: "candidate-bulk-status",
       title: "Kandidat-Status gesammelt ändern",
@@ -4554,10 +4575,18 @@
   function suggestedInterviews(items) {
     return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
   }
+  function isPastSuggestion(interview, now = Date.now()) {
+    const dates = Array.isArray(interview?.dates) ? interview.dates : [];
+    if (!dates.length) return false;
+    const times = dates.map((date) => Date.parse(date));
+    if (times.some(Number.isNaN)) return false;
+    return Math.max(...times) < now;
+  }
   var FORWARDED_CHIP_CLASSES = ["MuiChip-colorInterviewForwarded", "MuiChip-filledInterviewForwarded"];
   var FORWARDED_CHIP_BACKGROUND = "#b9e5fd";
   function isSuggestionChip(chip) {
     if (!chip?.classList?.contains("MuiChip-root")) return false;
+    if (chip.dataset?.werkiaDeclined === "true") return false;
     if ([...chip.classList].some((name) => /^MuiChip-(?:color|filled)InterviewSuggest/i.test(name))) return true;
     return /^vorschlag$/i.test(String(chip.getAttribute("aria-label") || "").trim());
   }
@@ -4570,6 +4599,17 @@
       chip.style.backgroundColor = FORWARDED_CHIP_BACKGROUND;
       chip.setAttribute("aria-label", "Weitergeleitet");
       chip.dataset.werkiaForwarded = "true";
+    });
+    return chips.length;
+  }
+  function markSuggestionChipsDeclined(cell) {
+    if (!cell) return 0;
+    const chips = [...cell.querySelectorAll(".MuiChip-root")].filter(isSuggestionChip);
+    chips.forEach((chip) => {
+      chip.style.opacity = "0.45";
+      chip.style.textDecoration = "line-through";
+      chip.setAttribute("aria-label", "Abgelehnt");
+      chip.dataset.werkiaDeclined = "true";
     });
     return chips.length;
   }
@@ -4666,8 +4706,8 @@
       const style = document.createElement("style");
       style.id = IDS4.style;
       style.textContent = `
-      #${IDS4.button}, #${IDS4.statusButton}, #${IDS4.forwardButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-      #${IDS4.button}:hover, #${IDS4.statusButton}:hover, #${IDS4.forwardButton}:hover { background: #fff3e0; }
+      #${IDS4.button}, #${IDS4.statusButton}, #${IDS4.forwardButton}, #${IDS4.declinePastButton} { display: block; min-width: 112px; margin: 8px 0 2px; padding: 8px 12px; border: 2px solid #ef6c00; border-radius: 6px; background: #fff; color: #bf4d00; font: 700 13px/1.2 Arial,sans-serif; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+      #${IDS4.button}:hover, #${IDS4.statusButton}:hover, #${IDS4.forwardButton}:hover, #${IDS4.declinePastButton}:hover { background: #fff3e0; }
       #${IDS4.dialog} { width: min(460px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 12px 45px rgba(0,0,0,.3); font: 14px/1.4 Arial,sans-serif; }
       #${IDS4.dialog}::backdrop { background: rgba(0,0,0,.38); }
       #${IDS4.dialog} .wkw-head { display: flex; align-items: center; padding: 16px 18px; color: #fff; background: #ef6c00; font-size: 17px; font-weight: 700; }
@@ -4848,13 +4888,13 @@
       dialog.showModal();
       statusSelect.focus();
     }
-    function renderForwardDialog() {
+    function renderInterviewDialog(action) {
       document.getElementById(IDS4.dialog)?.remove();
       const choices = getEmployerChoices();
       const dialog = document.createElement("dialog");
       dialog.id = IDS4.dialog;
       dialog.innerHTML = `
-      <div class="wkw-head">Terminvorschläge gesammelt weiterleiten${tip("forward")}</div>
+      <div class="wkw-head">${action.title}${tip(action.helpKey)}</div>
       <form class="wkw-body" method="dialog">
         <label>Arbeitgeber
           <select name="employer" required>
@@ -4862,11 +4902,11 @@
             ${choices.map((choice) => `<option value="${choice.id}">${choice.name} (${choice.rows.length} sichtbare Matches)</option>`).join("")}
           </select>
         </label>
-        <div class="wkw-note">Alle Terminvorschläge mit Status „Vorschlag“ der ausgewählten sichtbaren Matches werden auf „Weitergeleitet“ gesetzt, wie mit dem Button „Weiterleiten“ im Termindialog. Vor dem Weiterleiten wird die genaue Anzahl angezeigt.</div>
+        <div class="wkw-note">${action.note}</div>
         <div id="${IDS4.status}">Bitte Arbeitgeber prüfen.</div>
         <div class="wkw-actions">
           <button type="button" data-action="close">Abbrechen</button>
-          <button type="button" data-action="apply">Weiterleiten</button>
+          <button type="button" data-action="apply">${action.applyLabel}</button>
         </div>
       </form>`;
       document.body.appendChild(dialog);
@@ -4876,7 +4916,7 @@
           dialog.close();
           return;
         }
-        applyForwardFromDialog(dialog);
+        applyInterviewActionFromDialog(dialog, action);
       });
       dialog.addEventListener("close", () => handleDialogClose(dialog));
       dialog.showModal();
@@ -4978,14 +5018,18 @@
       let declined = 0;
       for (const interviewId of interviewIds) {
         if (cancelRequested) break;
-        const result = await request(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
-        const interview = result?.data;
-        if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
-          throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
-        }
+        await declineInterview(matchId, interviewId);
         declined += 1;
       }
       return declined;
+    }
+    async function declineInterview(matchId, interviewId) {
+      const request = getRequest();
+      const result = await request(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
+      const interview = result?.data;
+      if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
+        throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
+      }
     }
     async function suggestedInterviewsForMatch(matchId) {
       const request = getRequest();
@@ -5011,8 +5055,8 @@
       }
       return interviews;
     }
-    function markRowForwarded(matchId) {
-      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markSuggestionChipsForwarded(row.querySelector(INTERVIEW_CELL_SELECTOR)));
+    function markRow(matchId, markCell) {
+      getRows().filter((row) => matchIdFromRow(row) === matchId).forEach((row) => markCell(row.querySelector(INTERVIEW_CELL_SELECTOR)));
     }
     async function forwardInterview(matchId, interview) {
       const request = getRequest();
@@ -5022,7 +5066,37 @@
         throw new Error(`Terminvorschlag ${interview.id} wurde nicht als weitergeleitet bestätigt`);
       }
     }
-    async function applyForwardFromDialog(dialog) {
+    const INTERVIEW_ACTIONS = {
+      forward: {
+        title: "Terminvorschläge gesammelt weiterleiten",
+        helpKey: "forward",
+        note: "Alle Terminvorschläge mit Status „Vorschlag“ der ausgewählten sichtbaren Matches werden auf „Weitergeleitet“ gesetzt, wie mit dem Button „Weiterleiten“ im Termindialog. Vor dem Weiterleiten wird die genaue Anzahl angezeigt.",
+        applyLabel: "Weiterleiten",
+        noun: "Terminvorschläge",
+        verb: "weiterleiten",
+        done: "weitergeleitet",
+        progress: "Leite weiter",
+        empty: "Keine Terminvorschläge mit Status „Vorschlag“ gefunden.",
+        select: () => true,
+        write: forwardInterview,
+        markCell: markSuggestionChipsForwarded
+      },
+      declinePast: {
+        title: "Vergangene Terminvorschläge ablehnen",
+        helpKey: "declinePast",
+        note: "Terminvorschläge mit Status „Vorschlag“, deren vorgeschlagene Termine alle in der Vergangenheit liegen, werden abgelehnt. Vorschläge mit mindestens einem Termin in der Zukunft und Termine mit anderem Status bleiben unverändert. Vor dem Ablehnen wird die genaue Anzahl angezeigt.",
+        applyLabel: "Ablehnen",
+        noun: "vergangene Terminvorschläge",
+        verb: "ablehnen",
+        done: "abgelehnt",
+        progress: "Lehne ab",
+        empty: "Keine vergangenen Terminvorschläge mit Status „Vorschlag“ gefunden.",
+        select: (interview) => isPastSuggestion(interview),
+        write: (matchId, interview) => declineInterview(matchId, interview.id),
+        markCell: markSuggestionChipsDeclined
+      }
+    };
+    async function applyInterviewActionFromDialog(dialog, action) {
       if (running) return;
       const employerId = dialog.querySelector('[name="employer"]').value;
       const choice = employerId === "__all__" ? { id: "__all__", name: "allen sichtbaren Arbeitgebern", rows: getRows() } : getEmployerChoices().find((item) => item.id === employerId);
@@ -5035,56 +5109,57 @@
       const matchIds = [...new Set(choice.rows.map((row) => matchIdFromRow(row)).filter(Boolean))];
       const queue = [];
       const failures = [];
+      const pendingByMatch = /* @__PURE__ */ new Map();
       for (let index = 0; index < matchIds.length; index += 1) {
         if (cancelRequested) break;
         setStatus(`Lade Terminvorschläge ${index + 1} von ${matchIds.length} …`, "busy");
         try {
-          (await suggestedInterviewsForMatch(matchIds[index])).forEach((interview) => queue.push({ matchId: matchIds[index], interview }));
+          const interviews = await suggestedInterviewsForMatch(matchIds[index]);
+          pendingByMatch.set(matchIds[index], interviews.length);
+          interviews.filter(action.select).forEach((interview) => queue.push({ matchId: matchIds[index], interview }));
         } catch (error) {
           failures.push(`Laden ${index + 1}: ${error.message}`);
         }
       }
       if (cancelRequested) {
         running = false;
-        setStatus("Lauf gestoppt, bevor etwas weitergeleitet wurde.", "busy");
+        setStatus(`Lauf gestoppt, bevor etwas ${action.done} wurde.`, "busy");
         return finishDialog(dialog);
       }
       if (!queue.length) {
         running = false;
-        setStatus(failures.length ? `Keine Vorschläge weitergeleitet, ${failures.length} Matches nicht ladbar. ${failures.slice(0, 3).join(" | ")}` : "Keine Terminvorschläge mit Status „Vorschlag“ gefunden.", failures.length ? "error" : "ok");
+        setStatus(failures.length ? `Keine Vorschläge ${action.done}, ${failures.length} Matches nicht ladbar. ${failures.slice(0, 3).join(" | ")}` : action.empty, failures.length ? "error" : "ok");
         return finishDialog(dialog);
       }
       const matchCount = new Set(queue.map((item) => item.matchId)).size;
       const scopeText = employerId === "__all__" ? "aller sichtbaren Arbeitgeber" : `von „${choice.name}“`;
       const failureText = failures.length ? ` (${failures.length} Matches konnten nicht geladen werden und bleiben unverändert.)` : "";
-      if (!window.confirm(`${queue.length} Terminvorschläge aus ${matchCount} Matches ${scopeText} weiterleiten?${failureText}`)) {
+      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches ${scopeText} ${action.verb}?${failureText}`)) {
         running = false;
         setRunningControls(dialog, false);
-        return setStatus("Nichts weitergeleitet.", "");
+        return setStatus(`Nichts ${action.done}.`, "");
       }
-      let forwarded = 0;
-      const pendingByMatch = /* @__PURE__ */ new Map();
-      queue.forEach((item) => pendingByMatch.set(item.matchId, (pendingByMatch.get(item.matchId) || 0) + 1));
+      let written = 0;
       for (let index = 0; index < queue.length; index += 1) {
         if (cancelRequested) break;
-        setStatus(`Leite weiter ${index + 1} von ${queue.length} …`, "busy");
+        setStatus(`${action.progress} ${index + 1} von ${queue.length} …`, "busy");
         try {
-          await forwardInterview(queue[index].matchId, queue[index].interview);
-          forwarded += 1;
+          await action.write(queue[index].matchId, queue[index].interview);
+          written += 1;
           const remaining = pendingByMatch.get(queue[index].matchId) - 1;
           pendingByMatch.set(queue[index].matchId, remaining);
-          if (remaining === 0) markRowForwarded(queue[index].matchId);
+          if (remaining === 0) markRow(queue[index].matchId, action.markCell);
         } catch (error) {
           failures.push(`${index + 1}: ${error.message}`);
         }
       }
       running = false;
       if (cancelRequested) {
-        setStatus(`Lauf gestoppt: ${forwarded} weitergeleitet${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Vorschläge blieben unverändert.`, "busy");
+        setStatus(`Lauf gestoppt: ${written} ${action.done}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. Die übrigen Vorschläge blieben unverändert.`, "busy");
       } else if (failures.length) {
-        setStatus(`${forwarded} weitergeleitet, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+        setStatus(`${written} ${action.done}, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
       } else {
-        setStatus(`${forwarded} Terminvorschläge erfolgreich weitergeleitet.`, "ok");
+        setStatus(`${written} ${action.noun} erfolgreich ${action.done}.`, "ok");
       }
       finishDialog(dialog);
     }
@@ -5233,7 +5308,14 @@
         IDS4.forwardButton,
         "Alle weiterleiten",
         "Terminvorschläge mit Status „Vorschlag“ für alle sichtbaren Matches eines Arbeitgebers weiterleiten",
-        renderForwardDialog
+        () => renderInterviewDialog(INTERVIEW_ACTIONS.forward)
+      );
+      installButton(
+        document.querySelector(`th.column-${columns.interview}`),
+        IDS4.declinePastButton,
+        "Vergangene ablehnen",
+        "Terminvorschläge, deren Termine alle in der Vergangenheit liegen, für alle sichtbaren Matches eines Arbeitgebers ablehnen",
+        () => renderInterviewDialog(INTERVIEW_ACTIONS.declinePast)
       );
     }
     let scheduled = false;
@@ -5260,6 +5342,7 @@
     button: "werkia-cem-wvl-bulk-button",
     statusButton: "werkia-cem-status-bulk-button",
     forwardButton: "werkia-cem-interview-forward-bulk-button",
+    declinePastButton: "werkia-cem-interview-decline-past-bulk-button",
     dialog: "werkia-cem-bulk-dialog",
     style: "werkia-cem-bulk-style",
     status: "werkia-cem-bulk-status",
@@ -5313,7 +5396,8 @@
       helpTip: {
         wvl: () => cemHelp.tipHtml("bulk-wvl", { tone: "dark" }),
         status: () => cemHelp.tipHtml("bulk-status", { tone: "dark" }),
-        forward: () => cemHelp.tipHtml("bulk-forward", { tone: "dark" })
+        forward: () => cemHelp.tipHtml("bulk-forward", { tone: "dark" }),
+        declinePast: () => cemHelp.tipHtml("bulk-decline-past", { tone: "dark" })
       }
     });
   }
