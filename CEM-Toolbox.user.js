@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.7.109
+// @version      1.7.110
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1663,6 +1663,7 @@
     obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
     employer: /^#\/Employer\/[^/?]+/i,
     chat: /\/chat\//i,
+    vacancyList: /^#\/JobPosition\/?(?:\?.*)?$/i,
     vacancyPotentialCandidates: /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i
   };
   var PAGES = {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.109
+// @version      1.6.110
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1576,6 +1576,7 @@
     obcCandidates: /#\/Obc\/Candidates(?:[/?]|$)/i,
     employer: /^#\/Employer\/[^/?]+/i,
     chat: /\/chat\//i,
+    vacancyList: /^#\/JobPosition\/?(?:\?.*)?$/i,
     vacancyPotentialCandidates: /^#\/JobPosition\/[0-9a-f-]+\/show\/potential-candidate(?:\?.*)?$/i
   };
   var PAGES = {
@@ -1901,6 +1902,36 @@
         "Solange du nicht speicherst, ändert sich am Arbeitgeber nichts.",
         "Flags, die schon in OM Notes stehen, sind farbig hinterlegt.",
         "Die Flags steuern Hinweise und Filter in anderen Toolboxen, zum Beispiel auf Potenzielle Matches in der OBC-Toolbox."
+      ]
+    },
+    {
+      id: "vacancy-status-inline",
+      title: "Vakanz-Status direkt in der Liste",
+      page: "Vakanzen",
+      routes: [ROUTES.vacancyList],
+      kind: "write",
+      summary: "In der Vakanzliste ist die Statusspalte ein Dropdown. Eine Auswahl speichert den neuen Status sofort, ohne dass du die Vakanz öffnest.",
+      notes: [
+        "Neben dem Dropdown erscheint kurz ✓, wenn gespeichert wurde. Schlägt das Speichern fehl, springt das Dropdown auf den alten Status zurück und eine Meldung erklärt den Fehler.",
+        "Der farbige Rand zeigt den Status auf einen Blick, zum Beispiel grün für „Veröffentlicht“ und orange für „Pausiert“.",
+        "Die Liste lädt nicht neu. Ist sie nach Status gefiltert, verschwindet die Zeile erst beim nächsten Neu laden."
+      ]
+    },
+    {
+      id: "vacancy-status-bulk",
+      title: "Vakanz-Status gesammelt ändern",
+      page: "Vakanzen",
+      routes: [ROUTES.vacancyList],
+      kind: "write",
+      summary: "„Alle ändern“ im Kopf der Statusspalte setzt den Status für mehrere sichtbare Vakanzen auf einmal.",
+      steps: [
+        "Die Liste so filtern, dass die gewünschten Vakanzen sichtbar sind.",
+        "„Alle ändern“ klicken. Alle sichtbaren Vakanzen sind angehakt, nach Arbeitgeber gruppiert. Nicht gewünschte abhaken.",
+        "Den neuen Status wählen, „Status anwenden“ klicken und die Rückfrage bestätigen."
+      ],
+      notes: [
+        "Vakanzen, die den Status schon haben, bleiben unverändert und werden in der Rückfrage mitgezählt.",
+        "Nach dem Schließen lädt die Liste neu. Filter und Seite bleiben erhalten."
       ]
     },
     urgentVacancyTopic(),
@@ -4140,16 +4171,16 @@
   function asciiFold(value) {
     return String(value || "").replace(/[äÄ]/g, "ae").replace(/[öÖ]/g, "oe").replace(/[üÜ]/g, "ue").replace(/[ßẞ]/g, "ss");
   }
-  function foldIfNeeded(value, fold) {
-    return fold ? asciiFold(value) : value;
+  function foldIfNeeded(value, fold2) {
+    return fold2 ? asciiFold(value) : value;
   }
   function isEmptyValue(value) {
     const v = clean(value);
     return !v || v === "-" || v === "–" || v === "nicht angegeben" || v === "keine angabe";
   }
-  function travelRank(value, { fold = false } = {}) {
-    const v = foldIfNeeded(clean(value), fold);
-    const has = (literal) => v.includes(foldIfNeeded(literal, fold));
+  function travelRank(value, { fold: fold2 = false } = {}) {
+    const v = foldIfNeeded(clean(value), fold2);
+    const has = (literal) => v.includes(foldIfNeeded(literal, fold2));
     if (has("keine reisebereitschaft")) return 0;
     if (has("gering")) return 1;
     if (has("regelmäßig")) return 2;
@@ -4172,17 +4203,17 @@
     if (v === "0 jahre" || v.includes("0 jahre (")) return 0;
     return null;
   }
-  function isLicenseRequired(value, { fold = false } = {}) {
-    const v = foldIfNeeded(clean(value), fold);
-    const has = (literal) => v.includes(foldIfNeeded(literal, fold));
+  function isLicenseRequired(value, { fold: fold2 = false } = {}) {
+    const v = foldIfNeeded(clean(value), fold2);
+    const has = (literal) => v.includes(foldIfNeeded(literal, fold2));
     if (isEmptyValue(value)) return null;
     if (v === "nein" || has("nicht erforderlich") || has("kein führerschein erforderlich")) return false;
     if (has("ja") || has("führerschein") || has("klasse") || /\bb\b/.test(v)) return true;
     return null;
   }
-  function licenseStatus(value, { fold = false } = {}) {
-    const v = foldIfNeeded(clean(value), fold);
-    const has = (literal) => v.includes(foldIfNeeded(literal, fold));
+  function licenseStatus(value, { fold: fold2 = false } = {}) {
+    const v = foldIfNeeded(clean(value), fold2);
+    const has = (literal) => v.includes(foldIfNeeded(literal, fold2));
     if (isEmptyValue(value)) return "empty";
     if (has("fahrschule") || has("wird gemacht") || has("in ausbildung")) return "driving-school";
     if (has("kein") || has("nein") || has("nicht vorhanden") || has("ohne führerschein")) return "no-license";
@@ -4208,9 +4239,9 @@
   function languageColor(requiredRank, candidateRank) {
     return rankColor(requiredRank, candidateRank, { oneBelowColor: YELLOW });
   }
-  function normalizePosition(value, { fold = false } = {}) {
+  function normalizePosition(value, { fold: fold2 = false } = {}) {
     let v = clean(value).replace(/&/g, "und").replace(/anlagemechaniker/g, "anlagenmechaniker").replace(/\s+/g, " ").trim();
-    if (fold) v = asciiFold(v);
+    if (fold2) v = asciiFold(v);
     return v;
   }
   var POSITION_EQUIVALENT_GROUPS = [
@@ -4233,18 +4264,18 @@
   ];
   var SLUG_BY_NAME = new Map(JOB_TITLE_CATALOG.map((entry) => [normalizePosition(entry.name), entry.slug]));
   var SLUG_BY_FOLDED_NAME = new Map(JOB_TITLE_CATALOG.map((entry) => [normalizePosition(entry.name, { fold: true }), entry.slug]));
-  function toPositionSlug(normalized, fold) {
+  function toPositionSlug(normalized, fold2) {
     if (!normalized) return "";
     if (JOB_TITLE_SLUGS.has(normalized)) return normalized;
-    return (fold ? SLUG_BY_FOLDED_NAME : SLUG_BY_NAME).get(normalized) || "";
+    return (fold2 ? SLUG_BY_FOLDED_NAME : SLUG_BY_NAME).get(normalized) || "";
   }
-  function positionMatches(employerPosition, candidatePosition, { fold = false } = {}) {
-    const employerName = normalizePosition(employerPosition, { fold });
-    const candidateName = normalizePosition(candidatePosition, { fold });
+  function positionMatches(employerPosition, candidatePosition, { fold: fold2 = false } = {}) {
+    const employerName = normalizePosition(employerPosition, { fold: fold2 });
+    const candidateName = normalizePosition(candidatePosition, { fold: fold2 });
     if (!employerName || !candidateName || employerName === "-" || candidateName === "-") return false;
     if (employerName === candidateName) return true;
-    const employer = toPositionSlug(employerName, fold);
-    const candidate = toPositionSlug(candidateName, fold);
+    const employer = toPositionSlug(employerName, fold2);
+    const candidate = toPositionSlug(candidateName, fold2);
     if (!employer || !candidate) return false;
     if (employer === "mechatronics_tech" || candidate === "mechatronics_tech") return false;
     return POSITION_EQUIVALENT_GROUPS.some((group) => group.includes(employer) && group.includes(candidate));
@@ -4271,13 +4302,13 @@
       candidate: ["electronic_tech_industrial", "electrician"]
     }
   ];
-  function positionsNeedReview(employerPosition, candidatePosition, { fold = false } = {}) {
-    const employerName = normalizePosition(employerPosition, { fold });
-    const candidateName = normalizePosition(candidatePosition, { fold });
+  function positionsNeedReview(employerPosition, candidatePosition, { fold: fold2 = false } = {}) {
+    const employerName = normalizePosition(employerPosition, { fold: fold2 });
+    const candidateName = normalizePosition(candidatePosition, { fold: fold2 });
     if (!employerName || !candidateName || employerName === "-" || candidateName === "-") return false;
-    if (positionMatches(employerPosition, candidatePosition, { fold })) return false;
-    const employer = toPositionSlug(employerName, fold);
-    const candidate = toPositionSlug(candidateName, fold);
+    if (positionMatches(employerPosition, candidatePosition, { fold: fold2 })) return false;
+    const employer = toPositionSlug(employerName, fold2);
+    const candidate = toPositionSlug(candidateName, fold2);
     if (!employer || !candidate) return false;
     return POSITION_REVIEW_GROUPS.some((group) => group.employer.includes(employer) && group.candidate.includes(candidate));
   }
@@ -4325,9 +4356,9 @@
   var COMPANY_FLAG_TEXT = "[absprache vor ofm]";
 
   // ../../shared/js/werkia-questionnaire/dialog.js
-  function normalize5(value, fold) {
+  function normalize5(value, fold2) {
     const v = clean(value);
-    return fold ? asciiFold(v) : v;
+    return fold2 ? asciiFold(v) : v;
   }
   function getVisibleDialogs(root = document) {
     return [...root.querySelectorAll('.MuiDialog-paper, div[role="dialog"], [role="dialog"]')].filter((dialog) => {
@@ -4342,15 +4373,15 @@
     if (!dialog) return [];
     return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || el2.textContent || "").trim()).filter(Boolean);
   }
-  function isQuestionnaireDialog(dialog, { strictMode = true, fold = false, labels = QUESTIONNAIRE_LABELS2 } = {}) {
+  function isQuestionnaireDialog(dialog, { strictMode = true, fold: fold2 = false, labels = QUESTIONNAIRE_LABELS2 } = {}) {
     if (!dialog) return false;
     const text = dialog.innerText || dialog.textContent || "";
     if (/Matchkommentare/i.test(text)) return false;
     if (/Kandidat Dateien/i.test(text)) return false;
     if (strictMode && /Kandidatendateien|Zusammenführen|Halb anonym/i.test(text)) return false;
     const rawLabels = getDialogLabelTexts(dialog);
-    const labelSet = new Set(rawLabels.map((l) => normalize5(l, fold)));
-    const has = (literal) => labelSet.has(normalize5(literal, fold));
+    const labelSet = new Set(rawLabels.map((l) => normalize5(l, fold2)));
+    const has = (literal) => labelSet.has(normalize5(literal, fold2));
     const count = labels.filter((l) => has(l)).length;
     const hasHeader = has("Kandidat") && has("Job");
     if (!strictMode) return hasHeader && count >= 3;
@@ -4364,45 +4395,45 @@
     if (!dialogs.length) return null;
     return pick === "last" ? dialogs[dialogs.length - 1] : dialogs[0];
   }
-  function getFieldsByLabel(dialog, labelText, { fold = false } = {}) {
+  function getFieldsByLabel(dialog, labelText, { fold: fold2 = false } = {}) {
     if (!dialog) return [];
-    const wanted = normalize5(labelText, fold);
+    const wanted = normalize5(labelText, fold2);
     return [...dialog.querySelectorAll("span.ra-field")].filter((field) => {
       const lbl = field.querySelector("p span")?.innerText?.trim() || "";
-      return normalize5(lbl, fold) === wanted;
+      return normalize5(lbl, fold2) === wanted;
     });
   }
   var VALUE_SELECTOR = "span.MuiTypography-body2, p.MuiTypography-body2, .MuiTypography-body2";
-  function findValue(dialog, labelText, mode = "first", { fold = false } = {}) {
-    const fields = getFieldsByLabel(dialog, labelText, { fold });
+  function findValue(dialog, labelText, mode = "first", { fold: fold2 = false } = {}) {
+    const fields = getFieldsByLabel(dialog, labelText, { fold: fold2 });
     if (!fields.length) return null;
     const field = mode === "last" ? fields[fields.length - 1] : fields[0];
     return [...field.querySelectorAll(VALUE_SELECTOR)].find((el2) => (el2.innerText || el2.textContent || "").trim()) || null;
   }
-  function findValueAllowEmpty(dialog, labelText, mode = "first", { fold = false } = {}) {
-    const fields = getFieldsByLabel(dialog, labelText, { fold });
+  function findValueAllowEmpty(dialog, labelText, mode = "first", { fold: fold2 = false } = {}) {
+    const fields = getFieldsByLabel(dialog, labelText, { fold: fold2 });
     if (!fields.length) return null;
     const field = mode === "last" ? fields[fields.length - 1] : fields[0];
     return field.querySelector(VALUE_SELECTOR) || field;
   }
-  function findValueAnyLabel(dialog, labels, mode = "first", { fold = false, allowEmpty = false } = {}) {
+  function findValueAnyLabel(dialog, labels, mode = "first", { fold: fold2 = false, allowEmpty = false } = {}) {
     for (const label of labels) {
-      const value = allowEmpty ? findValueAllowEmpty(dialog, label, mode, { fold }) : findValue(dialog, label, mode, { fold });
+      const value = allowEmpty ? findValueAllowEmpty(dialog, label, mode, { fold: fold2 }) : findValue(dialog, label, mode, { fold: fold2 });
       if (value) return value;
     }
     return null;
   }
-  function getPositionEls(dialog, labelText, { fold = false } = {}) {
-    const fields = getFieldsByLabel(dialog, labelText, { fold });
+  function getPositionEls(dialog, labelText, { fold: fold2 = false } = {}) {
+    const fields = getFieldsByLabel(dialog, labelText, { fold: fold2 });
     if (!fields.length) return [];
-    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize5(el2.innerText || el2.textContent, fold) !== "berufsausbildung");
+    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize5(el2.innerText || el2.textContent, fold2) !== "berufsausbildung");
   }
-  function getQuestionnaireHeaderValue(dialog, labelText, { fold = false } = {}) {
-    const field = getFieldsByLabel(dialog, labelText, { fold })[0];
-    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize5(el2.textContent, fold) !== normalize5(labelText, fold)) : null;
+  function getQuestionnaireHeaderValue(dialog, labelText, { fold: fold2 = false } = {}) {
+    const field = getFieldsByLabel(dialog, labelText, { fold: fold2 })[0];
+    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize5(el2.textContent, fold2) !== normalize5(labelText, fold2)) : null;
     if (value?.textContent?.trim()) return value.textContent.trim();
     const lines = (dialog.innerText || dialog.textContent || "").split("\n").map((line) => line.trim()).filter(Boolean);
-    const labelIndex = lines.findIndex((line) => normalize5(line, fold) === normalize5(labelText, fold));
+    const labelIndex = lines.findIndex((line) => normalize5(line, fold2) === normalize5(labelText, fold2));
     return labelIndex >= 0 ? lines[labelIndex + 1] || "" : "";
   }
 
@@ -8008,9 +8039,9 @@
     const parsed = typeof raw === "string" ? parseJsonObject(raw, null) : raw;
     if (!parsed || typeof parsed !== "object") return emptyStore();
     const routes = parsed.routes && typeof parsed.routes === "object" ? parsed.routes : {};
-    const clean3 = {};
+    const clean4 = {};
     Object.keys(routes).forEach((route) => {
-      clean3[route] = (Array.isArray(routes[route]) ? routes[route] : []).filter((preset) => preset && typeof preset === "object" && preset.name).map((preset) => ({
+      clean4[route] = (Array.isArray(routes[route]) ? routes[route] : []).filter((preset) => preset && typeof preset === "object" && preset.name).map((preset) => ({
         id: String(preset.id || createPresetId()),
         name: String(preset.name),
         filter: preset.filter && typeof preset.filter === "object" ? preset.filter : {},
@@ -8019,7 +8050,7 @@
         perPage: Number.parseInt(preset.perPage, 10) || 0
       }));
     });
-    return { version: STORE_VERSION, routes: clean3 };
+    return { version: STORE_VERSION, routes: clean4 };
   }
   function presetsForRoute(store, route) {
     return store?.routes?.[route] ? [...store.routes[route]] : [];
@@ -8338,6 +8369,372 @@
     });
   }
 
+  // ../../shared/js/vacancy-status/core.js
+  var VACANCY_STATUS_OPTIONS = [
+    { value: "Draft", label: "Entwurf" },
+    { value: "Completed", label: "Abgeschlossen" },
+    { value: "Approved", label: "Freigegeben" },
+    { value: "Published", label: "Veröffentlicht" },
+    { value: "Paused", label: "Pausiert" },
+    { value: "Offline Match", label: "Offline Match" },
+    { value: "Obsolete", label: "Veraltet" }
+  ];
+  var UPDATE_VACANCY_STATUS_MUTATION = `mutation updateJobPositionStatus($id: UUID!, $status: String) {
+  data: updateJobPosition(id: $id, status: $status) {
+    id
+    status
+    __typename
+  }
+}`;
+  var VACANCY_STATUSES_QUERY = `query vacancyStatuses($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    status
+  }
+}`;
+  function isVacancyListRoute(hash) {
+    return /^#\/JobPosition\/?(?:\?.*)?$/i.test(String(hash || ""));
+  }
+  var fold = (text) => String(text || "").toLocaleLowerCase("de").replace(/ß/g, "ss").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[\s_-]+/g, " ").trim();
+  var LOOKUP = new Map(VACANCY_STATUS_OPTIONS.flatMap((option) => [
+    [fold(option.value), option.value],
+    [fold(option.label), option.value]
+  ]));
+  function statusFromText(text) {
+    return LOOKUP.get(fold(text)) || "";
+  }
+  function statusLabel(value) {
+    return VACANCY_STATUS_OPTIONS.find((option) => option.value === value)?.label || value || "leer";
+  }
+  function isKnownStatus(value) {
+    return VACANCY_STATUS_OPTIONS.some((option) => option.value === value);
+  }
+  function vacancyIdFromHref(href) {
+    return String(href || "").match(/#\/JobPosition\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?:[/?]|$)/i)?.[1] || "";
+  }
+  function chunk(values, size = 25) {
+    const result = [];
+    for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
+    return result;
+  }
+
+  // ../../shared/js/vacancy-status/index.js
+  var CELL_ATTR = "data-werkia-vacancy-status";
+  var WRAP_CLASS = "werkia-vacancy-status";
+  var STATUS_TONES = {
+    Draft: "#6b6775",
+    Completed: "#5b4bb7",
+    Approved: "#1f6fb2",
+    Published: "#18752b",
+    Paused: "#a35a00",
+    "Offline Match": "#0f7d7a",
+    Obsolete: "#b3261e"
+  };
+  function createObserver(runtime, callback) {
+    if (runtime.createMutationObserver) return runtime.createMutationObserver(callback);
+    if (runtime.MutationObserver) return new runtime.MutationObserver(callback);
+    return new MutationObserver(callback);
+  }
+  var clean3 = (text) => String(text || "").replace(/\s+/g, " ").trim();
+  function executeVacancyStatus(runtime, config) {
+    const { sourcePath, getRequest, namespace, runLock = null, lockId = "vacancy-status", bulk = null } = config;
+    runtime.registerSource?.(sourcePath);
+    const IDS4 = {
+      style: `werkia-${namespace}-vacancy-status-style`,
+      bulkButton: `werkia-${namespace}-vacancy-status-bulk-button`,
+      dialog: `werkia-${namespace}-vacancy-status-dialog`,
+      dialogStyle: `werkia-${namespace}-vacancy-status-dialog-style`,
+      dialogStatus: `werkia-${namespace}-vacancy-status-dialog-status`
+    };
+    const loaded = /* @__PURE__ */ new Map();
+    const loading = /* @__PURE__ */ new Set();
+    const written = /* @__PURE__ */ new Map();
+    function injectStyle() {
+      if (document.getElementById(IDS4.style)) return;
+      const style = document.createElement("style");
+      style.id = IDS4.style;
+      style.textContent = `
+      td[${CELL_ATTR}] { font-size: 0 !important; }
+      td[${CELL_ATTR}] > :not(.${WRAP_CLASS}) { display: none !important; }
+      .${WRAP_CLASS} { display: inline-flex; align-items: center; gap: 4px; font: 400 13px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif; }
+      .${WRAP_CLASS} select { --wvs-tone: #6b6775; max-width: 170px; padding: 4px 22px 4px 8px; border: 1px solid #d5d1dd; border-left: 4px solid var(--wvs-tone); border-radius: 6px; background-color: #fff; color: #1c1a22; font: 600 13px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif; cursor: pointer; }
+      .${WRAP_CLASS} select:hover { border-color: #b6a4ff; border-left-color: var(--wvs-tone); }
+      .${WRAP_CLASS} select:focus-visible { outline: 2px solid #b6a4ff; outline-offset: 1px; }
+      .${WRAP_CLASS} select:disabled { opacity: .6; cursor: wait; }
+      .${WRAP_CLASS} [data-state] { min-width: 14px; font-weight: 700; }
+      .${WRAP_CLASS} [data-state="ok"] { color: #18752b; }
+      .${WRAP_CLASS} [data-state="error"] { color: #b3261e; }
+      .${WRAP_CLASS} [data-state="busy"] { color: #995000; }
+    `;
+      document.head.appendChild(style);
+    }
+    function cellText(cell) {
+      return clean3([...cell.childNodes].filter((node) => !(node.nodeType === 1 && node.classList.contains(WRAP_CLASS))).map((node) => node.textContent).join(" "));
+    }
+    function vacancyIdFromRow(row) {
+      for (const link of row.querySelectorAll('a[href*="#/JobPosition/"]')) {
+        const id = vacancyIdFromHref(link.getAttribute("href") || link.href);
+        if (id) return id;
+      }
+      return "";
+    }
+    function visibleRows() {
+      return [...document.querySelectorAll("tbody tr")].map((row) => {
+        const cell = row.querySelector(":scope > td.column-status");
+        const id = cell ? vacancyIdFromRow(row) : "";
+        return id ? { row, cell, id } : null;
+      }).filter(Boolean);
+    }
+    function currentStatus({ cell, id }) {
+      const text = cellText(cell);
+      const own = written.get(id);
+      if (own && own.staleText === text) return own.value;
+      if (own) written.delete(id);
+      return statusFromText(text) || loaded.get(id) || "";
+    }
+    async function loadUnknown(ids) {
+      const missing = ids.filter((id) => !loading.has(id) && !loaded.has(id));
+      if (!missing.length) return;
+      missing.forEach((id) => loading.add(id));
+      try {
+        for (const group of chunk(missing)) {
+          const result = await getRequest()(VACANCY_STATUSES_QUERY, { filter: { ids: group } });
+          (result?.items || []).forEach((item) => {
+            if (item?.id) loaded.set(item.id, item.status || "");
+          });
+        }
+      } catch (error) {
+        console.warn("[Vakanz-Status] Status konnten nicht geladen werden:", error);
+      } finally {
+        missing.forEach((id) => loading.delete(id));
+        scheduleInstall();
+      }
+    }
+    function optionsHtml(value) {
+      const unknown = value && !isKnownStatus(value) ? `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>` : "";
+      const placeholder = value ? "" : '<option value="" disabled>Status …</option>';
+      return placeholder + unknown + VACANCY_STATUS_OPTIONS.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+    }
+    function setTone(select) {
+      select.style.setProperty("--wvs-tone", STATUS_TONES[select.value] || "#6b6775");
+    }
+    function setState(wrap2, state, title = "") {
+      const marker = wrap2.querySelector("[data-state]");
+      marker.dataset.state = state;
+      marker.textContent = { ok: "✓", error: "!", busy: "…" }[state] || "";
+      marker.title = title;
+    }
+    function withLock(operation) {
+      if (!runLock) return operation();
+      if (!runLock.acquire(lockId)) {
+        const current = runLock.read?.()?.moduleId;
+        window.alert(`Ein anderer schreibender Flow läuft bereits${current ? `: ${current}` : ""}. Status nicht geändert.`);
+        return Promise.resolve(false);
+      }
+      return Promise.resolve().then(operation).finally(() => runLock.release(lockId));
+    }
+    async function writeStatus(id, value) {
+      const result = await getRequest()(UPDATE_VACANCY_STATUS_MUTATION, { id, status: value });
+      const vacancy = result?.data;
+      if (vacancy?.id !== id || vacancy.status !== value) {
+        throw new Error(`Status wurde nicht auf „${statusLabel(value)}“ bestätigt`);
+      }
+    }
+    function remember(entry, value) {
+      written.set(entry.id, { value, staleText: cellText(entry.cell) });
+      loaded.set(entry.id, value);
+    }
+    function buildWrap(entry) {
+      const wrap2 = document.createElement("span");
+      wrap2.className = WRAP_CLASS;
+      wrap2.dataset.vacancyId = entry.id;
+      wrap2.innerHTML = '<select aria-label="Vakanz-Status"></select><span data-state=""></span>';
+      ["click", "mousedown", "mouseup", "pointerdown", "pointerup", "keydown"].forEach((type) => {
+        wrap2.addEventListener(type, (event) => event.stopPropagation());
+      });
+      const select = wrap2.querySelector("select");
+      select.addEventListener("change", async () => {
+        const previous = wrap2.dataset.value || "";
+        const next = select.value;
+        if (!next || next === previous) return;
+        select.disabled = true;
+        setState(wrap2, "busy", "Wird gespeichert …");
+        setTone(select);
+        try {
+          const done = await withLock(async () => {
+            await writeStatus(entry.id, next);
+            return true;
+          });
+          if (done === false) throw new Error("Run-Lock belegt");
+          remember({ id: entry.id, cell: wrap2.parentElement || entry.cell }, next);
+          wrap2.dataset.value = next;
+          setState(wrap2, "ok", `Gespeichert: ${statusLabel(next)}`);
+          runtime.setTimeout(() => {
+            if (wrap2.querySelector('[data-state="ok"]')) setState(wrap2, "");
+          }, 2500);
+        } catch (error) {
+          select.value = previous;
+          setTone(select);
+          setState(wrap2, "error", error.message);
+          if (error.message !== "Run-Lock belegt") window.alert(`Status konnte nicht gespeichert werden: ${error.message}`);
+        } finally {
+          select.disabled = false;
+        }
+      });
+      return wrap2;
+    }
+    function installRow(entry) {
+      let wrap2 = entry.cell.querySelector(`:scope > .${WRAP_CLASS}`);
+      if (wrap2 && wrap2.dataset.vacancyId !== entry.id) {
+        wrap2.remove();
+        wrap2 = null;
+      }
+      if (!wrap2) {
+        wrap2 = buildWrap(entry);
+        entry.cell.setAttribute(CELL_ATTR, "");
+        entry.cell.appendChild(wrap2);
+      }
+      const select = wrap2.querySelector("select");
+      if (select.disabled) return;
+      const value = currentStatus(entry);
+      if (wrap2.dataset.value === value && select.options.length) return;
+      wrap2.dataset.value = value;
+      select.innerHTML = optionsHtml(value);
+      select.value = value;
+      setTone(select);
+    }
+    function removeInline() {
+      document.querySelectorAll(`.${WRAP_CLASS}`).forEach((wrap2) => wrap2.remove());
+      document.querySelectorAll(`td[${CELL_ATTR}]`).forEach((cell) => cell.removeAttribute(CELL_ATTR));
+    }
+    const kit = bulk ? createBulkDialogKit({
+      ids: { dialog: IDS4.dialog, style: IDS4.dialogStyle, status: IDS4.dialogStatus },
+      buttonIds: [IDS4.bulkButton],
+      stopNoun: "Vakanz",
+      reloadMissingText: 'Status geändert. Der Adminpanel-Button "Neu laden" wurde nicht gefunden, bitte die Seite neu laden.'
+    }) : null;
+    function bulkEntries() {
+      const seen = /* @__PURE__ */ new Set();
+      return visibleRows().filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => {
+        const title = clean3(entry.row.querySelector(".column-mainTitle")?.textContent) || "Ohne Titel";
+        const place = clean3(entry.row.querySelector(".column-location\\.name")?.textContent);
+        const employer = clean3(entry.row.querySelector(".column-employerId")?.textContent) || "Ohne Arbeitgeber";
+        const status = currentStatus(entry);
+        const label = [title, place].filter(Boolean).join(" · ");
+        return { ...entry, employer, status, label: `${label.length > 80 ? `${label.slice(0, 79)}…` : label} (${statusLabel(status)})` };
+      });
+    }
+    function renderBulkDialog() {
+      const entries = bulkEntries();
+      kit.open({
+        title: `${bulk.team} Vakanz-Status gesammelt ändern`,
+        tipHtml: bulk.tipHtml?.() || "",
+        checklist: {
+          allLabel: `Alle (${entries.length} sichtbare Vakanzen)`,
+          searchPlaceholder: "Arbeitgeber oder Vakanz suchen …",
+          items: entries.map((entry) => ({ value: entry.id, label: entry.label, group: entry.employer, groupKey: entry.employer }))
+        },
+        fieldsHtml: `
+        <label>Neuer Vakanz-Status
+          <select name="status" required>
+            <option value="">Bitte auswählen</option>
+            ${VACANCY_STATUS_OPTIONS.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
+          </select>
+        </label>`,
+        note: "Alle sichtbaren Vakanzen sind angehakt. Ein Haken am Arbeitgeber wählt alle seine Vakanzen ab oder an. Vakanzen, die schon den gewählten Status haben, bleiben unverändert.",
+        initialStatus: "Bitte Auswahl und Status prüfen.",
+        applyLabel: "Status anwenden",
+        focusSelector: '[name="status"]',
+        onApply: (dialog) => applyBulk(dialog, entries)
+      });
+    }
+    async function applyBulk(dialog, entries) {
+      const ids = checkedValues(dialog);
+      const selection = entries.filter((entry) => ids.has(entry.id));
+      const target = dialog.querySelector('[name="status"]').value;
+      if (!selection.length) return kit.setStatus("Bitte mindestens eine Vakanz anhaken.", "error");
+      if (!isKnownStatus(target)) return kit.setStatus("Bitte einen Status auswählen.", "error");
+      const queue = selection.filter((entry) => entry.status !== target);
+      const unchanged = selection.length - queue.length;
+      if (!queue.length) return kit.setStatus(`Alle ${selection.length} ausgewählten Vakanzen haben schon „${statusLabel(target)}“.`, "ok");
+      const employers = new Set(queue.map((entry) => entry.employer)).size;
+      const skipText = unchanged ? ` ${unchanged} haben den Status schon und bleiben unverändert.` : "";
+      if (!window.confirm(`${queue.length} Vakanzen von ${employers} Arbeitgeber${employers === 1 ? "" : "n"} auf „${statusLabel(target)}“ setzen?${skipText}`)) return;
+      if (runLock && !runLock.acquire(lockId)) {
+        return kit.setStatus(`Ein anderer schreibender Flow läuft bereits: ${runLock.read?.()?.moduleId || "unbekannt"}.`, "error");
+      }
+      try {
+        const result = await kit.runQueue(dialog, queue, {
+          progress: (current, total) => `Ändere Status ${current} von ${total} …`,
+          update: async (entry) => {
+            await writeStatus(entry.id, target);
+            remember(entry, target);
+          }
+        });
+        if (result.changed > 0) dialog.dataset.needsReload = "true";
+        kit.report(result, {
+          restText: "Die übrigen Vakanzen blieben unverändert.",
+          successText: (count) => `${count} Vakanzen auf „${statusLabel(target)}“ gesetzt.${unchanged ? ` ${unchanged} hatten ihn schon.` : ""}`
+        });
+        kit.finish(dialog);
+      } finally {
+        runLock?.release(lockId);
+      }
+    }
+    function installBulkButton() {
+      if (!kit) return;
+      kit.installButton(document.querySelector("th.column-status"), IDS4.bulkButton, "Alle ändern", "Status für angehakte sichtbare Vakanzen ändern", () => {
+        if (!visibleRows().length) return window.alert("Keine sichtbaren Vakanzzeilen gefunden.");
+        renderBulkDialog();
+      });
+    }
+    function install() {
+      if (!isVacancyListRoute(location.hash)) {
+        teardown();
+        return;
+      }
+      const entries = visibleRows();
+      if (!entries.length) return;
+      injectStyle();
+      entries.forEach(installRow);
+      installBulkButton();
+      const unknown = entries.filter((entry) => !currentStatus(entry)).map((entry) => entry.id);
+      if (unknown.length) loadUnknown(unknown);
+    }
+    function teardown() {
+      removeInline();
+      document.getElementById(IDS4.bulkButton)?.remove();
+      if (!kit?.state.running) document.getElementById(IDS4.dialog)?.remove();
+    }
+    let scheduled = false;
+    function scheduleInstall() {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        install();
+      }, 150);
+    }
+    createObserver(runtime, scheduleInstall).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    runtime.addWindowListener("hashchange", scheduleInstall);
+    runtime.addCleanup?.(() => {
+      teardown();
+      document.getElementById(IDS4.style)?.remove();
+      document.getElementById(IDS4.dialogStyle)?.remove();
+    });
+    scheduleInstall();
+  }
+
+  // src/features/vacancy-status.js
+  function executeVacancyStatus2(runtime) {
+    executeVacancyStatus(runtime, {
+      sourcePath: "kam/toolbox/src/features/vacancy-status.js",
+      getRequest: () => getKamGraphqlAdapter().request,
+      namespace: "kam",
+      bulk: { team: "KAM", tipHtml: () => kamHelp.tipHtml("vacancy-status-bulk", { tone: "dark" }) }
+    });
+  }
+
   // ../../shared/js/om-notes-templates/index.js
   var OM_NOTE_TEMPLATES = [
     { group: "Unterlagen", label: "CV", value: "[CV]" },
@@ -8413,7 +8810,7 @@ ${next}`;
     field.dispatchEvent(new ViewEvent("input", { bubbles: true }));
     field.dispatchEvent(new ViewEvent("change", { bubbles: true }));
   }
-  function createObserver(runtime, callback) {
+  function createObserver2(runtime, callback) {
     if (runtime?.createMutationObserver) {
       return runtime.createMutationObserver(callback);
     }
@@ -8662,7 +9059,7 @@ ${next}`;
         renderToolbar();
       }, 80);
     }
-    const observer = createObserver(runtime, scheduleRender);
+    const observer = createObserver2(runtime, scheduleRender);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     addWindowListener(runtime, "hashchange", scheduleRender);
     addWindowListener(runtime, "resize", scheduleRender);
@@ -8943,6 +9340,7 @@ ${next}`;
     { id: "kam-suite-match-slack-actions", execute: executeMatchSlackActions },
     { id: "kam-suite-outlook-match-outen", execute: executeOutlookMatchOuten },
     { id: "filter-presets", execute: executeFilterPresets },
+    { id: "vacancy-status", execute: executeVacancyStatus2 },
     { id: "om-notes-templates", execute: (runtime) => executeOmNotesTemplates(runtime, { helpTip: () => kamHelp.tip("om-notes-templates", { tone: "dark" }) }) },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
   ], location.hostname));
