@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.103
+// @version      1.5.104
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -6653,8 +6653,9 @@
   }
   function readMailBodyText() {
     const containers = [...document.querySelectorAll(MAIL_BODY_SELECTORS.join(","))].filter(isVisible);
-    if (containers.length) return containers.map((container) => container.innerText || "").join("\n");
-    return document.body?.innerText || "";
+    const text = containers.map((container) => container.innerText || "").join("\n");
+    if (quotedApplicationSubjects(text).length || hasApplicationProfile(parseProfileFromMailBody(text))) return text;
+    return document.body?.innerText || text;
   }
   function readSubjectsFromReadingPane() {
     const subjects = [...document.querySelectorAll('[id$="_SUBJECT"]')].filter(isVisible).map((element) => (element.getAttribute("title") || element.textContent || "").trim()).filter(Boolean);
