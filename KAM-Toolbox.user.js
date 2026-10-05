@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.110
+// @version      1.6.111
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2233,14 +2233,27 @@
         }
         onApply(dialog);
       });
+      const reopenAfterFinish = (event) => {
+        const applyButton = dialog.querySelector('[data-action="apply"]');
+        if (applyButton.dataset.completed !== "true" || state.running || event.target.matches?.("[data-search]")) return;
+        applyButton.dataset.completed = "false";
+        applyButton.textContent = applyLabel;
+        const closeButton = dialog.querySelector('[data-action="close"]');
+        closeButton.hidden = false;
+        closeButton.textContent = "Abbrechen";
+      };
+      dialog.addEventListener("input", reopenAfterFinish, true);
+      dialog.addEventListener("change", reopenAfterFinish, true);
       dialog.addEventListener("cancel", (event) => {
         if (!state.running || state.runDialog !== dialog) return;
         event.preventDefault();
         handleCloseOrCancel(dialog);
       });
       dialog.addEventListener("close", () => handleDialogClose(dialog));
+      const initialFocus = dialog.querySelector(focusSelector || '[data-action="apply"]');
+      initialFocus?.setAttribute("autofocus", "");
       dialog.showModal();
-      dialog.querySelector(focusSelector || '[data-action="apply"]')?.focus();
+      initialFocus?.focus();
       return dialog;
     }
     async function runQueue(dialog, queue, { progress, label = (item) => item.label, update, reload = false }) {
@@ -8669,6 +8682,7 @@
           update: async (entry) => {
             await writeStatus(entry.id, target);
             remember(entry, target);
+            entry.status = target;
           }
         });
         if (result.changed > 0) dialog.dataset.needsReload = "true";
