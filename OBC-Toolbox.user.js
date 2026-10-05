@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.5.111
+// @version      1.5.112
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -17,6 +17,7 @@
 // @connect      werkia.de
 // @connect      nominatim.openstreetmap.org
 // @connect      router.project-osrm.org
+// @connect      raw.githubusercontent.com
 // @updateURL    https://raw.githubusercontent.com/willywerkia/tampermonkey/main/OBC-Toolbox.user.js
 // @downloadURL  https://raw.githubusercontent.com/willywerkia/tampermonkey/main/OBC-Toolbox.user.js
 // ==/UserScript==
@@ -108,6 +109,166 @@
       });
     }
   });
+
+  // ../../shared/js/werkia-toolbox/update-check.js
+  var MIRROR_BASE_URL = "https://raw.githubusercontent.com/willywerkia/tampermonkey/main/";
+  var CHECK_INTERVAL_MS = 60 * 60 * 1e3;
+  var FIRST_CHECK_DELAY_MS = 10 * 1e3;
+  var SNOOZE_MS = 4 * 60 * 60 * 1e3;
+  var STACK_ID = "werkia-update-notices";
+  var FONT = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  var COLORS = {
+    surface: "#ffffff",
+    border: "#e2e0e8",
+    text: "#1c1a22",
+    muted: "#6b6775",
+    primary: "#6d4aff",
+    header: "#3a3548"
+  };
+  function parseUserscriptVersion(source) {
+    const header = String(source || "").split(/\/\/ ==\/UserScript==/)[0];
+    const match = header.match(/^\/\/\s*@version\s+(\S+)/m);
+    return match ? match[1] : null;
+  }
+  function isNewerVersion(candidate, current) {
+    const parts = (value) => String(value || "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const a = parts(candidate);
+    const b = parts(current);
+    for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+      const diff = (a[i] || 0) - (b[i] || 0);
+      if (diff) return diff > 0;
+    }
+    return false;
+  }
+  function isSnoozed(snooze, version, now) {
+    return Boolean(snooze && snooze.version === version && Number(snooze.until) > now);
+  }
+  function fetchRemoteVersion(url) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        // Query-Parameter umgeht den ~5-Minuten-Cache von raw.githubusercontent.
+        url: `${url}?t=${Date.now()}`,
+        // Der Header steht vorn; die ganze Datei waeren pro Tab und Stunde
+        // mehrere hundert KB.
+        headers: { Range: "bytes=0-4095" },
+        timeout: 15e3,
+        onload: (response) => resolve(response.status === 200 || response.status === 206 ? parseUserscriptVersion(response.responseText) : null),
+        onerror: () => resolve(null),
+        ontimeout: () => resolve(null)
+      });
+    });
+  }
+  function el(tag, styles, text) {
+    const node = document.createElement(tag);
+    Object.assign(node.style, styles);
+    if (text !== void 0) node.textContent = text;
+    return node;
+  }
+  function button(label, primary, onClick) {
+    const node = el("button", {
+      font: `600 12px/1.2 ${FONT}`,
+      padding: "7px 12px",
+      borderRadius: "16px",
+      cursor: "pointer",
+      border: `1px solid ${primary ? COLORS.primary : COLORS.border}`,
+      background: primary ? COLORS.primary : "transparent",
+      color: primary ? "#fff" : COLORS.muted
+    }, label);
+    node.type = "button";
+    node.addEventListener("click", onClick);
+    return node;
+  }
+  function stack() {
+    let node = document.getElementById(STACK_ID);
+    if (!node) {
+      node = el("div", {
+        position: "fixed",
+        right: "20px",
+        bottom: "88px",
+        zIndex: "2147483646",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        alignItems: "flex-end"
+      });
+      node.id = STACK_ID;
+      document.body.appendChild(node);
+    }
+    return node;
+  }
+  function updateCheck(runtime, { label, fileName }) {
+    if (typeof GM_info === "undefined" || typeof GM_xmlhttpRequest !== "function") return;
+    const currentVersion = GM_info?.script?.version;
+    if (!currentVersion || !fileName) return;
+    const url = MIRROR_BASE_URL + fileName;
+    const snoozeKey = `werkia-update-snooze:${label}`;
+    const canStore = typeof GM_getValue === "function" && typeof GM_setValue === "function";
+    let notice = null;
+    let shownVersion = null;
+    let installing = false;
+    const removeNotice = () => {
+      const parent = notice?.parentNode;
+      notice?.remove();
+      if (parent && !parent.children.length) parent.remove();
+      notice = null;
+      shownVersion = null;
+    };
+    const render = (version) => {
+      if (!notice) {
+        notice = el("div", {
+          width: "300px",
+          boxSizing: "border-box",
+          padding: "14px 16px",
+          borderRadius: "16px",
+          background: COLORS.surface,
+          border: `1px solid ${COLORS.border}`,
+          color: COLORS.text,
+          boxShadow: "0 12px 32px rgba(28,26,34,.18)",
+          font: `400 13px/1.5 ${FONT}`,
+          textAlign: "left"
+        });
+        notice.setAttribute("role", "status");
+        notice.setAttribute("data-werkia-update-notice", label);
+        stack().appendChild(notice);
+      }
+      shownVersion = version;
+      notice.replaceChildren();
+      notice.appendChild(el(
+        "div",
+        { font: `650 14px/1.4 ${FONT}`, color: COLORS.header, marginBottom: "4px" },
+        `${label} Toolbox: Update verfügbar`
+      ));
+      notice.appendChild(el("div", { color: COLORS.muted, marginBottom: "12px" }, installing ? "Nach dem Bestätigen in Tampermonkey hier neu laden, dann läuft die neue Version." : `Version ${version} ist da, installiert ist ${currentVersion}.`));
+      const actions = el("div", { display: "flex", gap: "8px", justifyContent: "flex-end" });
+      actions.appendChild(button("Später", false, () => {
+        if (canStore) GM_setValue(snoozeKey, { version, until: Date.now() + SNOOZE_MS });
+        installing = false;
+        removeNotice();
+      }));
+      actions.appendChild(installing ? button("Neu laden", true, () => location.reload()) : button("Aktualisieren", true, () => {
+        window.open(url, "_blank", "noopener");
+        installing = true;
+        render(version);
+      }));
+      notice.appendChild(actions);
+    };
+    const check = async () => {
+      const remoteVersion = await fetchRemoteVersion(url);
+      if (!remoteVersion) return;
+      if (!isNewerVersion(remoteVersion, currentVersion)) {
+        removeNotice();
+        return;
+      }
+      if (remoteVersion === shownVersion) return;
+      if (canStore && isSnoozed(GM_getValue(snoozeKey, null), remoteVersion, Date.now())) return;
+      installing = false;
+      render(remoteVersion);
+    };
+    runtime.setTimeout(check, FIRST_CHECK_DELAY_MS);
+    runtime.setInterval(check, CHECK_INTERVAL_MS);
+    runtime.addCleanup(removeNotice);
+  }
 
   // ../../shared/node_modules/worker-timers/build/es2019/module.js
   var module_exports = {};
@@ -1188,8 +1349,8 @@
   }
 
   // ../../shared/js/toolbox-help/index.js
-  var FONT = 'system-ui,-apple-system,"Segoe UI",sans-serif';
-  var COLORS = {
+  var FONT2 = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  var COLORS2 = {
     bg: "#f6f5f8",
     surface: "#ffffff",
     border: "#e2e0e8",
@@ -1206,7 +1367,7 @@
     Object.assign(node.style, styles);
     return node;
   }
-  function el(tag, styles, text) {
+  function el2(tag, styles, text) {
     const node = document.createElement(tag);
     if (styles) styled(node, styles);
     if (text !== void 0) node.textContent = text;
@@ -1230,14 +1391,14 @@
   }
   function kindChip(kind) {
     const info = HELP_KINDS[kind];
-    const chip = el("span", {
+    const chip = el2("span", {
       display: "inline-flex",
       alignItems: "center",
       padding: "2px 9px",
       borderRadius: "999px",
       background: info.tint,
       color: info.color,
-      font: `650 11px/1.5 ${FONT}`,
+      font: `650 11px/1.5 ${FONT2}`,
       whiteSpace: "nowrap"
     }, info.label);
     chip.title = info.explain;
@@ -1245,15 +1406,15 @@
   }
   function listBlock(heading, items, ordered) {
     if (!items?.length) return null;
-    const wrap2 = el("div", { marginTop: "10px" });
-    wrap2.appendChild(el("div", { font: `650 11px/1.4 ${FONT}`, color: COLORS.muted, marginBottom: "3px" }, heading));
-    const list = el(ordered ? "ol" : "ul", { margin: "0", paddingLeft: "18px" });
-    items.forEach((item) => list.appendChild(el("li", { margin: "2px 0" }, item)));
+    const wrap2 = el2("div", { marginTop: "10px" });
+    wrap2.appendChild(el2("div", { font: `650 11px/1.4 ${FONT2}`, color: COLORS2.muted, marginBottom: "3px" }, heading));
+    const list = el2(ordered ? "ol" : "ul", { margin: "0", paddingLeft: "18px" });
+    items.forEach((item) => list.appendChild(el2("li", { margin: "2px 0" }, item)));
     wrap2.appendChild(list);
     return wrap2;
   }
   function topicBody(topic) {
-    const parts = [el("p", { margin: "8px 0 0" }, topic.summary)];
+    const parts = [el2("p", { margin: "8px 0 0" }, topic.summary)];
     const steps = listBlock("So geht’s", topic.steps, true);
     const notes = listBlock("Gut zu wissen", topic.notes, false);
     if (steps) parts.push(steps);
@@ -1287,22 +1448,22 @@
     };
     function tip(topicId, { tone = "light" } = {}) {
       const topic = findTopic(topicId) || { id: topicId, title: topicId };
-      const button = document.createElement("button");
-      button.type = "button";
-      button.setAttribute(HELP_ATTRIBUTE, tipAttributeValue(namespace, topic.id));
-      button.setAttribute("aria-label", tipLabel(topic));
-      button.title = tipLabel(topic);
-      button.textContent = "?";
-      return styled(button, tipStyle(tone));
+      const button2 = document.createElement("button");
+      button2.type = "button";
+      button2.setAttribute(HELP_ATTRIBUTE, tipAttributeValue(namespace, topic.id));
+      button2.setAttribute("aria-label", tipLabel(topic));
+      button2.title = tipLabel(topic);
+      button2.textContent = "?";
+      return styled(button2, tipStyle(tone));
     }
     function tipHtml(topicId, options) {
       const topic = findTopic(topicId) || { id: topicId, title: topicId };
       return buildTipHtml(namespace, topic, options);
     }
     function ownTipFrom(target) {
-      const button = target?.closest?.(`[${HELP_ATTRIBUTE}]`);
-      const parsed = parseTipAttributeValue(button?.getAttribute(HELP_ATTRIBUTE));
-      return parsed?.namespace === namespace ? { button, topicId: parsed.topicId } : null;
+      const button2 = target?.closest?.(`[${HELP_ATTRIBUTE}]`);
+      const parsed = parseTipAttributeValue(button2?.getAttribute(HELP_ATTRIBUTE));
+      return parsed?.namespace === namespace ? { button: button2, topicId: parsed.topicId } : null;
     }
     const popover = () => document.getElementById(popoverId);
     function closePopover() {
@@ -1330,7 +1491,7 @@
         return;
       }
       closePopover();
-      const box = el("div", {
+      const box = el2("div", {
         position: "fixed",
         zIndex: Z_TOP,
         left: "0",
@@ -1340,12 +1501,12 @@
         maxHeight: "min(60vh, 480px)",
         overflowY: "auto",
         padding: "14px 16px",
-        border: `1px solid ${COLORS.border}`,
+        border: `1px solid ${COLORS2.border}`,
         borderRadius: "16px",
-        background: COLORS.surface,
-        color: COLORS.text,
+        background: COLORS2.surface,
+        color: COLORS2.text,
         boxShadow: "0 12px 32px rgba(28,26,34,.22)",
-        font: `400 13px/1.55 ${FONT}`,
+        font: `400 13px/1.55 ${FONT2}`,
         textAlign: "left",
         whiteSpace: "normal",
         letterSpacing: "0",
@@ -1355,19 +1516,19 @@
       box.id = popoverId;
       box.setAttribute("role", "tooltip");
       box.dataset.werkiaHelpPopover = namespace;
-      box.appendChild(el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, `${toolboxName} · ${topic.page}`));
-      const head = el("div", { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" });
-      head.append(el("div", { font: `650 15px/1.3 ${FONT}` }, topic.title), kindChip(topic.kind));
+      box.appendChild(el2("div", { font: `650 10px/1.4 ${FONT2}`, letterSpacing: ".02em", color: COLORS2.muted }, `${toolboxName} · ${topic.page}`));
+      const head = el2("div", { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" });
+      head.append(el2("div", { font: `650 15px/1.3 ${FONT2}` }, topic.title), kindChip(topic.kind));
       box.appendChild(head);
       topicBody(topic).forEach((part) => box.appendChild(part));
-      const more = el("button", {
+      const more = el2("button", {
         display: "block",
         marginTop: "12px",
         padding: "0",
         border: "0",
         background: "transparent",
-        color: COLORS.primary,
-        font: `600 12px/1.4 ${FONT}`,
+        color: COLORS2.primary,
+        font: `600 12px/1.4 ${FONT2}`,
         cursor: "pointer",
         textAlign: "left"
       }, `Alle Funktionen der ${toolboxName} ansehen`);
@@ -1400,18 +1561,18 @@
       dialog.remove();
     }
     function topicCard(topic, focused) {
-      const card = el("article", {
+      const card = el2("article", {
         padding: "14px 16px",
-        border: `1px solid ${focused ? COLORS.primary : COLORS.border}`,
+        border: `1px solid ${focused ? COLORS2.primary : COLORS2.border}`,
         borderRadius: "16px",
-        background: focused ? COLORS.primaryTint : COLORS.surface
+        background: focused ? COLORS2.primaryTint : COLORS2.surface
       });
       card.dataset.werkiaHelpTopic = topic.id;
-      const head = el("div", { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" });
-      const titleWrap = el("div");
+      const head = el2("div", { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" });
+      const titleWrap = el2("div");
       titleWrap.append(
-        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, topic.page),
-        el("h3", { margin: "1px 0 0", font: `650 15px/1.3 ${FONT}`, color: COLORS.text }, topic.title)
+        el2("div", { font: `650 10px/1.4 ${FONT2}`, letterSpacing: ".02em", color: COLORS2.muted }, topic.page),
+        el2("h3", { margin: "1px 0 0", font: `650 15px/1.3 ${FONT2}`, color: COLORS2.text }, topic.title)
       );
       head.append(titleWrap, kindChip(topic.kind));
       card.appendChild(head);
@@ -1419,8 +1580,8 @@
       return card;
     }
     function section(title, children) {
-      const wrap2 = el("section", { display: "grid", gap: "10px", marginTop: "18px" });
-      wrap2.appendChild(el("h2", { margin: "0", font: `650 16px/1.3 ${FONT}`, color: COLORS.text }, title));
+      const wrap2 = el2("section", { display: "grid", gap: "10px", marginTop: "18px" });
+      wrap2.appendChild(el2("h2", { margin: "0", font: `650 16px/1.3 ${FONT2}`, color: COLORS2.text }, title));
       children.forEach((child) => wrap2.appendChild(child));
       return wrap2;
     }
@@ -1429,37 +1590,37 @@
       closeOverview();
       ensureExtraStyles();
       const { here, elsewhere } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
-      const dialog = el("dialog", {
+      const dialog = el2("dialog", {
         width: "min(780px, calc(100vw - 32px))",
         maxHeight: "86vh",
         padding: "0",
         border: "0",
         borderRadius: "24px",
-        background: COLORS.bg,
-        color: COLORS.text,
+        background: COLORS2.bg,
+        color: COLORS2.text,
         boxShadow: "0 24px 60px rgba(28,26,34,.35)",
         overflow: "hidden",
-        font: `400 13px/1.6 ${FONT}`
+        font: `400 13px/1.6 ${FONT2}`
       });
       dialog.id = overviewId;
       dialog.setAttribute("data-werkia-help-overview", namespace);
       dialog.setAttribute("aria-label", `${toolboxName} – Funktionsübersicht`);
-      const frame = el("div", { display: "flex", flexDirection: "column", maxHeight: "86vh" });
-      const header = el("div", {
+      const frame = el2("div", { display: "flex", flexDirection: "column", maxHeight: "86vh" });
+      const header = el2("div", {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         gap: "12px",
         padding: "16px 20px",
-        background: COLORS.header,
+        background: COLORS2.header,
         color: "#fff"
       });
-      const heading = el("div");
+      const heading = el2("div");
       heading.append(
-        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: "#d9d4e6" }, "Funktionsübersicht"),
-        el("div", { font: `650 19px/1.3 ${FONT}`, letterSpacing: "-.01em" }, toolboxName)
+        el2("div", { font: `650 10px/1.4 ${FONT2}`, letterSpacing: ".02em", color: "#d9d4e6" }, "Funktionsübersicht"),
+        el2("div", { font: `650 19px/1.3 ${FONT2}`, letterSpacing: "-.01em" }, toolboxName)
       );
-      const closeButton = el("button", {
+      const closeButton = el2("button", {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1477,16 +1638,16 @@
       closeButton.appendChild(closeIcon());
       closeButton.addEventListener("click", () => closeOverview());
       header.append(heading, closeButton);
-      const content = el("div", { overflowY: "auto", padding: "16px 20px 22px" });
-      content.appendChild(el(
+      const content = el2("div", { overflowY: "auto", padding: "16px 20px 22px" });
+      content.appendChild(el2(
         "p",
-        { margin: "0", color: COLORS.text },
+        { margin: "0", color: COLORS2.text },
         `Die ${toolboxName} ergänzt das Adminpanel. Jede Funktion ist gekennzeichnet, damit du vor dem Klick weißt, ob sie nur etwas anzeigt oder Daten verändert. An vielen Stellen findest du außerdem ein kleines ?, das die jeweilige Funktion direkt dort erklärt.`
       ));
-      const legend = el("div", { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "12px" });
+      const legend = el2("div", { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "12px" });
       Object.keys(HELP_KINDS).filter((kind) => topics.some((topic) => topic.kind === kind)).forEach((kind) => {
-        const row = el("div", { display: "grid", gap: "4px", padding: "10px 12px", border: `1px solid ${COLORS.border}`, borderRadius: "10px", background: COLORS.surface });
-        row.append(kindChip(kind), el("div", { font: `400 12px/1.5 ${FONT}`, color: COLORS.muted }, HELP_KINDS[kind].explain));
+        const row = el2("div", { display: "grid", gap: "4px", padding: "10px 12px", border: `1px solid ${COLORS2.border}`, borderRadius: "10px", background: COLORS2.surface });
+        row.append(kindChip(kind), el2("div", { font: `400 12px/1.5 ${FONT2}`, color: COLORS2.muted }, HELP_KINDS[kind].explain));
         row.firstChild.style.justifySelf = "start";
         legend.appendChild(row);
       });
@@ -1513,14 +1674,14 @@
       const onAdmin = dockHosts.test(location.hostname || "");
       const { here } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
       let dock = document.getElementById(DOCK_ID);
-      let button = dock?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`);
+      let button2 = dock?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`);
       if (!onAdmin || !here.length) {
-        button?.remove();
+        button2?.remove();
         if (dock && !dock.children.length) dock.remove();
         return;
       }
       if (!dock) {
-        dock = el("div", {
+        dock = el2("div", {
           position: "fixed",
           left: "16px",
           bottom: "16px",
@@ -1533,38 +1694,38 @@
         dock.id = DOCK_ID;
         document.body.appendChild(dock);
       }
-      if (!button) {
-        button = el("button", {
+      if (!button2) {
+        button2 = el2("button", {
           display: "inline-flex",
           alignItems: "center",
           gap: "6px",
           height: "30px",
           padding: "0 12px 0 5px",
-          border: `1px solid ${COLORS.border}`,
+          border: `1px solid ${COLORS2.border}`,
           borderRadius: "999px",
-          background: COLORS.surface,
-          color: COLORS.text,
+          background: COLORS2.surface,
+          color: COLORS2.text,
           boxShadow: "0 4px 14px rgba(28,26,34,.16)",
-          font: `600 12px/1 ${FONT}`,
+          font: `600 12px/1 ${FONT2}`,
           cursor: "pointer"
         });
-        button.type = "button";
-        button.setAttribute("data-werkia-help-dock-button", namespace);
-        button.title = `Was macht die ${toolboxName} auf dieser Seite?`;
-        const mark2 = el("span", {
+        button2.type = "button";
+        button2.setAttribute("data-werkia-help-dock-button", namespace);
+        button2.title = `Was macht die ${toolboxName} auf dieser Seite?`;
+        const mark2 = el2("span", {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           width: "20px",
           height: "20px",
           borderRadius: "999px",
-          background: COLORS.primary,
+          background: COLORS2.primary,
           color: "#fff",
-          font: `700 12px/1 ${FONT}`
+          font: `700 12px/1 ${FONT2}`
         }, "?");
-        button.append(mark2, document.createTextNode(`${toolboxName}: Hilfe`));
-        button.addEventListener("click", () => openOverview());
-        dock.appendChild(button);
+        button2.append(mark2, document.createTextNode(`${toolboxName}: Hilfe`));
+        button2.addEventListener("click", () => openOverview());
+        dock.appendChild(button2);
       }
     }
     function install(runtime, { dock = true, menu = true, dockHostPattern } = {}) {
@@ -2472,7 +2633,7 @@
   }
   function getDialogLabelTexts(dialog) {
     if (!dialog) return [];
-    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || el2.textContent || "").trim()).filter(Boolean);
+    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el3) => (el3.innerText || el3.textContent || "").trim()).filter(Boolean);
   }
   function isQuestionnaireDialog(dialog, { strictMode = true, fold = false, labels = QUESTIONNAIRE_LABELS } = {}) {
     if (!dialog) return false;
@@ -2509,7 +2670,7 @@
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return null;
     const field = mode === "last" ? fields[fields.length - 1] : fields[0];
-    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el2) => (el2.innerText || el2.textContent || "").trim()) || null;
+    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el3) => (el3.innerText || el3.textContent || "").trim()) || null;
   }
   function findValueAllowEmpty(dialog, labelText, mode = "first", { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
@@ -2527,11 +2688,11 @@
   function getPositionEls(dialog, labelText, { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return [];
-    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize2(el2.innerText || el2.textContent, fold) !== "berufsausbildung");
+    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el3) => (el3.innerText || el3.textContent || "").trim() && normalize2(el3.innerText || el3.textContent, fold) !== "berufsausbildung");
   }
   function getQuestionnaireHeaderValue(dialog, labelText, { fold = false } = {}) {
     const field = getFieldsByLabel(dialog, labelText, { fold })[0];
-    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize2(el2.textContent, fold) !== normalize2(labelText, fold)) : null;
+    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el3) => el3.textContent?.trim() && normalize2(el3.textContent, fold) !== normalize2(labelText, fold)) : null;
     if (value?.textContent?.trim()) return value.textContent.trim();
     const lines = (dialog.innerText || dialog.textContent || "").split("\n").map((line) => line.trim()).filter(Boolean);
     const labelIndex = lines.findIndex((line) => normalize2(line, fold) === normalize2(labelText, fold));
@@ -2572,7 +2733,7 @@
   function executeCompanyFlag(runtime) {
     runtime.registerSource("obc/toolbox/src/features/obc-fragebogen/company-flag.js");
     function removeCompanyFlags() {
-      document.querySelectorAll(`.${COMPANY_FLAG_CLASS}`).forEach((el2) => el2.remove());
+      document.querySelectorAll(`.${COMPANY_FLAG_CLASS}`).forEach((el3) => el3.remove());
       document.querySelectorAll(`.${COMPANY_ROW_CLASS}`).forEach((row) => row.classList.remove(COMPANY_ROW_CLASS));
       document.getElementById(COMPANY_STYLE_ID)?.remove();
     }
@@ -2940,9 +3101,9 @@
     const context = getQuestionnaireContext();
     function captureContext(event) {
       if (!isTargetPage()) return;
-      const button = event.target.closest('button[aria-label="OM Fragebogen"]');
-      if (!button) return;
-      const row = button.closest("tr");
+      const button2 = event.target.closest('button[aria-label="OM Fragebogen"]');
+      if (!button2) return;
+      const row = button2.closest("tr");
       if (!row) return;
       const candidateId = getCandidateIdFromRoute2();
       const jobId = getResourceIdFromRow2(row, "JobPosition");
@@ -3010,7 +3171,7 @@
       if (/Matchkommentare/i.test(text)) return false;
       if (/Kandidat Dateien/i.test(text)) return false;
       const labels = new Set(
-        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || "").trim())
+        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el3) => (el3.innerText || "").trim())
       );
       const count = QUESTIONNAIRE_LABELS2.filter((l) => labels.has(l)).length;
       const hasHeader = labels.has("Kandidat") && labels.has("Job");
@@ -3290,7 +3451,7 @@
     if (!prefixByColor) return false;
     return Object.values(prefixByColor).some((prefix) => value === `${prefix}${original}`);
   }
-  function mark(el2, color, title = "", options = {}) {
+  function mark(el3, color, title = "", options = {}) {
     const {
       markAttr = DEFAULT_MARK_ATTR,
       originalAttr = DEFAULT_ORIGINAL_ATTR,
@@ -3299,24 +3460,24 @@
       prefixByColor = null,
       dedupeAttr = null
     } = options;
-    if (!el2) return;
+    if (!el3) return;
     if (dedupeAttr) {
       const signature = `${color}|${title}`;
-      if (el2.dataset[dedupeAttr] === signature) return;
-      el2.dataset[dedupeAttr] = signature;
+      if (el3.dataset[dedupeAttr] === signature) return;
+      el3.dataset[dedupeAttr] = signature;
     }
-    if (!el2.dataset[originalAttr]) el2.dataset[originalAttr] = el2.innerText || "";
-    el2.dataset[markAttr] = "true";
-    el2.style.background = color;
-    el2.style.color = "#000";
-    el2.style.padding = "4px 6px";
-    el2.style.borderRadius = "4px";
-    el2.style.fontWeight = fontWeight;
-    el2.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
-    if (title) el2.title = title;
-    const original = el2.dataset[originalAttr];
+    if (!el3.dataset[originalAttr]) el3.dataset[originalAttr] = el3.innerText || "";
+    el3.dataset[markAttr] = "true";
+    el3.style.background = color;
+    el3.style.color = "#000";
+    el3.style.padding = "4px 6px";
+    el3.style.borderRadius = "4px";
+    el3.style.fontWeight = fontWeight;
+    el3.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
+    if (title) el3.title = title;
+    const original = el3.dataset[originalAttr];
     const prefix = prefixByColor?.[color];
-    el2.innerText = prefix ? `${prefix}${original}` : original;
+    el3.innerText = prefix ? `${prefix}${original}` : original;
   }
   function clearMarks(root = document, options = {}) {
     const {
@@ -3324,19 +3485,19 @@
       originalAttr = DEFAULT_ORIGINAL_ATTR,
       dedupeAttr = null
     } = options;
-    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el2) => {
-      const original = el2.dataset[originalAttr];
-      if (original && isOwnMarkedValue(el2.innerText || "", original, options)) el2.innerText = original;
-      el2.style.background = "";
-      el2.style.color = "";
-      el2.style.padding = "";
-      el2.style.borderRadius = "";
-      el2.style.fontWeight = "";
-      el2.style.boxShadow = "";
-      el2.title = "";
-      delete el2.dataset[markAttr];
-      delete el2.dataset[originalAttr];
-      if (dedupeAttr) delete el2.dataset[dedupeAttr];
+    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el3) => {
+      const original = el3.dataset[originalAttr];
+      if (original && isOwnMarkedValue(el3.innerText || "", original, options)) el3.innerText = original;
+      el3.style.background = "";
+      el3.style.color = "";
+      el3.style.padding = "";
+      el3.style.borderRadius = "";
+      el3.style.fontWeight = "";
+      el3.style.boxShadow = "";
+      el3.title = "";
+      delete el3.dataset[markAttr];
+      delete el3.dataset[originalAttr];
+      if (dedupeAttr) delete el3.dataset[dedupeAttr];
     });
   }
 
@@ -3362,8 +3523,8 @@
   function executeQuestionnaireEvaluation(runtime) {
     runtime.registerSource("obc/toolbox/src/features/obc-fragebogen/questionnaire-evaluation.js");
     const MARK_OPTIONS = { prefixByColor: { [RED]: "❌ ", [YELLOW]: "⚠️ " } };
-    function mark2(el2, color, title = "") {
-      mark(el2, color, title, MARK_OPTIONS);
+    function mark2(el3, color, title = "") {
+      mark(el3, color, title, MARK_OPTIONS);
     }
     function clearMarks2() {
       clearMarks(document, MARK_OPTIONS);
@@ -3411,20 +3572,20 @@
       return { status: "send" };
     }
     function compareRecognition(dialog) {
-      const el2 = findValue(dialog, "Recognition status");
-      if (!el2) return { status: "send" };
-      const v = clean(el2.innerText);
+      const el3 = findValue(dialog, "Recognition status");
+      if (!el3) return { status: "send" };
+      const v = clean(el3.innerText);
       if (v.includes("ja, ist anerkannt")) {
-        mark2(el2, GREEN, "Anerkennung: Ja");
+        mark2(el3, GREEN, "Anerkennung: Ja");
         return { status: "send" };
       }
       if (v.includes("in anerkennung")) {
-        mark2(el2, YELLOW, "In Anerkennung");
-        return { status: "unclear", detail: `Recognition status: ${el2.innerText}` };
+        mark2(el3, YELLOW, "In Anerkennung");
+        return { status: "unclear", detail: `Recognition status: ${el3.innerText}` };
       }
       if (v.includes("noch nicht beantragt")) {
-        mark2(el2, RED, "Noch nicht beantragt");
-        return { status: "no-send", detail: `Recognition status: ${el2.innerText}` };
+        mark2(el3, RED, "Noch nicht beantragt");
+        return { status: "no-send", detail: `Recognition status: ${el3.innerText}` };
       }
       return { status: "send" };
     }
@@ -3473,8 +3634,8 @@
       return { status: "send" };
     }
     function comparePositions(dialog) {
-      const empEls = getPositionEls(dialog, "Position").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
-      const candEls = getPositionEls(dialog, "Positionen").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
+      const empEls = getPositionEls(dialog, "Position").map((el3) => ({ el: el3, value: clean(el3.innerText) }));
+      const candEls = getPositionEls(dialog, "Positionen").map((el3) => ({ el: el3, value: clean(el3.innerText) }));
       if (!empEls.length) return { status: "send" };
       if (!candEls.length) return { status: "unclear", detail: `Positionen: ${empEls.map((p) => p.value).join(", ")} → leer` };
       let anyGreen = false;
@@ -3543,7 +3704,7 @@
     function currentFieldSignature(dialog) {
       return [...dialog.querySelectorAll("span.ra-field")].map((field) => {
         const label = field.querySelector("p span")?.innerText?.trim() || "";
-        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el2) => el2.dataset[ORIGINAL_TEXT] ?? el2.innerText ?? el2.textContent ?? "").join("|");
+        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el3) => el3.dataset[ORIGINAL_TEXT] ?? el3.innerText ?? el3.textContent ?? "").join("|");
         return `${label}=${values}`;
       }).join(";");
     }
@@ -3798,7 +3959,7 @@
       if (/Matchkommentare/i.test(text)) return false;
       if (/Kandidat Dateien/i.test(text)) return false;
       const labels = new Set(
-        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || "").trim())
+        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el3) => (el3.innerText || "").trim())
       );
       const count = QUESTIONNAIRE_LABELS3.filter((l) => labels.has(l)).length;
       const hasHeader = labels.has("Kandidat") && labels.has("Job");
@@ -4832,13 +4993,13 @@
     );
     return false;
   }
-  function removeAllAppointmentSuggestions(form, runtime, button) {
+  function removeAllAppointmentSuggestions(form, runtime, button2) {
     if (!window.confirm("Alle Terminvorschläge in sämtlichen Offline-Match-Blöcken löschen?")) return;
-    button.disabled = true;
+    button2.disabled = true;
     const removeNext = () => {
       const next = form.querySelector(DATE_REMOVE_SELECTOR);
       if (!next) {
-        button.disabled = false;
+        button2.disabled = false;
         return;
       }
       next.click();
@@ -4853,11 +5014,11 @@
     if (!controls) {
       controls = document.createElement("div");
       controls.id = FORM_CONTROLS_ID;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "Alle Terminvorschläge löschen";
-      button.addEventListener("click", () => removeAllAppointmentSuggestions(form, runtime, button));
-      controls.appendChild(button);
+      const button2 = document.createElement("button");
+      button2.type = "button";
+      button2.textContent = "Alle Terminvorschläge löschen";
+      button2.addEventListener("click", () => removeAllAppointmentSuggestions(form, runtime, button2));
+      controls.appendChild(button2);
       const tip = helpTip?.();
       if (tip) {
         tip.style.alignSelf = "center";
@@ -6264,7 +6425,7 @@
     function render() {
       renderControl();
       if (!ROUTE.test(location.hash || "")) {
-        document.querySelectorAll(`.${ROW_CLASS}, .${HIDDEN_CLASS}, .${BADGE_CLASS}, .${EXCLUSION_BADGE_CLASS}`).forEach((el2) => el2.matches("tr") ? clearRow(el2) : el2.remove());
+        document.querySelectorAll(`.${ROW_CLASS}, .${HIDDEN_CLASS}, .${BADGE_CLASS}, .${EXCLUSION_BADGE_CLASS}`).forEach((el3) => el3.matches("tr") ? clearRow(el3) : el3.remove());
         return;
       }
       const candidateId = location.hash.match(ROUTE)?.[0]?.match(/Candidate\/([a-f0-9-]{36})/i)?.[1]?.toLowerCase();
@@ -6664,6 +6825,7 @@
   bootstrapToolbox({ label: "OBC", marker: "data-werkia-obc-toolbox-loaded" }, [
     // First: installs the delegated ?-button handling the features below use.
     { id: "toolbox-help", execute: executeToolboxHelp },
+    { id: "update-check", execute: (runtime) => updateCheck(runtime, { label: "OBC", fileName: "OBC-Toolbox.user.js" }) },
     { id: "obc-fragebogen-response-time-badges", execute: executeResponseTimeBadges },
     { id: "obc-fragebogen-company-flag", execute: executeCompanyFlag },
     { id: "obc-fragebogen-kam-status-lookup", execute: executeKamStatusLookup },

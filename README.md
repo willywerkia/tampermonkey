@@ -10,6 +10,7 @@ Installation: die gewuenschte `.user.js`-Datei unten anklicken - Tampermonkey er
 
 Enthaltene Funktionen:
 
+- Prueft stuendlich, ob eine neuere Version der Toolbox veroeffentlicht ist, und bietet dann in einem kleinen Hinweis unten rechts Aktualisieren und Neu laden an. "Spaeter" blendet den Hinweis fuer vier Stunden aus.
 - Kleine ?-Knoepfe an Dialogen, Leisten und Panels erklaeren die jeweilige Funktion. Der Hilfe-Knopf unten links und der Tampermonkey-Menueeintrag oeffnen eine Uebersicht aller Funktionen mit Kennzeichnung, ob sie nur anzeigen oder Daten aendern.
 - Setzt Wiedervorlagedatum und KAM-Status fuer die angehakten Zeilen der Matches-Liste gleichzeitig (Haken-Liste nach Arbeitgeber gruppiert). Bei Out werden offene Terminvorschlaege abgelehnt. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der angehakten Matches weiter. "Vergangene ablehnen" lehnt Terminvorschlaege mit Status Vorschlag ab, deren Termine alle in der Vergangenheit liegen.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Kontakthaeufigkeit (z. B. "Direkter Kontakt", "Kein Kontakt").
@@ -37,6 +38,7 @@ Enthaltene Funktionen:
 
 Enthaltene Funktionen:
 
+- Prueft stuendlich, ob eine neuere Version der Toolbox veroeffentlicht ist, und bietet dann in einem kleinen Hinweis unten rechts Aktualisieren und Neu laden an. "Spaeter" blendet den Hinweis fuer vier Stunden aus.
 - Kleine ?-Knoepfe an Dialogen, Leisten und Panels erklaeren die jeweilige Funktion. Der Hilfe-Knopf unten links und der Tampermonkey-Menueeintrag oeffnen eine Uebersicht aller Funktionen mit Kennzeichnung, ob sie nur anzeigen oder Daten aendern.
 - Setzt in CEM Meine Matches CEM WVL und CEM Status fuer die angehakten sichtbaren Matches gleichzeitig (Haken-Liste nach Arbeitgeber gruppiert, in Meine Kandidaten die Matches aller aufgeklappten Kandidaten). Bei Hired und Out wird die CEM WVL geleert, Out braucht einen Grund und lehnt offene Terminvorschlaege ab. "Alle weiterleiten" leitet alle Terminvorschlaege mit Status Vorschlag der angehakten Matches weiter. "Vergangene ablehnen" lehnt Terminvorschlaege mit Status Vorschlag ab, deren Termine alle in der Vergangenheit liegen.
 - Setzt in CEM Meine Kandidaten Kandidat-Status und Kandidat-WVL fuer mehrere sichtbare Kandidaten gleichzeitig. Der Dialog listet alle Kandidaten der aktuellen Seite zum An- und Abhaken.
@@ -60,6 +62,7 @@ Enthaltene Funktionen:
 
 Enthaltene Funktionen:
 
+- Prueft stuendlich, ob eine neuere Version der Toolbox veroeffentlicht ist, und bietet dann in einem kleinen Hinweis unten rechts Aktualisieren und Neu laden an. "Spaeter" blendet den Hinweis fuer vier Stunden aus.
 - Kleine ?-Knoepfe an Dialogen, Leisten und Panels erklaeren die jeweilige Funktion. Der Hilfe-Knopf unten links und der Tampermonkey-Menueeintrag oeffnen eine Uebersicht aller Funktionen mit Kennzeichnung, ob sie nur anzeigen oder Daten aendern.
 - Zeigt bei jedem Arbeitgeber ein Badge zur Antwortgeschwindigkeit (z. B. "Schnelle Rueckmeldung", "Keine Rueckmeldung").
 - Markiert Zeilen von Arbeitgebern mit besonderer Absprache (GA-TEC) farblich mit Hinweistext "[Absprache vor OFM]".

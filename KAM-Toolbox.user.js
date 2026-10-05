@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.111
+// @version      1.6.112
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -18,6 +18,7 @@
 // @connect      werkia.de
 // @connect      nominatim.openstreetmap.org
 // @connect      router.project-osrm.org
+// @connect      raw.githubusercontent.com
 // @connect      hooks.zapier.com
 // @connect      srv-a1.tail4b9d62.ts.net
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/KAM.svg
@@ -112,6 +113,166 @@
       });
     }
   });
+
+  // ../../shared/js/werkia-toolbox/update-check.js
+  var MIRROR_BASE_URL = "https://raw.githubusercontent.com/willywerkia/tampermonkey/main/";
+  var CHECK_INTERVAL_MS = 60 * 60 * 1e3;
+  var FIRST_CHECK_DELAY_MS = 10 * 1e3;
+  var SNOOZE_MS = 4 * 60 * 60 * 1e3;
+  var STACK_ID = "werkia-update-notices";
+  var FONT = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  var COLORS = {
+    surface: "#ffffff",
+    border: "#e2e0e8",
+    text: "#1c1a22",
+    muted: "#6b6775",
+    primary: "#6d4aff",
+    header: "#3a3548"
+  };
+  function parseUserscriptVersion(source) {
+    const header = String(source || "").split(/\/\/ ==\/UserScript==/)[0];
+    const match = header.match(/^\/\/\s*@version\s+(\S+)/m);
+    return match ? match[1] : null;
+  }
+  function isNewerVersion(candidate, current) {
+    const parts = (value) => String(value || "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const a = parts(candidate);
+    const b = parts(current);
+    for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+      const diff = (a[i] || 0) - (b[i] || 0);
+      if (diff) return diff > 0;
+    }
+    return false;
+  }
+  function isSnoozed(snooze, version, now) {
+    return Boolean(snooze && snooze.version === version && Number(snooze.until) > now);
+  }
+  function fetchRemoteVersion(url) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        // Query-Parameter umgeht den ~5-Minuten-Cache von raw.githubusercontent.
+        url: `${url}?t=${Date.now()}`,
+        // Der Header steht vorn; die ganze Datei waeren pro Tab und Stunde
+        // mehrere hundert KB.
+        headers: { Range: "bytes=0-4095" },
+        timeout: 15e3,
+        onload: (response) => resolve(response.status === 200 || response.status === 206 ? parseUserscriptVersion(response.responseText) : null),
+        onerror: () => resolve(null),
+        ontimeout: () => resolve(null)
+      });
+    });
+  }
+  function el(tag, styles, text) {
+    const node = document.createElement(tag);
+    Object.assign(node.style, styles);
+    if (text !== void 0) node.textContent = text;
+    return node;
+  }
+  function button(label, primary, onClick) {
+    const node = el("button", {
+      font: `600 12px/1.2 ${FONT}`,
+      padding: "7px 12px",
+      borderRadius: "16px",
+      cursor: "pointer",
+      border: `1px solid ${primary ? COLORS.primary : COLORS.border}`,
+      background: primary ? COLORS.primary : "transparent",
+      color: primary ? "#fff" : COLORS.muted
+    }, label);
+    node.type = "button";
+    node.addEventListener("click", onClick);
+    return node;
+  }
+  function stack() {
+    let node = document.getElementById(STACK_ID);
+    if (!node) {
+      node = el("div", {
+        position: "fixed",
+        right: "20px",
+        bottom: "88px",
+        zIndex: "2147483646",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        alignItems: "flex-end"
+      });
+      node.id = STACK_ID;
+      document.body.appendChild(node);
+    }
+    return node;
+  }
+  function updateCheck(runtime, { label, fileName }) {
+    if (typeof GM_info === "undefined" || typeof GM_xmlhttpRequest !== "function") return;
+    const currentVersion = GM_info?.script?.version;
+    if (!currentVersion || !fileName) return;
+    const url = MIRROR_BASE_URL + fileName;
+    const snoozeKey = `werkia-update-snooze:${label}`;
+    const canStore = typeof GM_getValue === "function" && typeof GM_setValue === "function";
+    let notice = null;
+    let shownVersion = null;
+    let installing = false;
+    const removeNotice = () => {
+      const parent = notice?.parentNode;
+      notice?.remove();
+      if (parent && !parent.children.length) parent.remove();
+      notice = null;
+      shownVersion = null;
+    };
+    const render = (version) => {
+      if (!notice) {
+        notice = el("div", {
+          width: "300px",
+          boxSizing: "border-box",
+          padding: "14px 16px",
+          borderRadius: "16px",
+          background: COLORS.surface,
+          border: `1px solid ${COLORS.border}`,
+          color: COLORS.text,
+          boxShadow: "0 12px 32px rgba(28,26,34,.18)",
+          font: `400 13px/1.5 ${FONT}`,
+          textAlign: "left"
+        });
+        notice.setAttribute("role", "status");
+        notice.setAttribute("data-werkia-update-notice", label);
+        stack().appendChild(notice);
+      }
+      shownVersion = version;
+      notice.replaceChildren();
+      notice.appendChild(el(
+        "div",
+        { font: `650 14px/1.4 ${FONT}`, color: COLORS.header, marginBottom: "4px" },
+        `${label} Toolbox: Update verfügbar`
+      ));
+      notice.appendChild(el("div", { color: COLORS.muted, marginBottom: "12px" }, installing ? "Nach dem Bestätigen in Tampermonkey hier neu laden, dann läuft die neue Version." : `Version ${version} ist da, installiert ist ${currentVersion}.`));
+      const actions = el("div", { display: "flex", gap: "8px", justifyContent: "flex-end" });
+      actions.appendChild(button("Später", false, () => {
+        if (canStore) GM_setValue(snoozeKey, { version, until: Date.now() + SNOOZE_MS });
+        installing = false;
+        removeNotice();
+      }));
+      actions.appendChild(installing ? button("Neu laden", true, () => location.reload()) : button("Aktualisieren", true, () => {
+        window.open(url, "_blank", "noopener");
+        installing = true;
+        render(version);
+      }));
+      notice.appendChild(actions);
+    };
+    const check = async () => {
+      const remoteVersion = await fetchRemoteVersion(url);
+      if (!remoteVersion) return;
+      if (!isNewerVersion(remoteVersion, currentVersion)) {
+        removeNotice();
+        return;
+      }
+      if (remoteVersion === shownVersion) return;
+      if (canStore && isSnoozed(GM_getValue(snoozeKey, null), remoteVersion, Date.now())) return;
+      installing = false;
+      render(remoteVersion);
+    };
+    runtime.setTimeout(check, FIRST_CHECK_DELAY_MS);
+    runtime.setInterval(check, CHECK_INTERVAL_MS);
+    runtime.addCleanup(removeNotice);
+  }
 
   // ../../shared/node_modules/worker-timers/build/es2019/module.js
   var module_exports = {};
@@ -1100,8 +1261,8 @@
   }
 
   // ../../shared/js/toolbox-help/index.js
-  var FONT = 'system-ui,-apple-system,"Segoe UI",sans-serif';
-  var COLORS = {
+  var FONT2 = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  var COLORS2 = {
     bg: "#f6f5f8",
     surface: "#ffffff",
     border: "#e2e0e8",
@@ -1118,7 +1279,7 @@
     Object.assign(node.style, styles);
     return node;
   }
-  function el(tag, styles, text) {
+  function el2(tag, styles, text) {
     const node = document.createElement(tag);
     if (styles) styled(node, styles);
     if (text !== void 0) node.textContent = text;
@@ -1142,14 +1303,14 @@
   }
   function kindChip(kind) {
     const info = HELP_KINDS[kind];
-    const chip = el("span", {
+    const chip = el2("span", {
       display: "inline-flex",
       alignItems: "center",
       padding: "2px 9px",
       borderRadius: "999px",
       background: info.tint,
       color: info.color,
-      font: `650 11px/1.5 ${FONT}`,
+      font: `650 11px/1.5 ${FONT2}`,
       whiteSpace: "nowrap"
     }, info.label);
     chip.title = info.explain;
@@ -1157,15 +1318,15 @@
   }
   function listBlock(heading, items, ordered) {
     if (!items?.length) return null;
-    const wrap2 = el("div", { marginTop: "10px" });
-    wrap2.appendChild(el("div", { font: `650 11px/1.4 ${FONT}`, color: COLORS.muted, marginBottom: "3px" }, heading));
-    const list = el(ordered ? "ol" : "ul", { margin: "0", paddingLeft: "18px" });
-    items.forEach((item) => list.appendChild(el("li", { margin: "2px 0" }, item)));
+    const wrap2 = el2("div", { marginTop: "10px" });
+    wrap2.appendChild(el2("div", { font: `650 11px/1.4 ${FONT2}`, color: COLORS2.muted, marginBottom: "3px" }, heading));
+    const list = el2(ordered ? "ol" : "ul", { margin: "0", paddingLeft: "18px" });
+    items.forEach((item) => list.appendChild(el2("li", { margin: "2px 0" }, item)));
     wrap2.appendChild(list);
     return wrap2;
   }
   function topicBody(topic) {
-    const parts = [el("p", { margin: "8px 0 0" }, topic.summary)];
+    const parts = [el2("p", { margin: "8px 0 0" }, topic.summary)];
     const steps = listBlock("So geht’s", topic.steps, true);
     const notes = listBlock("Gut zu wissen", topic.notes, false);
     if (steps) parts.push(steps);
@@ -1199,22 +1360,22 @@
     };
     function tip(topicId, { tone = "light" } = {}) {
       const topic = findTopic(topicId) || { id: topicId, title: topicId };
-      const button = document.createElement("button");
-      button.type = "button";
-      button.setAttribute(HELP_ATTRIBUTE, tipAttributeValue(namespace, topic.id));
-      button.setAttribute("aria-label", tipLabel(topic));
-      button.title = tipLabel(topic);
-      button.textContent = "?";
-      return styled(button, tipStyle(tone));
+      const button2 = document.createElement("button");
+      button2.type = "button";
+      button2.setAttribute(HELP_ATTRIBUTE, tipAttributeValue(namespace, topic.id));
+      button2.setAttribute("aria-label", tipLabel(topic));
+      button2.title = tipLabel(topic);
+      button2.textContent = "?";
+      return styled(button2, tipStyle(tone));
     }
     function tipHtml(topicId, options) {
       const topic = findTopic(topicId) || { id: topicId, title: topicId };
       return buildTipHtml(namespace, topic, options);
     }
     function ownTipFrom(target) {
-      const button = target?.closest?.(`[${HELP_ATTRIBUTE}]`);
-      const parsed = parseTipAttributeValue(button?.getAttribute(HELP_ATTRIBUTE));
-      return parsed?.namespace === namespace ? { button, topicId: parsed.topicId } : null;
+      const button2 = target?.closest?.(`[${HELP_ATTRIBUTE}]`);
+      const parsed = parseTipAttributeValue(button2?.getAttribute(HELP_ATTRIBUTE));
+      return parsed?.namespace === namespace ? { button: button2, topicId: parsed.topicId } : null;
     }
     const popover = () => document.getElementById(popoverId);
     function closePopover() {
@@ -1242,7 +1403,7 @@
         return;
       }
       closePopover();
-      const box = el("div", {
+      const box = el2("div", {
         position: "fixed",
         zIndex: Z_TOP,
         left: "0",
@@ -1252,12 +1413,12 @@
         maxHeight: "min(60vh, 480px)",
         overflowY: "auto",
         padding: "14px 16px",
-        border: `1px solid ${COLORS.border}`,
+        border: `1px solid ${COLORS2.border}`,
         borderRadius: "16px",
-        background: COLORS.surface,
-        color: COLORS.text,
+        background: COLORS2.surface,
+        color: COLORS2.text,
         boxShadow: "0 12px 32px rgba(28,26,34,.22)",
-        font: `400 13px/1.55 ${FONT}`,
+        font: `400 13px/1.55 ${FONT2}`,
         textAlign: "left",
         whiteSpace: "normal",
         letterSpacing: "0",
@@ -1267,19 +1428,19 @@
       box.id = popoverId;
       box.setAttribute("role", "tooltip");
       box.dataset.werkiaHelpPopover = namespace;
-      box.appendChild(el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, `${toolboxName} · ${topic.page}`));
-      const head = el("div", { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" });
-      head.append(el("div", { font: `650 15px/1.3 ${FONT}` }, topic.title), kindChip(topic.kind));
+      box.appendChild(el2("div", { font: `650 10px/1.4 ${FONT2}`, letterSpacing: ".02em", color: COLORS2.muted }, `${toolboxName} · ${topic.page}`));
+      const head = el2("div", { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" });
+      head.append(el2("div", { font: `650 15px/1.3 ${FONT2}` }, topic.title), kindChip(topic.kind));
       box.appendChild(head);
       topicBody(topic).forEach((part) => box.appendChild(part));
-      const more = el("button", {
+      const more = el2("button", {
         display: "block",
         marginTop: "12px",
         padding: "0",
         border: "0",
         background: "transparent",
-        color: COLORS.primary,
-        font: `600 12px/1.4 ${FONT}`,
+        color: COLORS2.primary,
+        font: `600 12px/1.4 ${FONT2}`,
         cursor: "pointer",
         textAlign: "left"
       }, `Alle Funktionen der ${toolboxName} ansehen`);
@@ -1312,18 +1473,18 @@
       dialog.remove();
     }
     function topicCard(topic, focused) {
-      const card = el("article", {
+      const card = el2("article", {
         padding: "14px 16px",
-        border: `1px solid ${focused ? COLORS.primary : COLORS.border}`,
+        border: `1px solid ${focused ? COLORS2.primary : COLORS2.border}`,
         borderRadius: "16px",
-        background: focused ? COLORS.primaryTint : COLORS.surface
+        background: focused ? COLORS2.primaryTint : COLORS2.surface
       });
       card.dataset.werkiaHelpTopic = topic.id;
-      const head = el("div", { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" });
-      const titleWrap = el("div");
+      const head = el2("div", { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" });
+      const titleWrap = el2("div");
       titleWrap.append(
-        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: COLORS.muted }, topic.page),
-        el("h3", { margin: "1px 0 0", font: `650 15px/1.3 ${FONT}`, color: COLORS.text }, topic.title)
+        el2("div", { font: `650 10px/1.4 ${FONT2}`, letterSpacing: ".02em", color: COLORS2.muted }, topic.page),
+        el2("h3", { margin: "1px 0 0", font: `650 15px/1.3 ${FONT2}`, color: COLORS2.text }, topic.title)
       );
       head.append(titleWrap, kindChip(topic.kind));
       card.appendChild(head);
@@ -1331,8 +1492,8 @@
       return card;
     }
     function section(title, children) {
-      const wrap2 = el("section", { display: "grid", gap: "10px", marginTop: "18px" });
-      wrap2.appendChild(el("h2", { margin: "0", font: `650 16px/1.3 ${FONT}`, color: COLORS.text }, title));
+      const wrap2 = el2("section", { display: "grid", gap: "10px", marginTop: "18px" });
+      wrap2.appendChild(el2("h2", { margin: "0", font: `650 16px/1.3 ${FONT2}`, color: COLORS2.text }, title));
       children.forEach((child) => wrap2.appendChild(child));
       return wrap2;
     }
@@ -1341,37 +1502,37 @@
       closeOverview();
       ensureExtraStyles();
       const { here, elsewhere } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
-      const dialog = el("dialog", {
+      const dialog = el2("dialog", {
         width: "min(780px, calc(100vw - 32px))",
         maxHeight: "86vh",
         padding: "0",
         border: "0",
         borderRadius: "24px",
-        background: COLORS.bg,
-        color: COLORS.text,
+        background: COLORS2.bg,
+        color: COLORS2.text,
         boxShadow: "0 24px 60px rgba(28,26,34,.35)",
         overflow: "hidden",
-        font: `400 13px/1.6 ${FONT}`
+        font: `400 13px/1.6 ${FONT2}`
       });
       dialog.id = overviewId;
       dialog.setAttribute("data-werkia-help-overview", namespace);
       dialog.setAttribute("aria-label", `${toolboxName} – Funktionsübersicht`);
-      const frame = el("div", { display: "flex", flexDirection: "column", maxHeight: "86vh" });
-      const header = el("div", {
+      const frame = el2("div", { display: "flex", flexDirection: "column", maxHeight: "86vh" });
+      const header = el2("div", {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         gap: "12px",
         padding: "16px 20px",
-        background: COLORS.header,
+        background: COLORS2.header,
         color: "#fff"
       });
-      const heading = el("div");
+      const heading = el2("div");
       heading.append(
-        el("div", { font: `650 10px/1.4 ${FONT}`, letterSpacing: ".02em", color: "#d9d4e6" }, "Funktionsübersicht"),
-        el("div", { font: `650 19px/1.3 ${FONT}`, letterSpacing: "-.01em" }, toolboxName)
+        el2("div", { font: `650 10px/1.4 ${FONT2}`, letterSpacing: ".02em", color: "#d9d4e6" }, "Funktionsübersicht"),
+        el2("div", { font: `650 19px/1.3 ${FONT2}`, letterSpacing: "-.01em" }, toolboxName)
       );
-      const closeButton = el("button", {
+      const closeButton = el2("button", {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1389,16 +1550,16 @@
       closeButton.appendChild(closeIcon());
       closeButton.addEventListener("click", () => closeOverview());
       header.append(heading, closeButton);
-      const content = el("div", { overflowY: "auto", padding: "16px 20px 22px" });
-      content.appendChild(el(
+      const content = el2("div", { overflowY: "auto", padding: "16px 20px 22px" });
+      content.appendChild(el2(
         "p",
-        { margin: "0", color: COLORS.text },
+        { margin: "0", color: COLORS2.text },
         `Die ${toolboxName} ergänzt das Adminpanel. Jede Funktion ist gekennzeichnet, damit du vor dem Klick weißt, ob sie nur etwas anzeigt oder Daten verändert. An vielen Stellen findest du außerdem ein kleines ?, das die jeweilige Funktion direkt dort erklärt.`
       ));
-      const legend = el("div", { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "12px" });
+      const legend = el2("div", { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "12px" });
       Object.keys(HELP_KINDS).filter((kind) => topics.some((topic) => topic.kind === kind)).forEach((kind) => {
-        const row = el("div", { display: "grid", gap: "4px", padding: "10px 12px", border: `1px solid ${COLORS.border}`, borderRadius: "10px", background: COLORS.surface });
-        row.append(kindChip(kind), el("div", { font: `400 12px/1.5 ${FONT}`, color: COLORS.muted }, HELP_KINDS[kind].explain));
+        const row = el2("div", { display: "grid", gap: "4px", padding: "10px 12px", border: `1px solid ${COLORS2.border}`, borderRadius: "10px", background: COLORS2.surface });
+        row.append(kindChip(kind), el2("div", { font: `400 12px/1.5 ${FONT2}`, color: COLORS2.muted }, HELP_KINDS[kind].explain));
         row.firstChild.style.justifySelf = "start";
         legend.appendChild(row);
       });
@@ -1425,14 +1586,14 @@
       const onAdmin = dockHosts.test(location.hostname || "");
       const { here } = splitTopicsByLocation(topics, { hash: location.hash || "", hostname: location.hostname || "" });
       let dock = document.getElementById(DOCK_ID);
-      let button = dock?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`);
+      let button2 = dock?.querySelector(`[data-werkia-help-dock-button="${namespace}"]`);
       if (!onAdmin || !here.length) {
-        button?.remove();
+        button2?.remove();
         if (dock && !dock.children.length) dock.remove();
         return;
       }
       if (!dock) {
-        dock = el("div", {
+        dock = el2("div", {
           position: "fixed",
           left: "16px",
           bottom: "16px",
@@ -1445,38 +1606,38 @@
         dock.id = DOCK_ID;
         document.body.appendChild(dock);
       }
-      if (!button) {
-        button = el("button", {
+      if (!button2) {
+        button2 = el2("button", {
           display: "inline-flex",
           alignItems: "center",
           gap: "6px",
           height: "30px",
           padding: "0 12px 0 5px",
-          border: `1px solid ${COLORS.border}`,
+          border: `1px solid ${COLORS2.border}`,
           borderRadius: "999px",
-          background: COLORS.surface,
-          color: COLORS.text,
+          background: COLORS2.surface,
+          color: COLORS2.text,
           boxShadow: "0 4px 14px rgba(28,26,34,.16)",
-          font: `600 12px/1 ${FONT}`,
+          font: `600 12px/1 ${FONT2}`,
           cursor: "pointer"
         });
-        button.type = "button";
-        button.setAttribute("data-werkia-help-dock-button", namespace);
-        button.title = `Was macht die ${toolboxName} auf dieser Seite?`;
-        const mark2 = el("span", {
+        button2.type = "button";
+        button2.setAttribute("data-werkia-help-dock-button", namespace);
+        button2.title = `Was macht die ${toolboxName} auf dieser Seite?`;
+        const mark2 = el2("span", {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           width: "20px",
           height: "20px",
           borderRadius: "999px",
-          background: COLORS.primary,
+          background: COLORS2.primary,
           color: "#fff",
-          font: `700 12px/1 ${FONT}`
+          font: `700 12px/1 ${FONT2}`
         }, "?");
-        button.append(mark2, document.createTextNode(`${toolboxName}: Hilfe`));
-        button.addEventListener("click", () => openOverview());
-        dock.appendChild(button);
+        button2.append(mark2, document.createTextNode(`${toolboxName}: Hilfe`));
+        button2.addEventListener("click", () => openOverview());
+        dock.appendChild(button2);
       }
     }
     function install(runtime, { dock = true, menu = true, dockHostPattern } = {}) {
@@ -1965,9 +2126,9 @@
   // ../../shared/js/admin-panel-reload.js
   var ADMIN_PANEL_RELOAD_SELECTOR = 'header button[aria-label="Neu laden"]';
   function reloadAdminPanel(documentRef = document) {
-    const button = documentRef.querySelector(ADMIN_PANEL_RELOAD_SELECTOR);
-    if (!button || button.disabled) return false;
-    button.click();
+    const button2 = documentRef.querySelector(ADMIN_PANEL_RELOAD_SELECTOR);
+    if (!button2 || button2.disabled) return false;
+    button2.click();
     return true;
   }
 
@@ -2287,17 +2448,17 @@
     function installButton(header, id, label, title, onClick) {
       if (!header || document.getElementById(id)) return;
       injectStyle();
-      const button = document.createElement("button");
-      button.id = id;
-      button.type = "button";
-      button.textContent = label;
-      button.title = title;
-      button.addEventListener("click", (event) => {
+      const button2 = document.createElement("button");
+      button2.id = id;
+      button2.type = "button";
+      button2.textContent = label;
+      button2.title = title;
+      button2.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         onClick();
       });
-      header.appendChild(button);
+      header.appendChild(button2);
     }
     return {
       state,
@@ -3584,14 +3745,14 @@
       }
     }
     function nameButton(name) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `${LINE_CLASS}__name`;
-      button.title = "CEM-Namen kopieren";
+      const button2 = document.createElement("button");
+      button2.type = "button";
+      button2.className = `${LINE_CLASS}__name`;
+      button2.title = "CEM-Namen kopieren";
       const label = document.createElement("span");
       label.textContent = name;
-      button.append(label, icon(COPY_ICON_PATH));
-      return button;
+      button2.append(label, icon(COPY_ICON_PATH));
+      return button2;
     }
     function renderState(matchId) {
       const info = infoByMatchId.get(matchId);
@@ -3686,20 +3847,20 @@
       }, 150);
     };
     runtime.addDocumentListener("click", (event) => {
-      const button = event.target.closest?.(`.${LINE_CLASS}__name`);
-      if (!button) return;
+      const button2 = event.target.closest?.(`.${LINE_CLASS}__name`);
+      if (!button2) return;
       event.preventDefault();
       event.stopPropagation();
-      const name = button.querySelector("span")?.textContent || "";
+      const name = button2.querySelector("span")?.textContent || "";
       if (!name) return;
       copyText(name).then(() => {
-        button.dataset.copied = "true";
-        button.title = "Kopiert";
-        button.querySelector("svg")?.replaceWith(icon(CHECK_ICON_PATH));
+        button2.dataset.copied = "true";
+        button2.title = "Kopiert";
+        button2.querySelector("svg")?.replaceWith(icon(CHECK_ICON_PATH));
         runtime.setTimeout(() => {
-          delete button.dataset.copied;
-          button.title = "CEM-Namen kopieren";
-          button.querySelector("svg")?.replaceWith(icon(COPY_ICON_PATH));
+          delete button2.dataset.copied;
+          button2.title = "CEM-Namen kopieren";
+          button2.querySelector("svg")?.replaceWith(icon(COPY_ICON_PATH));
         }, COPIED_FEEDBACK_MS);
       });
     }, true);
@@ -3749,9 +3910,9 @@
     const context = getQuestionnaireContext();
     function captureContext(event) {
       if (!isTargetPage5()) return;
-      const button = event.target.closest('button[aria-label="OM Fragebogen"]');
-      if (!button) return;
-      const row = button.closest("tr");
+      const button2 = event.target.closest('button[aria-label="OM Fragebogen"]');
+      if (!button2) return;
+      const row = button2.closest("tr");
       if (!row) return;
       const next = buildQuestionnaireContext(row);
       Object.assign(context, next || EMPTY_CONTEXT);
@@ -3817,7 +3978,7 @@
       if (/Matchkommentare/i.test(text)) return false;
       if (/Kandidat Dateien/i.test(text)) return false;
       const labels = new Set(
-        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || "").trim())
+        [...dialog.querySelectorAll("span.ra-field p span, div.MuiStack-root p span")].map((el3) => (el3.innerText || "").trim())
       );
       const count = QUESTIONNAIRE_LABELS.filter((l) => labels.has(l)).length;
       const hasHeader = labels.has("Kandidat") && labels.has("Job");
@@ -4001,9 +4162,9 @@
     }
     async function handleQuestionnaireButtonClick(event) {
       if (!isTargetPage5()) return;
-      const button = event.target.closest('button[aria-label="OM Fragebogen"]');
-      if (!button) return;
-      const row = button.closest("tr");
+      const button2 = event.target.closest('button[aria-label="OM Fragebogen"]');
+      if (!button2) return;
+      const row = button2.closest("tr");
       if (!row) return;
       const vacancyLink = row.querySelector('a[href*="werkia.de/bewerben/"]');
       const uuid = vacancyLink?.href.match(/bewerben\/([a-f0-9-]{36})/i)?.[1] || "";
@@ -4384,7 +4545,7 @@
   }
   function getDialogLabelTexts(dialog) {
     if (!dialog) return [];
-    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el2) => (el2.innerText || el2.textContent || "").trim()).filter(Boolean);
+    return [...dialog.querySelectorAll("span.ra-field p span, span.MuiStack-root p span, div.MuiStack-root p span")].map((el3) => (el3.innerText || el3.textContent || "").trim()).filter(Boolean);
   }
   function isQuestionnaireDialog(dialog, { strictMode = true, fold: fold2 = false, labels = QUESTIONNAIRE_LABELS2 } = {}) {
     if (!dialog) return false;
@@ -4421,7 +4582,7 @@
     const fields = getFieldsByLabel(dialog, labelText, { fold: fold2 });
     if (!fields.length) return null;
     const field = mode === "last" ? fields[fields.length - 1] : fields[0];
-    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el2) => (el2.innerText || el2.textContent || "").trim()) || null;
+    return [...field.querySelectorAll(VALUE_SELECTOR)].find((el3) => (el3.innerText || el3.textContent || "").trim()) || null;
   }
   function findValueAllowEmpty(dialog, labelText, mode = "first", { fold: fold2 = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold: fold2 });
@@ -4439,11 +4600,11 @@
   function getPositionEls(dialog, labelText, { fold: fold2 = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold: fold2 });
     if (!fields.length) return [];
-    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize5(el2.innerText || el2.textContent, fold2) !== "berufsausbildung");
+    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el3) => (el3.innerText || el3.textContent || "").trim() && normalize5(el3.innerText || el3.textContent, fold2) !== "berufsausbildung");
   }
   function getQuestionnaireHeaderValue(dialog, labelText, { fold: fold2 = false } = {}) {
     const field = getFieldsByLabel(dialog, labelText, { fold: fold2 })[0];
-    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize5(el2.textContent, fold2) !== normalize5(labelText, fold2)) : null;
+    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el3) => el3.textContent?.trim() && normalize5(el3.textContent, fold2) !== normalize5(labelText, fold2)) : null;
     if (value?.textContent?.trim()) return value.textContent.trim();
     const lines = (dialog.innerText || dialog.textContent || "").split("\n").map((line) => line.trim()).filter(Boolean);
     const labelIndex = lines.findIndex((line) => normalize5(line, fold2) === normalize5(labelText, fold2));
@@ -4465,7 +4626,7 @@
   function comparisonValue(value, original, options = {}) {
     return original && isOwnMarkedValue(value, original, options) ? original : value;
   }
-  function mark(el2, color, title = "", options = {}) {
+  function mark(el3, color, title = "", options = {}) {
     const {
       markAttr = DEFAULT_MARK_ATTR,
       originalAttr = DEFAULT_ORIGINAL_ATTR,
@@ -4474,24 +4635,24 @@
       prefixByColor = null,
       dedupeAttr = null
     } = options;
-    if (!el2) return;
+    if (!el3) return;
     if (dedupeAttr) {
       const signature = `${color}|${title}`;
-      if (el2.dataset[dedupeAttr] === signature) return;
-      el2.dataset[dedupeAttr] = signature;
+      if (el3.dataset[dedupeAttr] === signature) return;
+      el3.dataset[dedupeAttr] = signature;
     }
-    if (!el2.dataset[originalAttr]) el2.dataset[originalAttr] = el2.innerText || "";
-    el2.dataset[markAttr] = "true";
-    el2.style.background = color;
-    el2.style.color = "#000";
-    el2.style.padding = "4px 6px";
-    el2.style.borderRadius = "4px";
-    el2.style.fontWeight = fontWeight;
-    el2.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
-    if (title) el2.title = title;
-    const original = el2.dataset[originalAttr];
+    if (!el3.dataset[originalAttr]) el3.dataset[originalAttr] = el3.innerText || "";
+    el3.dataset[markAttr] = "true";
+    el3.style.background = color;
+    el3.style.color = "#000";
+    el3.style.padding = "4px 6px";
+    el3.style.borderRadius = "4px";
+    el3.style.fontWeight = fontWeight;
+    el3.style.boxShadow = boxShadowColors.includes(color) ? "0 0 0 2px rgba(255,0,0,0.35)" : "";
+    if (title) el3.title = title;
+    const original = el3.dataset[originalAttr];
     const prefix = prefixByColor?.[color];
-    el2.innerText = prefix ? `${prefix}${original}` : original;
+    el3.innerText = prefix ? `${prefix}${original}` : original;
   }
   function clearMarks(root = document, options = {}) {
     const {
@@ -4499,19 +4660,19 @@
       originalAttr = DEFAULT_ORIGINAL_ATTR,
       dedupeAttr = null
     } = options;
-    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el2) => {
-      const original = el2.dataset[originalAttr];
-      if (original && isOwnMarkedValue(el2.innerText || "", original, options)) el2.innerText = original;
-      el2.style.background = "";
-      el2.style.color = "";
-      el2.style.padding = "";
-      el2.style.borderRadius = "";
-      el2.style.fontWeight = "";
-      el2.style.boxShadow = "";
-      el2.title = "";
-      delete el2.dataset[markAttr];
-      delete el2.dataset[originalAttr];
-      if (dedupeAttr) delete el2.dataset[dedupeAttr];
+    root.querySelectorAll(`[data-${camelToKebab(markAttr)}="true"]`).forEach((el3) => {
+      const original = el3.dataset[originalAttr];
+      if (original && isOwnMarkedValue(el3.innerText || "", original, options)) el3.innerText = original;
+      el3.style.background = "";
+      el3.style.color = "";
+      el3.style.padding = "";
+      el3.style.borderRadius = "";
+      el3.style.fontWeight = "";
+      el3.style.boxShadow = "";
+      el3.title = "";
+      delete el3.dataset[markAttr];
+      delete el3.dataset[originalAttr];
+      if (dedupeAttr) delete el3.dataset[dedupeAttr];
     });
   }
 
@@ -4546,8 +4707,8 @@
   }
   function executeQuestionnaireEvaluation(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/questionnaire-evaluation.js");
-    function mark2(el2, color, title = "") {
-      mark(el2, color, title, MARK_OPTIONS);
+    function mark2(el3, color, title = "") {
+      mark(el3, color, title, MARK_OPTIONS);
     }
     function clearMarks2() {
       clearMarks(document, MARK_OPTIONS);
@@ -4598,20 +4759,20 @@
       return { status: "send" };
     }
     function compareRecognition(dialog) {
-      const el2 = findValue(dialog, "Recognition status");
-      if (!el2) return { status: "send" };
-      const v = clean(el2.innerText);
+      const el3 = findValue(dialog, "Recognition status");
+      if (!el3) return { status: "send" };
+      const v = clean(el3.innerText);
       if (v.includes("ja, ist anerkannt")) {
-        mark2(el2, GREEN, "Anerkennung: Ja");
+        mark2(el3, GREEN, "Anerkennung: Ja");
         return { status: "send" };
       }
       if (v.includes("in anerkennung")) {
-        mark2(el2, YELLOW, "In Anerkennung");
-        return { status: "unclear", detail: `Recognition status: ${el2.innerText}` };
+        mark2(el3, YELLOW, "In Anerkennung");
+        return { status: "unclear", detail: `Recognition status: ${el3.innerText}` };
       }
       if (v.includes("noch nicht beantragt")) {
-        mark2(el2, RED, "Noch nicht beantragt");
-        return { status: "no-send", detail: `Recognition status: ${el2.innerText}` };
+        mark2(el3, RED, "Noch nicht beantragt");
+        return { status: "no-send", detail: `Recognition status: ${el3.innerText}` };
       }
       return { status: "send" };
     }
@@ -4660,8 +4821,8 @@
       return { status: "send" };
     }
     function comparePositions(dialog) {
-      const empEls = getPositionEls(dialog, "Position").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
-      const candEls = getPositionEls(dialog, "Positionen").map((el2) => ({ el: el2, value: clean(el2.innerText) }));
+      const empEls = getPositionEls(dialog, "Position").map((el3) => ({ el: el3, value: clean(el3.innerText) }));
+      const candEls = getPositionEls(dialog, "Positionen").map((el3) => ({ el: el3, value: clean(el3.innerText) }));
       if (!empEls.length) return { status: "send" };
       if (!candEls.length) return { status: "unclear", detail: `Positionen: ${empEls.map((p) => p.value).join(", ")} → leer` };
       let anyGreen = false;
@@ -4821,7 +4982,7 @@
     function currentFieldSignature(dialog) {
       return [...dialog.querySelectorAll("span.ra-field")].map((field) => {
         const label = field.querySelector("p span")?.innerText?.trim() || "";
-        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el2) => comparisonValue2(el2.innerText ?? el2.textContent ?? "", el2.dataset[ORIGINAL_TEXT])).join("|");
+        const values = [...field.querySelectorAll("span.MuiTypography-body2, a, .MuiChip-label")].map((el3) => comparisonValue2(el3.innerText ?? el3.textContent ?? "", el3.dataset[ORIGINAL_TEXT])).join("|");
         return `${label}=${values}`;
       }).join(";");
     }
@@ -5224,8 +5385,8 @@
     }
     function captureQuestionnaireClick(event) {
       if (!isTargetPage5()) return;
-      const button = event.target?.closest?.('button[aria-label="OM Fragebogen"]');
-      if (!button) return;
+      const button2 = event.target?.closest?.('button[aria-label="OM Fragebogen"]');
+      if (!button2) return;
       if (!context.key) return;
       scheduleUpdate();
       waitForQuestionnaireDialog(context.key);
@@ -5283,19 +5444,19 @@
       const dialog = candidateFilesDialog();
       if (!dialog || dialog.querySelector(".werkia-kam-candidate-open")) return;
       const candidateId = pendingCandidateId;
-      const button = document.createElement("button");
-      button.className = "werkia-kam-candidate-open";
-      button.type = "button";
-      button.textContent = "Kandidatenansicht öffnen ↗";
-      button.title = "Kandidatenansicht /show/9 in einem Popupfenster öffnen";
-      button.addEventListener("click", (event) => {
+      const button2 = document.createElement("button");
+      button2.className = "werkia-kam-candidate-open";
+      button2.type = "button";
+      button2.textContent = "Kandidatenansicht öffnen ↗";
+      button2.title = "Kandidatenansicht /show/9 in einem Popupfenster öffnen";
+      button2.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         openCandidateViewPopup(candidateId);
       });
       const title = dialog.querySelector(".MuiDialogTitle-root");
-      if (title) title.insertAdjacentElement("afterend", button);
-      else dialog.prepend(button);
+      if (title) title.insertAdjacentElement("afterend", button2);
+      else dialog.prepend(button2);
     }
     function installCandidateFileHooks() {
       document.querySelectorAll(`${CANDIDATE_ACTIONS_CELL_SELECTOR} .werkia-kam-candidate-open`).forEach((element) => element.remove());
@@ -5345,16 +5506,16 @@
 
   // src/features/kam-suite/status-effects.js
   var STATUS_SELECTOR = ".MuiSelect-root";
-  function getSelectData(el2) {
-    const input = el2.querySelector("input.MuiSelect-nativeInput");
-    const combo = el2.querySelector('[role="combobox"]');
+  function getSelectData(el3) {
+    const input = el3.querySelector("input.MuiSelect-nativeInput");
+    const combo = el3.querySelector('[role="combobox"]');
     return {
       value: input?.value || "",
       text: combo?.textContent?.trim() || ""
     };
   }
-  function getState(el2) {
-    const { value, text } = getSelectData(el2);
+  function getState(el3) {
+    const { value, text } = getSelectData(el3);
     if (value === "process" || text === "Senden") return "process";
     if (value === "hired" || text === "Hired") return "hired";
     return value || text || "empty";
@@ -5364,23 +5525,23 @@
     const lastStates = /* @__PURE__ */ new WeakMap();
     let initialized = false;
     function initSelectStates() {
-      document.querySelectorAll(STATUS_SELECTOR).forEach((el2) => {
-        lastStates.set(el2, getState(el2));
+      document.querySelectorAll(STATUS_SELECTOR).forEach((el3) => {
+        lastStates.set(el3, getState(el3));
       });
       initialized = true;
     }
-    function flashGreen(el2) {
-      const inner = el2.querySelector('[role="combobox"]') || el2;
-      el2.style.transition = "all 0.2s ease";
-      el2.style.backgroundColor = "#bbf7d0";
-      el2.style.boxShadow = "0 0 0 4px rgba(34, 197, 94, 0.45)";
+    function flashGreen(el3) {
+      const inner = el3.querySelector('[role="combobox"]') || el3;
+      el3.style.transition = "all 0.2s ease";
+      el3.style.backgroundColor = "#bbf7d0";
+      el3.style.boxShadow = "0 0 0 4px rgba(34, 197, 94, 0.45)";
       inner.style.transition = "all 0.2s ease";
       inner.style.backgroundColor = "#bbf7d0";
       inner.style.color = "#14532d";
       inner.style.fontWeight = "700";
       runtime.setTimeout(() => {
-        el2.style.backgroundColor = "";
-        el2.style.boxShadow = "";
+        el3.style.backgroundColor = "";
+        el3.style.boxShadow = "";
         inner.style.backgroundColor = "";
         inner.style.color = "";
         inner.style.fontWeight = "";
@@ -5553,24 +5714,24 @@
     }
     function checkSelects() {
       if (!initialized) return;
-      document.querySelectorAll(STATUS_SELECTOR).forEach((el2) => {
-        const currentState = getState(el2);
-        if (!lastStates.has(el2)) {
-          lastStates.set(el2, currentState);
+      document.querySelectorAll(STATUS_SELECTOR).forEach((el3) => {
+        const currentState = getState(el3);
+        if (!lastStates.has(el3)) {
+          lastStates.set(el3, currentState);
           return;
         }
-        const lastState = lastStates.get(el2);
+        const lastState = lastStates.get(el3);
         if (currentState !== lastState) {
           if (currentState === "process") {
-            flashGreen(el2);
+            flashGreen(el3);
             showAnotherOneText();
             fireConfetti();
           }
           if (currentState === "hired") {
-            flashGreen(el2);
+            flashGreen(el3);
             showHiredCelebration();
           }
-          lastStates.set(el2, currentState);
+          lastStates.set(el3, currentState);
         }
       });
     }
@@ -5667,7 +5828,7 @@
       const candidate = rightLinks[0];
       if (!candidate) return null;
       const row = candidate.closest("div") || candidate.parentElement;
-      const prio = [...row.querySelectorAll("span, div, button")].find((el2) => /^[A-F]\d*$/i.test((el2.innerText || "").trim()));
+      const prio = [...row.querySelectorAll("span, div, button")].find((el3) => /^[A-F]\d*$/i.test((el3.innerText || "").trim()));
       return prio || candidate;
     }
     function ensureBox() {
@@ -5840,7 +6001,7 @@
     location: { names: ["location", "locationId", "appointmentLocation"], label: "Standort", fallbackIndex: 2 }
   };
   function getAppointments(root = document) {
-    return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el2) => el2.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
+    return [...root.querySelectorAll(APPOINTMENT_INPUT_SELECTOR)].map((el3) => el3.value?.trim()).filter((v) => /^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$/.test(v));
   }
   function hasAppointmentFields(dialog) {
     return Boolean(dialog?.querySelector?.(APPOINTMENT_INPUT_SELECTOR));
@@ -5899,9 +6060,9 @@
       }
     }
     function termToast(text) {
-      const el2 = document.createElement("div");
-      el2.textContent = text;
-      el2.style.cssText = `
+      const el3 = document.createElement("div");
+      el3.textContent = text;
+      el3.style.cssText = `
       position: fixed;
       bottom: 24px;
       right: 24px;
@@ -5912,22 +6073,22 @@
       z-index: 99999999;
       font-size: 14px;
     `;
-      document.body.appendChild(el2);
-      runtime.setTimeout(() => el2.remove(), 2200);
+      document.body.appendChild(el3);
+      runtime.setTimeout(() => el3.remove(), 2200);
     }
-    function setValue(el2, value) {
-      el2.focus();
+    function setValue(el3, value) {
+      el3.focus();
       const inputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
       const textareaSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-      if (el2.tagName === "TEXTAREA") {
-        textareaSetter?.call(el2, value);
+      if (el3.tagName === "TEXTAREA") {
+        textareaSetter?.call(el3, value);
       } else {
-        inputSetter?.call(el2, value);
+        inputSetter?.call(el3, value);
       }
-      el2.dispatchEvent(new Event("input", { bubbles: true }));
-      el2.dispatchEvent(new Event("change", { bubbles: true }));
-      el2.dispatchEvent(new Event("blur", { bubbles: true }));
-      el2.blur();
+      el3.dispatchEvent(new Event("input", { bubbles: true }));
+      el3.dispatchEvent(new Event("change", { bubbles: true }));
+      el3.dispatchEvent(new Event("blur", { bubbles: true }));
+      el3.blur();
     }
     function setPicker(root, value) {
       const values = parseAppointmentValue(value);
@@ -6381,35 +6542,35 @@
         textarea.remove();
       }
     }
-    async function copyExport(button, type) {
-      const row = button.closest("tr");
+    async function copyExport(button2, type) {
+      const row = button2.closest("tr");
       const matchId = row && matchIdFromRow(row);
       if (!matchId) return;
       const previousSentAt = sentAt(matchId, type);
       if (previousSentAt && !window.confirm(resendConfirmText(type, previousSentAt))) return;
-      button.disabled = true;
-      button.textContent = "Lädt …";
+      button2.disabled = true;
+      button2.textContent = "Lädt …";
       try {
         const data = await loadMatchData(matchId);
         const appointmentAt = latestAppointmentDate(appointmentCell(row)?.innerText);
         if (webhookUrl2) {
           await new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url: webhookUrl2, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ matchId, type, slackText: buildSlackApiText(type, data, taggedRole, appointmentAt) }), onload: (response) => response.status >= 200 && response.status < 300 ? resolve() : reject(new Error(`Webhook HTTP ${response.status}`)), onerror: reject }));
           markSent(matchId, type);
-          button.textContent = "Gesendet";
+          button2.textContent = "Gesendet";
         } else {
           await copyText(buildSlackText(type, { ...data, appointmentAt }, taggedRole));
           markSent(matchId, type);
-          button.textContent = "Kopiert";
+          button2.textContent = "Kopiert";
         }
       } catch (error) {
         console.warn("[Slack-Export] Kopieren fehlgeschlagen.", error);
-        button.textContent = "Fehler";
+        button2.textContent = "Fehler";
       } finally {
         runtime.setTimeout(() => {
-          if (!button.isConnected) return;
-          button.disabled = false;
-          button.textContent = exportButtonLabel(type, sentAt(matchId, type));
-          button.title = exportButtonTitle(type, webhookUrl2, sentAt(matchId, type));
+          if (!button2.isConnected) return;
+          button2.disabled = false;
+          button2.textContent = exportButtonLabel(type, sentAt(matchId, type));
+          button2.title = exportButtonTitle(type, webhookUrl2, sentAt(matchId, type));
         }, 1200);
       }
     }
@@ -6420,13 +6581,13 @@
       const exports = document.createElement("div");
       exports.className = EXPORTS_SELECTOR.slice(1);
       ["VTA", "VTV"].forEach((type) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "werkia-slack-export";
-        button.textContent = exportButtonLabel(type, sentAt(matchId, type));
-        button.title = exportButtonTitle(type, webhookUrl2, sentAt(matchId, type));
-        button.addEventListener("click", () => copyExport(button, type));
-        exports.appendChild(button);
+        const button2 = document.createElement("button");
+        button2.type = "button";
+        button2.className = "werkia-slack-export";
+        button2.textContent = exportButtonLabel(type, sentAt(matchId, type));
+        button2.title = exportButtonTitle(type, webhookUrl2, sentAt(matchId, type));
+        button2.addEventListener("click", () => copyExport(button2, type));
+        exports.appendChild(button2);
       });
       const tip = helpTip?.();
       if (tip) {
@@ -6634,28 +6795,28 @@
       document.head.appendChild(style);
     }
     const post = (payload) => postJson(webhookUrl2, payload);
-    function applyState(button, { state, label, title, disabled = false }) {
-      if (button.dataset.busy === "true") return;
-      if (button.textContent !== label) button.textContent = label;
-      if (button.title !== title) button.title = title;
-      if (button.dataset.state !== state) button.dataset.state = state;
-      if (button.disabled !== disabled) button.disabled = disabled;
+    function applyState(button2, { state, label, title, disabled = false }) {
+      if (button2.dataset.busy === "true") return;
+      if (button2.textContent !== label) button2.textContent = label;
+      if (button2.title !== title) button2.title = title;
+      if (button2.dataset.state !== state) button2.dataset.state = state;
+      if (button2.disabled !== disabled) button2.disabled = disabled;
     }
-    function flash(button, text) {
-      button.dataset.busy = "true";
-      button.textContent = text;
+    function flash(button2, text) {
+      button2.dataset.busy = "true";
+      button2.textContent = text;
       runtime.setTimeout(() => {
-        delete button.dataset.busy;
+        delete button2.dataset.busy;
         render();
       }, 1500);
     }
-    async function onUrgentClick(button, jobPositionId, matchId) {
+    async function onUrgentClick(button2, jobPositionId, matchId) {
       const urgency = urgencyIndex.get(jobPositionId);
       const { state } = urgentButtonState(urgency, loadStore().pending[jobPositionId]);
       if (state === "loading" || state === "pending") return;
       const target = !urgency.urgent;
       if (!target && !window.confirm(STOP_URGENT_CONFIRM_TEXT)) return;
-      button.disabled = true;
+      button2.disabled = true;
       try {
         await post({ type: target ? "DRINGEND" : "NICHT_DRINGEND", jobPositionId, matchId });
         updateStore((store) => {
@@ -6665,22 +6826,22 @@
         schedulePendingPoll();
       } catch (error) {
         console.warn("[KAM Dringend]", error);
-        flash(button, "Fehler");
+        flash(button2, "Fehler");
       }
     }
-    async function onPushClick(button, jobPositionId, matchId) {
+    async function onPushClick(button2, jobPositionId, matchId) {
       const sentAt = loadStore().pushSent[jobPositionId];
       if (sentAt && !window.confirm(pushResendConfirmText(sentAt))) return;
-      button.disabled = true;
+      button2.disabled = true;
       try {
         await post({ type: "PUSH", jobPositionId, matchId });
         updateStore((store) => {
           store.pushSent[jobPositionId] = (/* @__PURE__ */ new Date()).toISOString();
         });
-        flash(button, "Gesendet");
+        flash(button2, "Gesendet");
       } catch (error) {
         console.warn("[KAM Push Request]", error);
-        flash(button, "Fehler");
+        flash(button2, "Fehler");
       }
     }
     function placeBar(row, bar) {
@@ -7943,7 +8104,7 @@
 
   // src/features/kam-suite/host-filter.js
   var OUTLOOK_HOSTNAMES = ["outlook.office.com", "outlook.cloud.microsoft"];
-  var OUTLOOK_FEATURE_IDS = ["toolbox-help", "kam-suite-outlook-match-outen"];
+  var OUTLOOK_FEATURE_IDS = ["toolbox-help", "update-check", "kam-suite-outlook-match-outen"];
   function isOutlookHost(hostname) {
     return OUTLOOK_HOSTNAMES.includes(String(hostname || "").toLowerCase());
   }
@@ -8903,7 +9064,7 @@ ${next}`;
     const rootRect = positioningRoot.getBoundingClientRect();
     const omRect = anchor.getBoundingClientRect();
     const toolbarHeight = toolbar.getBoundingClientRect().height;
-    const saveButton = [...documentRef.querySelectorAll("button")].find((button) => /speichern/i.test(button.textContent || ""));
+    const saveButton = [...documentRef.querySelectorAll("button")].find((button2) => /speichern/i.test(button2.textContent || ""));
     const actionBar = saveButton?.closest('footer, [class*="Actions"], [class*="Toolbar"]') || saveButton?.parentElement;
     const actionBarTop = actionBar?.getBoundingClientRect().top;
     const bottomLimit = Number.isFinite(actionBarTop) && actionBarTop > omRect.top ? actionBarTop - 8 : viewportHeight ? viewportHeight - 8 : omRect.bottom;
@@ -8925,8 +9086,8 @@ ${next}`;
       if (!field || !toolbar) {
         return;
       }
-      toolbar.querySelectorAll(".werkia-om-notes-chip").forEach((button) => {
-        button.classList.toggle("is-active", hasOmNote(field.value, button.title));
+      toolbar.querySelectorAll(".werkia-om-notes-chip").forEach((button2) => {
+        button2.classList.toggle("is-active", hasOmNote(field.value, button2.title));
       });
     }
     function write(nextValue) {
@@ -9010,14 +9171,14 @@ ${next}`;
         const chips = document.createElement("div");
         chips.className = "werkia-om-notes-chips";
         OM_NOTE_TEMPLATES.filter((template) => template.group === groupName).forEach((template) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "werkia-om-notes-chip";
-          button.textContent = template.label;
-          button.title = template.value;
-          button.classList.toggle("is-active", hasOmNote(field.value, template.value));
-          button.addEventListener("click", () => write(toggleOmNote(field.value, template.value)));
-          chips.appendChild(button);
+          const button2 = document.createElement("button");
+          button2.type = "button";
+          button2.className = "werkia-om-notes-chip";
+          button2.textContent = template.label;
+          button2.title = template.value;
+          button2.classList.toggle("is-active", hasOmNote(field.value, template.value));
+          button2.addEventListener("click", () => write(toggleOmNote(field.value, template.value)));
+          chips.appendChild(button2);
         });
         group.appendChild(chips);
         groups.appendChild(group);
@@ -9333,6 +9494,7 @@ ${next}`;
   bootstrapToolbox({ label: "KAM", marker: "data-werkia-kam-toolbox-loaded" }, selectFeaturesForHost([
     // First: installs the delegated ?-button handling the features below use.
     { id: "toolbox-help", execute: executeToolboxHelp },
+    { id: "update-check", execute: (runtime) => updateCheck(runtime, { label: "KAM", fileName: "KAM-Toolbox.user.js" }) },
     { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions2 },
     { id: "kam-suite-contact-badges", execute: executeContactBadges },
     { id: "kam-suite-vacancy-city-badges", execute: executeVacancyCityBadges },
