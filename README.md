@@ -68,6 +68,7 @@ Enthaltene Funktionen:
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Entscheidungs-Empfehlung.
 - Zeigt eine hervorgehobene Box mit den OM-Notizen zum Fragebogen direkt im Dialog.
 - Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
+- Zeigt im Fragebogen unter der Routenbox alle Matches des Kandidaten beim selben Arbeitgeber und bei Schwesterfirmen derselben Unternehmensgruppe, jeweils mit OM Status. Warnt, wenn ein anderer Match schon gesendet oder hochgeladen ist.
 - Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 - Zeigt getrennt erkennbare OM-Hinweise aus Arbeitgeber- und Vakanz-Notizen. Eindeutig verletzte Anforderungen und bereits gematchte Arbeitgeber lassen sich ausblenden; je Arbeitgeber bleiben hoechstens die ersten drei Matches in AP-Score-Reihenfolge sichtbar, auch ueber Seitenwechsel hinweg.

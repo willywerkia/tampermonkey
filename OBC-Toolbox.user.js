@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.4.100
+// @version      1.5.101
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -1948,6 +1948,21 @@
     questionnaireEvaluationTopic({ routes: onPotentialMatches }),
     omNotesBoxTopic({ routes: onPotentialMatches }),
     routeCalculationTopic({ routes: onPotentialMatches }),
+    {
+      id: "obc-duplicate-matches",
+      title: "Doppelte Matches",
+      page: PAGES.questionnaire,
+      routes: onPotentialMatches,
+      kind: "view",
+      summary: "Zeigt beim offenen Fragebogen unter der Routenbox alle Matches dieses Kandidaten beim selben Arbeitgeber und bei Schwesterfirmen derselben Unternehmensgruppe.",
+      notes: [
+        "Die Pille zeigt den OM Status des Matches. „-“ heißt: noch kein OM Status.",
+        "„Aktuell“ markiert die Stelle, deren Fragebogen gerade offen ist.",
+        "Roter Hinweis oben: Ein anderer Match steht schon auf „Senden“, „Reverse Match senden“ oder „Portal Uploaded“. Den aktuellen Match dann nicht senden.",
+        "🏢 Gruppe: Die Stelle gehört zu einer anderen Firma derselben Unternehmensgruppe. Die Gruppe wird automatisch über den Arbeitgeber erkannt oder über [AG-GRUPPE: KEY] in den OM-Notizen.",
+        "↻ lädt die Liste neu. Sonst bleibt sie eine Minute zwischengespeichert."
+      ]
+    },
     filterPresetsTopic({ page: "OBC › Kandidaten", routes: [ROUTES.obcCandidates] })
   ];
   var obcHelp = createToolboxHelp({ namespace: "obc", toolboxName: "OBC-Toolbox", topics: OBC_HELP_TOPICS });
@@ -4079,6 +4094,466 @@
     scheduleRun();
   }
 
+  // ../../ops/om/toolbox/src/features/employer-groups.js
+  var EMPLOYER_GROUPS = {
+    DAUME: {
+      label: "Daume-Gruppe",
+      ids: [
+        "9bbfc658-0e9c-4f12-a8f2-f950d7421e23",
+        "8e16bece-d719-4612-ac2f-b841069e0a7c",
+        "413f7a0b-cdc1-4977-9d4f-e617940d9c3c",
+        "823d6547-240c-48fc-aefe-2cd87f477f12",
+        "52ec7c1e-7cce-4d8e-b150-906fe2ac19cc",
+        "e83cdd66-4af2-473b-a0e9-be10e98dbafa",
+        "4a006d6a-1ba0-4f23-a64e-9c2a2f2c5a06",
+        "6e678b6d-7034-4517-b4fc-3102d271bf42",
+        "c489315f-5c20-4e5b-9f3a-56c752f320e2",
+        "9657bdca-bbda-4298-ae3f-98877a4be98f",
+        "c55b394f-ef2a-4ad1-9a3c-e39a810f5055",
+        "828a2a6b-89bc-4402-b36a-443f102216ec",
+        "bfcc88de-9160-43a1-b065-d9b4abe19122",
+        "540ddc2b-ecbe-4967-8ceb-b3a937972c9a",
+        "f2badd38-3f46-4463-9134-6a357c7de99d",
+        "82f6c33e-7645-4b7c-abef-ded581bf410d",
+        "8b0fd0d0-0e13-408c-bea1-3336ec43ef22",
+        "8dc8d7ab-f9ce-4d76-b566-98d1eb726a1a",
+        "5c6970d9-7e2d-421b-9d17-6852f96d1ecc",
+        "e6be7af1-bf31-4fb9-8a60-d58f58c302b5",
+        "9a0e2e0a-2222-47b4-b7c5-65aaf32734bb",
+        "fa137ded-f901-43b5-a1d3-26365a24384c",
+        "eefebfe5-96a4-4180-add9-6f41153c9a2e",
+        "022b530a-d865-41ab-9a40-7c8a5e99b23f",
+        "46e795b5-a66f-455a-acbd-f82dab1a3d62",
+        "007a064c-a3d4-4453-a04c-1336100510b4",
+        "ebc47444-c112-406b-ba20-48e7c12e2924",
+        "dc884535-5e38-46b6-a355-071587e07ad5",
+        "63a094b1-c7d3-4b06-9da7-a2501e5a4941",
+        "e6601f9a-7be0-488d-aec9-30a3c8d4bc71",
+        "e4031687-3371-45a8-b620-2abcfb0a5691",
+        "c559b14b-a4d6-45b3-ab71-824823fc824e"
+      ],
+      names: [
+        "DF Energietechnik Berlin GmbH",
+        "SMOLA GmbH",
+        "Kurt Möller Heizungsbau GmbH",
+        "Lauerer GmbH",
+        "H. Venjakob GmbH & Co. KG",
+        "Otterpohl GmbH",
+        "Zitron GmbH",
+        "Wilhelm Koch GmbH",
+        "Fröhlich Heizung-Sanitär GmbH & Co. KG",
+        "Wiese Kälte-Klimatechnik GmbH",
+        "Reich Bad Exklusiv Sanitärtechnik GmbH",
+        "ELRO GmbH",
+        "Thies Gebäudetechnik GmbH",
+        "Schalück Kälte- und Klimatechnik GmbH",
+        "DF Anlagentechnik GmbH",
+        "Jürgen Plagge Sanitärtechnik GmbH",
+        "Hoppert Heizungs- und Lüftungsbau GmbH",
+        "Bolte Technik GmbH",
+        "S&J Haustechnik GmbH",
+        "Thomas Mehner Haustechnik GmbH",
+        "Pumpen Lehmann GmbH",
+        "Ehlert Haustechnik GmbH",
+        "SLK Schultz Lüftungs- und Klimatechnik GmbH",
+        "Krüger Heizungs- und Sanitär GmbH",
+        "DK Brandschutz GmbH",
+        "H. Bisplinghoff GmbH",
+        "HKW Heizungs-, Klima- und Wärmepumpentechnik GmbH",
+        "Daume GmbH Heizung-Lüftung-Sanitär",
+        "Trubel Luft- und Klimatechnik GmbH",
+        "DF Energietechnik Cottbus GmbH",
+        "Forster Klimatechnik GmbH",
+        "Georg Degen Zentralheizungen und sanitäre Anlagen GmbH & Co. KG"
+      ]
+    },
+    NETZWELTFABRIK: {
+      label: "NetzweltFabrik-Gruppe",
+      ids: [
+        "ac6b68dd-00f7-4c3e-8892-2de2aa95c6cc",
+        "4f0b2e33-4792-4ee8-b35a-2a00cf18ea4b"
+      ],
+      names: [
+        "NetzweltFabrik GmbH Nordsachsen",
+        "NetzweltFabrik GmbH Südsachsen"
+      ]
+    },
+    DEWARMTE: {
+      label: "DeWarmte",
+      ids: [
+        "04f17ec5-01f5-4694-b4c7-1b77b1304291",
+        "85e5c1a1-2627-4964-a91f-daf26277e4e6"
+      ],
+      // Im Adminpanel als "DeWarmte GmbH " und "DeWarmte gmbH" gespeichert;
+      // clean() gleicht Gross-/Kleinschreibung und Leerzeichen an.
+      names: ["DeWarmte GmbH"]
+    },
+    NDB: {
+      label: "NDB-Gruppe",
+      ids: [
+        "b4eb7afb-082f-4628-ad6c-b40c12897d85",
+        // Johs. Seufert + Sohn
+        "399c7424-ee3e-46ef-929b-a6c01bbe9165",
+        // NDB BAUTECHNIK
+        "29c3bb95-e35c-4608-a69d-4f4c000bed49",
+        // NDB ELEKTROTECHNIK
+        "54d3d733-f1ed-4cf5-9cbd-a255b21bba57",
+        // NDB ELEKTRO- UND KOMMUNIKATIONSTECHNIK
+        "827cd301-844e-4e0d-b995-bbefd6b79ce0",
+        // EFA
+        "67661512-6f71-4cf8-abf5-a40f5a758bd4",
+        // Norddeutsche Bausanierung
+        "3534fb97-9ee6-4d65-b454-5277842b8d8c",
+        // NDB energieKonzepte
+        "4463f577-34c7-4863-ad2e-efaf8709f708"
+        // NDB ELEKTROTECHNIK HAMBURG
+      ],
+      names: [
+        "Johs. Seufert + Sohn GmbH",
+        "NDB BAUTECHNIK GmbH & Co. KG",
+        "NDB ELEKTROTECHNIK GmbH & Co. KG",
+        "NDB ELEKTRO- UND KOMMUNIKATIONSTECHNIK GmbH",
+        "EFA ELEKTRO- UND KOMMUNIKATIONSTECHNIK GmbH & Co. KG",
+        "Norddeutsche Bausanierung GmbH & Co. KG",
+        "NDB energieKonzepte GmbH",
+        "NDB ELEKTROTECHNIK HAMBURG GmbH & Co. KG",
+        // scan.it hat aktuell keinen Datensatz in der Arbeitgeber-Tabelle.
+        "scan.it GmbH"
+      ]
+    }
+  };
+
+  // src/features/obc-fragebogen/duplicate-matches.js
+  var BOX_ID = "werkia-obc-duplicate-matches-box";
+  var REFRESH_BUTTON_ID = "werkia-obc-duplicate-matches-refresh";
+  var ROUTE_BOX_ID4 = "werkia-obc-route-box";
+  var OM_NOTES_ID2 = "werkia-om-notes-box";
+  var OM_NOTES_LABEL = "Zusätzliche Information - OM";
+  var PURPLE = "#e5dbff";
+  var GREEN2 = "#d8f5d0";
+  var CACHE_TTL_MS = 60 * 1e3;
+  var MATCH_PAGE_SIZE = 100;
+  var MAX_MATCH_PAGES = 20;
+  var JOB_POSITION_BATCH_SIZE = 25;
+  var GRID_MIN_WIDTH = 420;
+  var ONLINE_MATCH_STATUS_LABELS = {
+    process: "Senden",
+    dont_send: "Nicht senden",
+    follow_up: "WVL",
+    wait_for_cv: "Warten auf CV",
+    kam_request: "Anfrage KAM",
+    doublecheck: "Doublecheck",
+    in_queue: "Warten auf Auto-Verarbeitung",
+    reverse_match_send: "Reverse Match senden",
+    portal_uploaded: "Portal Uploaded",
+    rejected_by_candidate: "Vom Kandidaten abgelehnt",
+    too_many_matches: "Zu viele Matches",
+    no_data: "Keine Daten",
+    unsolicited_send: "Initiativ Senden"
+  };
+  var URGENT_ONLINE_MATCH_STATUSES = /* @__PURE__ */ new Set(["process", "reverse_match_send", "portal_uploaded"]);
+  var DUPLICATE_MATCHES_QUERY = `query allMatches($sortField: String, $sortOrder: String, $page: Int, $perPage: Int, $filter: MatchFilter) {
+  items: allMatches(sortField: $sortField, sortOrder: $sortOrder, page: $page, perPage: $perPage, filter: $filter) {
+    id
+    jobPositionId
+    onlineMatchStatus
+    __typename
+  }
+  total: _allMatchesMeta(page: $page, perPage: $perPage, filter: $filter) {
+    count
+    __typename
+  }
+}`;
+  var DUPLICATE_JOB_POSITIONS_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    mainTitle
+    employer {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+}`;
+  function onlineMatchStatusLabel(value) {
+    if (!value) return "-";
+    return ONLINE_MATCH_STATUS_LABELS[value] || value;
+  }
+  function parseEmployerGroupKeyFromOmNotes(text, groups = EMPLOYER_GROUPS) {
+    const match = String(text || "").match(/\[\s*AG-GRUPPE\s*:\s*([^\]]+)\]/i);
+    const key = match?.[1]?.trim().toUpperCase();
+    return key && groups[key] ? key : "";
+  }
+  function resolveEmployerGroups({ employerId = "", omNotesText = "", groups = EMPLOYER_GROUPS } = {}) {
+    const resolved = [];
+    const tagKey = parseEmployerGroupKeyFromOmNotes(omNotesText, groups);
+    if (tagKey) resolved.push({ key: tagKey, label: groups[tagKey].label || tagKey, source: "tag" });
+    if (employerId) {
+      for (const [key, group] of Object.entries(groups)) {
+        if (key === tagKey) continue;
+        if ((group.ids || []).includes(employerId)) resolved.push({ key, label: group.label || key, source: "auto" });
+      }
+    }
+    return resolved;
+  }
+  function collectEmployerIds(employerId, resolvedGroups, groups = EMPLOYER_GROUPS) {
+    const ids = new Set(employerId ? [employerId] : []);
+    for (const { key } of resolvedGroups || []) {
+      for (const id of groups[key]?.ids || []) ids.add(id);
+    }
+    return ids;
+  }
+  function buildDuplicateMatchRows({ matches, jobsById, employerIds, currentJobId, currentEmployerId }) {
+    const rows = [];
+    for (const match of matches || []) {
+      const job = jobsById.get(match?.jobPositionId);
+      const employerId = job?.employer?.id || "";
+      if (!employerId || !employerIds.has(employerId)) continue;
+      rows.push({
+        matchId: match.id || "",
+        jobTitle: job.mainTitle || "-",
+        employerName: job.employer.name || "-",
+        employerId,
+        statusValue: match.onlineMatchStatus || "",
+        statusLabel: onlineMatchStatusLabel(match.onlineMatchStatus),
+        isCurrent: !!currentJobId && match.jobPositionId === currentJobId,
+        isGroup: employerId !== currentEmployerId
+      });
+    }
+    return rows;
+  }
+  function hasUrgentOtherMatch(rows) {
+    return (rows || []).some((row) => !row.isCurrent && URGENT_ONLINE_MATCH_STATUSES.has(row.statusValue));
+  }
+  function hasOtherMatches(rows) {
+    return (rows || []).some((row) => !row.isCurrent);
+  }
+  async function loadJobPositions(request, jobPositionIds) {
+    const jobsById = /* @__PURE__ */ new Map();
+    for (let index = 0; index < jobPositionIds.length; index += JOB_POSITION_BATCH_SIZE) {
+      const ids = jobPositionIds.slice(index, index + JOB_POSITION_BATCH_SIZE);
+      const result = await request(DUPLICATE_JOB_POSITIONS_QUERY, { filter: { ids } });
+      for (const item of result?.items || []) {
+        if (item?.id) jobsById.set(item.id, item);
+      }
+    }
+    return jobsById;
+  }
+  async function loadCandidateMatches(request, candidateId) {
+    const matches = [];
+    let total = Infinity;
+    for (let page = 0; page < MAX_MATCH_PAGES && page * MATCH_PAGE_SIZE < total; page++) {
+      const result = await request(DUPLICATE_MATCHES_QUERY, {
+        filter: { candidateIds: [candidateId] },
+        page,
+        perPage: MATCH_PAGE_SIZE,
+        sortField: "createdAt",
+        sortOrder: "DESC"
+      });
+      const items = result?.items || [];
+      matches.push(...items);
+      total = Number(result?.total?.count);
+      if (!Number.isFinite(total) || !items.length) break;
+    }
+    return matches;
+  }
+  async function loadDuplicateMatches({ request, candidateId, jobId, omNotesText = "", groups = EMPLOYER_GROUPS }) {
+    const currentJob = (await loadJobPositions(request, [jobId])).get(jobId);
+    const currentEmployerId = currentJob?.employer?.id || "";
+    if (!currentEmployerId) throw new Error(`Arbeitgeber zur Vakanz ${jobId} nicht gefunden.`);
+    const resolvedGroups = resolveEmployerGroups({ employerId: currentEmployerId, omNotesText, groups });
+    const employerIds = collectEmployerIds(currentEmployerId, resolvedGroups, groups);
+    const matches = await loadCandidateMatches(request, candidateId);
+    const jobsById = await loadJobPositions(
+      request,
+      [...new Set(matches.map((match) => match?.jobPositionId).filter(Boolean))]
+    );
+    jobsById.set(jobId, currentJob);
+    return {
+      currentEmployerName: currentJob.employer.name || "",
+      groups: resolvedGroups,
+      rows: buildDuplicateMatchRows({ matches, jobsById, employerIds, currentJobId: jobId, currentEmployerId })
+    };
+  }
+  function urgentBannerHtml(isCard) {
+    return isCard ? '<div style="margin:0 0 7px 0;padding:6px 7px;background:#fa5252;color:#fff;border-radius:7px;font-weight:1000;font-size:11px;line-height:1.3;">⚠ Anderer Match wird bereits gesendet/hochgeladen – NICHT senden!</div>' : '<div style="margin:6px 0 10px 0;padding:9px 12px;background:#fa5252;color:#fff;border-radius:8px;font-weight:1000;font-size:12.5px;line-height:1.35;">⚠ Achtung: Ein anderer Match wird bereits gesendet/hochgeladen – aktuellen Match NICHT senden!</div>';
+  }
+  function statusPillHtml(label, isCard) {
+    const size = isCard ? "margin-top:4px;font-size:10.5px;padding:2px 7px;border:1.2px" : "font-size:11.5px;padding:3px 9px;border:1.5px";
+    return `<span style="display:inline-block;${size} solid rgba(0,0,0,0.55);border-radius:999px;font-weight:900;white-space:nowrap;background:transparent;color:inherit;">${escapeHtml(label || "-")}</span>`;
+  }
+  function gridBodyHtml(rows, urgentOther) {
+    const columns = "display:grid;grid-template-columns:minmax(150px,2.2fr) minmax(110px,1.05fr) minmax(95px,0.85fr);gap:10px;";
+    return (urgentOther ? urgentBannerHtml(false) : "") + `
+    <div style="${columns}padding:8px 0;border-bottom:2px solid rgba(0,0,0,0.16);font-size:12px;font-weight:1000;">
+      <div>Stelle</div><div>Arbeitgeber</div><div>OM Status</div>
+    </div>
+    ${rows.map((row) => {
+      const warn = row.isCurrent && urgentOther;
+      const rowBg = warn ? "background:#fff5f5;border:2px solid #fa5252;border-radius:8px;" : row.isCurrent ? `background:${GREEN2};border-radius:8px;` : "";
+      const currentBadge = row.isCurrent ? warn ? '<span style="font-size:11px;background:#fa5252;color:#fff;padding:2px 6px;border-radius:5px;margin-left:6px;white-space:nowrap;font-weight:1000;">⚠ AKTUELL – NICHT SENDEN</span>' : '<span style="font-size:11px;background:#2b8a3e;color:#fff;padding:2px 5px;border-radius:5px;margin-left:6px;white-space:nowrap;">Aktuell</span>' : "";
+      const groupBadge = row.isGroup ? '<span style="font-size:11px;background:#e7dbff;color:#4c2889;border:1px solid rgba(76,40,137,0.35);padding:2px 6px;border-radius:5px;margin-left:6px;white-space:nowrap;font-weight:900;">🏢 Gruppe</span>' : "";
+      return `
+      <div style="${columns}padding:10px 7px;border-bottom:1px solid rgba(0,0,0,0.08);align-items:start;${rowBg}">
+        <div style="font-weight:950;overflow-wrap:anywhere;">${escapeHtml(row.jobTitle)}${currentBadge}</div>
+        <div style="font-weight:800;overflow-wrap:anywhere;">${escapeHtml(row.employerName)}${groupBadge}</div>
+        <div style="overflow-wrap:anywhere;">${statusPillHtml(row.statusLabel, false)}</div>
+      </div>`;
+    }).join("")}`;
+  }
+  function cardBodyHtml(rows, urgentOther) {
+    return (urgentOther ? urgentBannerHtml(true) : "") + rows.map((row) => {
+      const warn = row.isCurrent && urgentOther;
+      const cardBg = warn ? "background:#fff5f5;border:1.5px solid #fa5252;" : row.isCurrent ? `background:${GREEN2};border:1px solid rgba(0,0,0,0.14);` : "background:#fff;border:1px solid rgba(0,0,0,0.12);";
+      const currentBadge = row.isCurrent ? warn ? '<div style="margin-top:3px;display:inline-block;font-size:10px;background:#fa5252;color:#fff;padding:2px 5px;border-radius:4px;font-weight:1000;">⚠ AKTUELL – NICHT SENDEN</div>' : '<div style="margin-top:3px;display:inline-block;font-size:10px;background:#2b8a3e;color:#fff;padding:2px 5px;border-radius:4px;">Aktuell</div>' : "";
+      const groupBadge = row.isGroup ? '<div style="margin-top:2px;font-size:10px;color:#4c2889;font-weight:900;">🏢 Gruppe</div>' : "";
+      return `
+      <div style="padding:6px 8px;margin-bottom:5px;border-radius:7px;${cardBg}">
+        <div style="font-weight:950;font-size:12px;line-height:1.25;overflow-wrap:anywhere;">${escapeHtml(row.jobTitle)}</div>
+        <div style="font-size:11px;font-weight:700;opacity:.82;overflow-wrap:anywhere;">${escapeHtml(row.employerName)}</div>
+        ${groupBadge}
+        ${statusPillHtml(row.statusLabel, true)}
+        ${currentBadge}
+      </div>`;
+    }).join("");
+  }
+  function groupLineHtml(groups) {
+    if (!groups?.length) return "";
+    const text = groups.map((group) => `${group.label} (${group.source === "tag" ? "per [AG-GRUPPE]" : "automatisch"})`).join(", ");
+    return `<div style="margin:0 0 6px 0;font-size:12px;font-weight:800;color:#4c2889;">🏢 ${escapeHtml(text)}</div>`;
+  }
+  function renderDuplicateMatchesHtml(entry, { isCard = false } = {}) {
+    const data = entry?.data;
+    const rows = data?.rows || [];
+    const ready = entry?.state === "ready";
+    const showList = ready && hasOtherMatches(rows);
+    let body;
+    if (!entry || entry.state === "loading") {
+      body = '<div style="padding:8px 0;font-weight:900;">Lade weitere Matches...</div>';
+    } else if (entry.state === "error") {
+      body = '<div style="padding:8px 0;font-weight:900;color:#c92a2a;">Keine Matchdaten gefunden.</div>';
+    } else if (!showList) {
+      body = `<div style="padding:8px 0;font-weight:900;">Keine doppelten Matches mit ${escapeHtml(data?.currentEmployerName || "diesem Arbeitgeber")} gefunden.</div>`;
+    } else {
+      const urgentOther = hasUrgentOtherMatch(rows);
+      body = isCard ? cardBodyHtml(rows, urgentOther) : gridBodyHtml(rows, urgentOther);
+    }
+    const count = showList ? ` (${rows.length})` : "";
+    return `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;font-size:${isCard ? "14" : "16"}px;font-weight:1000;line-height:1.15;">🔁 Doppelte Matches${count}${obcHelp.tipHtml("obc-duplicate-matches")}</div>
+      <button type="button" id="${REFRESH_BUTTON_ID}" title="Neu laden" style="border:1px solid rgba(0,0,0,0.22);background:#fff;color:#000;border-radius:8px;padding:4px 8px;font-size:12px;font-weight:1000;cursor:pointer;">↻</button>
+    </div>
+    ${ready ? groupLineHtml(data.groups) : ""}
+    ${body}`;
+  }
+  function getOmNotesText(dialog) {
+    const field = [...dialog.querySelectorAll("span.ra-field")].find((f) => f.querySelector("p span")?.innerText?.trim() === OM_NOTES_LABEL);
+    const valueEl = field?.querySelector("span.MuiTypography-body2");
+    return valueEl?.innerText || valueEl?.textContent || "";
+  }
+  function executeDuplicateMatches(runtime) {
+    runtime.registerSource("obc/toolbox/src/features/obc-fragebogen/duplicate-matches.js");
+    const context = getQuestionnaireContext();
+    const cache = /* @__PURE__ */ new Map();
+    let lastSignature = "";
+    let scheduleRun = () => {
+    };
+    function removeBox() {
+      document.getElementById(BOX_ID)?.remove();
+      lastSignature = "";
+    }
+    function startLoad(cacheKey, omNotesText) {
+      const entry = { state: "loading", data: null, loadedAt: Date.now() };
+      cache.set(cacheKey, entry);
+      loadDuplicateMatches({
+        request: getObcGraphqlAdapter().request,
+        candidateId: context.candidateId,
+        jobId: context.jobId,
+        omNotesText
+      }).then((data) => {
+        Object.assign(entry, { state: "ready", data, loadedAt: Date.now() });
+      }).catch((error) => {
+        console.warn("[Werkia OBC Doppelte Matches] Laden fehlgeschlagen:", error);
+        Object.assign(entry, { state: "error", loadedAt: Date.now() });
+      }).finally(() => scheduleRun());
+      return entry;
+    }
+    function ensureBox() {
+      let box = document.getElementById(BOX_ID);
+      if (box) return box;
+      box = document.createElement("div");
+      box.id = BOX_ID;
+      box.style.cssText = `
+      position:fixed;
+      padding:12px 14px;
+      background:#f3f0ff;
+      color:#000;
+      border:3px solid ${PURPLE};
+      border-radius:12px;
+      font-weight:700;
+      font-size:13px;
+      line-height:1.4;
+      box-shadow:0 4px 18px rgba(0,0,0,0.28);
+      overflow:auto;
+      z-index:9999999;
+      box-sizing:border-box;
+    `;
+      box.addEventListener("click", (event) => {
+        if (!event.target.closest(`#${REFRESH_BUTTON_ID}`)) return;
+        for (const key of [...cache.keys()]) {
+          if (key.startsWith(`${context.key}|`)) cache.delete(key);
+        }
+        lastSignature = "";
+        scheduleRun();
+      });
+      document.body.appendChild(box);
+      lastSignature = "";
+      return box;
+    }
+    function positionBox(box, dialog) {
+      const dialogRect = dialog.getBoundingClientRect();
+      const anchor = document.getElementById(ROUTE_BOX_ID4) || document.getElementById(OM_NOTES_ID2);
+      const anchorRect = anchor?.getBoundingClientRect();
+      const gap = 12;
+      const width = anchorRect?.width || Math.max(220, dialogRect.left - gap - 12);
+      const left = Math.max(8, anchorRect ? anchorRect.left : dialogRect.left - width - gap);
+      const wantedTop = anchorRect?.height ? anchorRect.bottom + gap : Math.max(16, dialogRect.top);
+      const top = Math.min(wantedTop, window.innerHeight - 140);
+      const styles = {
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        maxHeight: `${Math.max(120, window.innerHeight - top - 16)}px`
+      };
+      for (const [prop, value] of Object.entries(styles)) {
+        if (box.style[prop] !== value) box.style[prop] = value;
+      }
+      return width;
+    }
+    function run() {
+      if (!isTargetPage()) return removeBox();
+      const dialog = findQuestionnaireDialog(document, { strictMode: false });
+      if (!dialog || !context.key) return removeBox();
+      const omNotesText = getOmNotesText(dialog);
+      const cacheKey = `${context.key}|${parseEmployerGroupKeyFromOmNotes(omNotesText)}`;
+      let entry = cache.get(cacheKey);
+      if (!entry || entry.state !== "loading" && Date.now() - entry.loadedAt > CACHE_TTL_MS) {
+        entry = startLoad(cacheKey, omNotesText);
+      }
+      const box = ensureBox();
+      const width = positionBox(box, dialog);
+      const isCard = width < GRID_MIN_WIDTH;
+      const signature = `${cacheKey}|${entry.state}|${entry.loadedAt}|${isCard}`;
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      box.innerHTML = renderDuplicateMatchesHtml(entry, { isCard });
+    }
+    scheduleRun = attachQuestionnaireObserver(runtime, run, { delay: 200 });
+    runtime.addWindowListener("resize", scheduleRun);
+  }
+
   // ../../shared/js/offline-match-bulk/index.js
   var CANDIDATE_POTENTIAL_MATCHES_ROUTE = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
   var CREATE_OFFLINE_MATCH_ROUTE = /^#\/CreateOfflineMatch(?:[/?]|$)/i;
@@ -6150,6 +6625,8 @@
     // positions its box relative to #werkia-om-notes-box.
     { id: "obc-fragebogen-om-notes-box", execute: executeOmNotesBox },
     { id: "obc-fragebogen-route-calculation", execute: executeRouteCalculation },
+    // After route-calculation: docks below #werkia-obc-route-box.
+    { id: "obc-fragebogen-duplicate-matches", execute: executeDuplicateMatches },
     { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
     { id: "filter-presets", execute: executeFilterPresets },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule },
