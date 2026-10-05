@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.7.108
+// @version      1.7.109
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -468,13 +468,28 @@
         setValue(fingerprintStorageKey, fingerprint);
       }
     }
+    function getAuth() {
+      try {
+        const storedBearer = normaliseBearer(getValue(bearerStorageKey, ""));
+        const storedFingerprint = String(getValue(fingerprintStorageKey, "") || "").trim();
+        if (storedBearer) bearer = storedBearer;
+        if (storedFingerprint) fingerprint = storedFingerprint;
+      } catch {
+      }
+      return { bearer, fingerprint };
+    }
     return {
       capture,
-      getAuth: () => ({ bearer, fingerprint })
+      getAuth
     };
   }
   function isGraphqlUrl(url) {
-    return String(url || "").includes(GRAPHQL_URL_PART);
+    try {
+      const parsed = new URL(String(url || ""), "https://invalid.local/");
+      return `${parsed.host}${parsed.pathname}`.startsWith(GRAPHQL_URL_PART);
+    } catch {
+      return false;
+    }
   }
   function installGraphqlAuthCapture({ pageWindow, authStore, installedFlag }) {
     if (!pageWindow || pageWindow[installedFlag]) return;
@@ -508,7 +523,8 @@
 
   // ../../shared/js/werkia-graphql/client.js
   var GRAPHQL_URL = "https://api.werkia.de/graphql";
-  function createGraphqlRequest({ request, getAuth }) {
+  var GRAPHQL_TIMEOUT_MS = 3e4;
+  function createGraphqlRequest({ request, getAuth, timeoutMs = GRAPHQL_TIMEOUT_MS }) {
     return (query, variables) => new Promise((resolve, reject) => {
       const { bearer, fingerprint } = getAuth();
       if (!bearer || !fingerprint) {
@@ -526,12 +542,13 @@
           Referer: "https://admin.werkia.de/"
         },
         data: JSON.stringify({ query, variables }),
+        timeout: timeoutMs,
         onload(response) {
           let payload;
           try {
             payload = JSON.parse(response.responseText);
           } catch {
-            reject(new Error(`GraphQL-Antwort ist kein JSON (HTTP ${response.status}).`));
+            reject(new Error(response.status !== 200 ? `GraphQL HTTP ${response.status}: Antwort ist kein JSON.` : `GraphQL-Antwort ist kein JSON (HTTP ${response.status}).`));
             return;
           }
           if (response.status !== 200 || payload.errors) {
@@ -1683,13 +1700,14 @@
       steps: [
         "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
         "„Alle ändern“ klicken.",
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         "Ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
       ],
       notes: [
         "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "„Lauf stoppen“ oder Escape bricht nach dem aktuellen Match ab. Bereits geänderte Matches bleiben geändert.",
+        "Das Jahr muss zwischen dem Vorjahr und fünf Jahren voraus liegen. Ein halb ausgefülltes Datum wird abgelehnt, statt die WVL zu entfernen.",
         "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte.",
         ...extraNotes
       ]
@@ -1704,7 +1722,7 @@
       kind: "write",
       summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         `Den neuen ${team} Status wählen. „Leer“ entfernt den Status. Bei „Out“ ist ein Grund Pflicht${freeTextReason ? ", bei „Anderes“ zusätzlich ein eigener Text" : ""}.`,
         "Die Rückfrage prüfen und bestätigen."
       ],
@@ -1712,7 +1730,8 @@
         `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
         declinesInterviews ? "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt." : "",
         "Zur Auswahl stehen nur die aktuell sichtbaren Zeilen.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "„Lauf stoppen“ oder Escape bricht nach dem aktuellen Match ab; dessen WVL und Terminvorschläge werden noch fertig bearbeitet. Bereits geänderte Matches bleiben geändert.",
+        "Ist der Status gesetzt, aber das Löschen der WVL oder das Ablehnen der Termine scheitert, nennt das Ergebnis das Match als „nur teilweise“ geändert.",
         "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte.",
         ...extraNotes
       ].filter(Boolean)
@@ -1727,7 +1746,7 @@
       kind: "write",
       summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
       ],
@@ -1747,7 +1766,7 @@
       kind: "write",
       summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
       ],
@@ -1941,13 +1960,13 @@
       summary: "„Alle ändern“ im Spaltenkopf Status setzt denselben Kandidat-Status für mehrere sichtbare Kandidaten.",
       steps: [
         "Die Liste so filtern, dass die gewünschten Kandidaten auf der Seite stehen.",
-        "„Alle ändern“ klicken. Alle Kandidaten der Seite sind angehakt; wer nicht geändert werden soll, abhaken.",
+        "„Alle ändern“ klicken. Alle Kandidaten der Seite sind angehakt; wer nicht geändert werden soll, abhaken. Wer im Suchfeld sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern.",
         "Den neuen Status wählen, die Rückfrage mit der Anzahl prüfen und bestätigen."
       ],
       notes: [
         "Geändert werden nur Kandidaten der aktuell geladenen Seite. Für mehr auf einmal die Seitengröße erhöhen.",
         "Es wird nur der Status geschrieben, genau wie über das Status-Feld in der Zeile.",
-        "„Lauf stoppen“ bricht nach dem aktuellen Kandidaten ab. Bereits geänderte bleiben geändert."
+        "„Lauf stoppen“ oder Escape bricht nach dem aktuellen Kandidaten ab. Bereits geänderte bleiben geändert."
       ]
     },
     {
@@ -1958,8 +1977,8 @@
       kind: "write",
       summary: "„Alle ändern“ im Spaltenkopf WVL setzt oder entfernt die Kandidat-WVL für mehrere sichtbare Kandidaten.",
       steps: [
-        "„Alle ändern“ klicken und die Kandidaten abhaken, die unverändert bleiben sollen.",
-        "Ein Datum wählen oder das Feld leer lassen, um die WVL zu entfernen.",
+        "„Alle ändern“ klicken und die Kandidaten abhaken, die unverändert bleiben sollen. Wer im Suchfeld sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern.",
+        "Ein Datum wählen oder das Feld leer lassen, um die WVL zu entfernen. Erlaubt sind Daten vom Vorjahr bis fünf Jahre voraus.",
         "Die Rückfrage mit der Anzahl prüfen und bestätigen."
       ],
       notes: [
@@ -4552,9 +4571,10 @@
     return `
     <input type="search" class="wkw-search" data-search placeholder="${escapeHtml(placeholder)}" autocomplete="off">
     <div class="wkw-list">
-      <label class="wkw-all"><input type="checkbox" data-all checked> ${escapeHtml(allLabel)}</label>
+      <label class="wkw-all"><input type="checkbox" data-all checked> <span data-all-label data-default="${escapeHtml(allLabel)}">${escapeHtml(allLabel)}</span></label>
       ${body}
-    </div>`;
+    </div>
+    <div class="wkw-count" data-count>${items.length} von ${items.length} ausgewählt</div>`;
   }
   var normalize2 = (text) => String(text || "").toLocaleLowerCase("de").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim();
   function syncBox(box, children) {
@@ -4562,8 +4582,11 @@
     box.checked = checked === children.length && checked > 0;
     box.indeterminate = checked > 0 && checked < children.length;
   }
+  var isHiddenItem = (item) => Boolean(item.closest("label")?.hidden);
   function wireChecklist(root) {
     const all = root.querySelector("[data-all]");
+    const allLabel = root.querySelector("[data-all-label]");
+    const count = root.querySelector("[data-count]");
     const search = root.querySelector("[data-search]");
     const items = [...root.querySelectorAll('input[name="item"]')];
     const groups = [...root.querySelectorAll(".wkw-group")].map((group) => ({
@@ -4572,49 +4595,85 @@
       label: normalize2(group.querySelector(".wkw-group-head")?.textContent.replace(/\s*\(\d+\)\s*$/, "")),
       items: [...group.querySelectorAll('input[name="item"]')]
     }));
-    const shown = (list) => list.filter((item) => !item.closest("label").hidden);
+    let pristine = true;
+    const shown = (list) => list.filter((item) => !isHiddenItem(item));
+    const query = () => normalize2(search?.value).replace(/\s+/g, " ");
     const sync = () => {
       groups.forEach((group) => syncBox(group.box, shown(group.items)));
-      syncBox(all, shown(items));
+      const visible = shown(items);
+      syncBox(all, visible);
+      if (allLabel) {
+        allLabel.textContent = query() ? `Alle ${visible.length} Suchtreffer` : allLabel.dataset.default;
+      }
+      if (count) {
+        const checked = items.filter((item) => item.checked).length;
+        const hidden = items.filter((item) => item.checked && isHiddenItem(item)).length;
+        count.textContent = `${checked} von ${items.length} ausgewählt${hidden ? `, davon ${hidden} durch die Suche ausgeblendet` : ""}`;
+      }
+    };
+    const touch = () => {
+      pristine = false;
     };
     const applyFilter = () => {
-      const query = normalize2(search?.value).replace(/\s+/g, " ");
+      const text = query();
       const groupOf = new Map(groups.flatMap((group) => group.items.map((item) => [item, group])));
       items.forEach((item) => {
         const group = groupOf.get(item);
-        const text = `${group ? `${group.label} ` : ""}${normalize2(item.closest("label").textContent)}`;
-        item.closest("label").hidden = !text.replace(/\s+/g, " ").includes(query);
+        const haystack = `${group ? `${group.label} ` : ""}${normalize2(item.closest("label").textContent)}`;
+        item.closest("label").hidden = !haystack.replace(/\s+/g, " ").includes(text);
       });
       groups.forEach((group) => {
         group.element.hidden = shown(group.items).length === 0;
       });
+      if (pristine) items.forEach((item) => {
+        item.checked = !text;
+      });
       sync();
     };
     all.addEventListener("change", () => {
+      touch();
       shown(items).forEach((item) => {
         item.checked = all.checked;
       });
       sync();
     });
     groups.forEach((group) => group.box.addEventListener("change", () => {
+      touch();
       shown(group.items).forEach((item) => {
         item.checked = group.box.checked;
       });
       sync();
     }));
-    items.forEach((item) => item.addEventListener("change", sync));
+    items.forEach((item) => item.addEventListener("change", () => {
+      touch();
+      sync();
+    }));
     if (search) {
       search.addEventListener("input", applyFilter);
       search.addEventListener("keydown", (event) => {
         if (event.key === "Enter") event.preventDefault();
+        if (event.key === "Escape" && search.value) {
+          event.preventDefault();
+          event.stopPropagation();
+          search.value = "";
+          applyFilter();
+        }
       });
     }
+    sync();
   }
   function checkedValues(root) {
     return new Set([...root.querySelectorAll('input[name="item"]:checked')].map((box) => box.value));
   }
+  function hiddenCheckedCount(root) {
+    return [...root.querySelectorAll('input[name="item"]:checked')].filter(isHiddenItem).length;
+  }
+  function hiddenSelectionText(root) {
+    const hidden = hiddenCheckedCount(root);
+    return hidden ? ` Davon ${hidden === 1 ? "ist 1" : `sind ${hidden}`} gerade durch die Suche ausgeblendet.` : "";
+  }
   function createBulkDialogKit({ ids, buttonIds = [], extraCss = "", stopNoun = "Zeile", reloadMissingText }) {
-    const state = { running: false, cancelRequested: false };
+    const state = { running: false, cancelRequested: false, runDialog: null, openDialog: null };
     function injectStyle() {
       if (document.getElementById(ids.style)) return;
       const style = document.createElement("style");
@@ -4637,6 +4696,7 @@
       ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
       ${dialog} .wkw-list label.wkw-group-head { font-weight: 700; margin-top: 4px; }
       ${dialog} .wkw-group label.wkw-item { padding-left: 22px; }
+      ${dialog} .wkw-count { margin-top: -8px; color: #555; font-size: 13px; }
       ${dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
       ${dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
       ${dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
@@ -4649,12 +4709,13 @@
     `;
       document.head.appendChild(style);
     }
-    function setStatus(text, tone = "") {
-      const status2 = document.getElementById(ids.status);
+    function setStatus(text, tone = "", dialog = state.openDialog) {
+      const status2 = dialog?.querySelector(`#${ids.status}`);
       if (!status2) return;
       status2.textContent = text;
       status2.dataset.tone = tone;
     }
+    const statusFor = (dialog) => (text, tone = "") => setStatus(text, tone, dialog);
     function setRunningControls(dialog, isRunning) {
       dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
         element.disabled = isRunning;
@@ -4669,11 +4730,16 @@
     function begin(dialog) {
       state.running = true;
       state.cancelRequested = false;
+      state.runDialog = dialog;
       dialog.querySelector('[data-action="apply"]').dataset.completed = "false";
       setRunningControls(dialog, true);
     }
     function end() {
       state.running = false;
+      const dialog = state.runDialog;
+      if (dialog && !dialog.open && dialog.dataset.needsReload === "true" && dialog.dataset.reloaded !== "true") {
+        handleDialogClose(dialog);
+      }
     }
     function abort(dialog) {
       state.running = false;
@@ -4687,6 +4753,10 @@
       dialog.querySelector('[data-action="close"]').hidden = true;
       applyButton.focus();
     }
+    const isLive = (dialog) => Boolean(dialog?.isConnected && dialog.open);
+    function markWritten(dialog) {
+      dialog.dataset.needsReload = "true";
+    }
     function handleCloseOrCancel(dialog) {
       if (!state.running) {
         dialog.close();
@@ -4698,15 +4768,24 @@
         stopButton.disabled = true;
         stopButton.textContent = "Wird gestoppt …";
       }
-      setStatus(`Stopp angefordert. Die aktuelle ${stopNoun} wird noch beendet; weitere bleiben unverändert.`, "busy");
+      setStatus(`Stopp angefordert. Die aktuelle ${stopNoun} wird noch beendet; weitere bleiben unverändert.`, "busy", dialog);
     }
     function handleDialogClose(dialog) {
-      if (dialog.dataset.needsReload === "true") {
+      const ownRun = state.running && state.runDialog === dialog;
+      if (dialog.dataset.needsReload === "true" && !ownRun) {
+        dialog.dataset.reloaded = "true";
         dialog.remove();
         if (!reloadAdminPanel()) window.alert(reloadMissingText || 'Änderung gespeichert. Der Adminpanel-Button "Neu laden" wurde nicht gefunden, bitte die Seite neu laden.');
         return;
       }
-      if (!state.running) dialog.remove();
+      if (!ownRun) dialog.remove();
+    }
+    function discard() {
+      if (state.running) state.cancelRequested = true;
+      const dialog = document.getElementById(ids.dialog);
+      if (!dialog) return;
+      if (dialog.open) dialog.close();
+      dialog.remove();
     }
     function open({ title, tipHtml = "", checklist = null, fieldsHtml = "", note = "", initialStatus = "", applyLabel, onApply, focusSelector }) {
       document.getElementById(ids.dialog)?.remove();
@@ -4726,6 +4805,7 @@
         </div>
       </form>`;
       document.body.appendChild(dialog);
+      state.openDialog = dialog;
       if (checklist) wireChecklist(dialog);
       dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
       dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
@@ -4733,23 +4813,33 @@
           dialog.close();
           return;
         }
-        if (!state.running) onApply(dialog);
+        if (state.running) {
+          if (state.runDialog !== dialog) setStatus("Ein vorheriger Lauf wird noch beendet. Bitte kurz warten.", "busy", dialog);
+          return;
+        }
+        onApply(dialog);
+      });
+      dialog.addEventListener("cancel", (event) => {
+        if (!state.running || state.runDialog !== dialog) return;
+        event.preventDefault();
+        handleCloseOrCancel(dialog);
       });
       dialog.addEventListener("close", () => handleDialogClose(dialog));
       dialog.showModal();
       dialog.querySelector(focusSelector || '[data-action="apply"]')?.focus();
       return dialog;
     }
-    async function runQueue(dialog, queue, { progress, label: label2 = (item) => item.label, update }) {
+    async function runQueue(dialog, queue, { progress, label: label2 = (item) => item.label, update, reload = false }) {
       begin(dialog);
       let changed = 0;
       const failures = [];
       for (let index = 0; index < queue.length; index += 1) {
         if (state.cancelRequested) break;
-        setStatus(progress(index + 1, queue.length), "busy");
+        setStatus(progress(index + 1, queue.length), "busy", dialog);
         try {
           await update(queue[index], index);
           changed += 1;
+          if (reload) markWritten(dialog);
         } catch (error) {
           failures.push(`${label2(queue[index], index)}: ${error.message}`);
         }
@@ -4757,13 +4847,14 @@
       end();
       return { changed, failures };
     }
-    function report({ changed, failures }, { doneWord = "geändert", restText = "Die übrigen blieben unverändert.", successText }) {
+    function report({ changed, failures }, { doneWord = "geändert", restText = "Die übrigen blieben unverändert.", successText, partial = [] }, dialog = state.runDialog) {
+      const partialText = partial.length ? ` Davon ${partial.length} nur teilweise: ${partial.slice(0, 3).join(" | ")}.` : "";
       if (state.cancelRequested) {
-        setStatus(`Lauf gestoppt: ${changed} ${doneWord}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. ${restText}`, "busy");
+        setStatus(`Lauf gestoppt: ${changed} ${doneWord}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}.${partialText} ${restText}`, "busy", dialog);
       } else if (failures.length) {
-        setStatus(`${changed} ${doneWord}, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+        setStatus(`${changed} ${doneWord}, ${failures.length} fehlgeschlagen.${partialText} ${failures.slice(0, 3).join(" | ")}`, "error", dialog);
       } else {
-        setStatus(successText(changed), "ok");
+        setStatus(`${successText(changed)}${partialText}`, partial.length ? "error" : "ok", dialog);
       }
     }
     function installButton(header, id, label2, title, onClick) {
@@ -4785,11 +4876,15 @@
       state,
       injectStyle,
       setStatus,
+      statusFor,
       setRunningControls,
       begin,
       end,
       abort,
       finish,
+      isLive,
+      markWritten,
+      discard,
       open,
       runQueue,
       report,
@@ -4868,6 +4963,23 @@
     if (!match) return null;
     return { year: match[1], month: match[2], day: match[3] };
   }
+  var FOLLOW_UP_YEARS_BACK = 1;
+  var FOLLOW_UP_YEARS_AHEAD = 5;
+  function checkFollowUpDate(value, { badInput = false, now = /* @__PURE__ */ new Date() } = {}) {
+    if (badInput) {
+      return { iso: null, date: null, error: "Das Datum ist unvollständig. Bitte vollständig ausfüllen oder das Feld ganz leeren." };
+    }
+    if (!value) return { iso: null, date: null, error: null };
+    const date = parseIsoDate(value);
+    if (!date) return { iso: null, date: null, error: "Bitte ein gültiges Datum auswählen oder das Feld leer lassen." };
+    const year = Number(date.year);
+    const first = now.getFullYear() - FOLLOW_UP_YEARS_BACK;
+    const last = now.getFullYear() + FOLLOW_UP_YEARS_AHEAD;
+    if (year < first || year > last) {
+      return { iso: null, date: null, error: `Das Jahr ${year} ist nicht plausibel. Erlaubt sind ${first} bis ${last}.` };
+    }
+    return { iso: value, date, error: null };
+  }
   function statusClearsWvl(statusValue) {
     return statusValue === "hired" || statusValue === "out";
   }
@@ -4927,6 +5039,8 @@
   var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
   var CANDIDATE_LINK_SELECTOR = 'a[href*="#/Candidate/"]';
   var JOB_POSITION_LINK_SELECTOR = 'a[href*="#/JobPosition/"]';
+  var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
+  var LOADING_SELECTOR = '.MuiLinearProgress-root, header [role="progressbar"], header .MuiCircularProgress-root';
   function executeBulkMatchActions(runtime, sourcePath, config) {
     runtime.registerSource(sourcePath);
     const {
@@ -4944,7 +5058,6 @@
       helpTip = {}
     } = config;
     const tip = (key) => helpTip[key]?.() || "";
-    const WVL_CELL_SELECTOR = `td.column-${columns.followUp}`;
     const INTERVIEW_CELL_SELECTOR = `td.column-${columns.interview}`;
     const STATUS_MUTATION = buildStatusMutation(fields.status);
     const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
@@ -4978,7 +5091,15 @@
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     }
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(WVL_CELL_SELECTOR));
+      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(MATCH_LINK_SELECTOR2) && !row.querySelector("tr"));
+    }
+    function shownOnPage(element) {
+      if (!element.isConnected || element.closest("[hidden]")) return false;
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden";
+    }
+    function listIsLoading() {
+      return [...document.querySelectorAll(LOADING_SELECTOR)].some((element) => !element.closest('dialog, [role="dialog"], [id^="werkia"]') && shownOnPage(element));
     }
     function employerFromRow(row) {
       const link = row.querySelector(EMPLOYER_LINK_SELECTOR);
@@ -5002,7 +5123,7 @@
       return label2.length > 90 ? `${label2.slice(0, 89)}…` : label2;
     }
     function matchIdFromRow(row) {
-      const link = row.querySelector('a[href*="#/Match/"]');
+      const link = row.querySelector(MATCH_LINK_SELECTOR2);
       return link?.href.match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
     }
     const kit = createBulkDialogKit({
@@ -5014,7 +5135,6 @@
       #${IDS4.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
       #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }`
     });
-    const { setStatus } = kit;
     function visibleMatches() {
       const seen = /* @__PURE__ */ new Set();
       return getRows().map((row, index) => {
@@ -5045,7 +5165,7 @@
       if (employers.size === 1) return `${selection.length} ausgewählte Matches von „${selection[0].employer.name}“`;
       return `${selection.length} ausgewählte Matches von ${employers.size} Arbeitgebern`;
     }
-    const SELECTION_HINT = "Alle sichtbaren Matches sind angehakt. Ein Haken am Arbeitgeber wählt alle seine Matches ab oder an.";
+    const SELECTION_HINT = "Alle sichtbaren Matches sind angehakt. Ein Haken am Arbeitgeber wählt alle seine Matches ab oder an. Wer zuerst sucht, startet ohne Haken und wählt aus den Treffern.";
     function renderWvlDialog() {
       const matches = visibleMatches();
       const dialog = kit.open({
@@ -5062,7 +5182,7 @@
       const dateInput = dialog.querySelector('input[name="date"]');
       const applyButton = dialog.querySelector('[data-action="apply"]');
       dateInput.addEventListener("input", () => {
-        applyButton.textContent = dateInput.value ? "Datum anwenden" : "Datum entfernen";
+        applyButton.textContent = dateInput.value || dateInput.validity?.badInput ? "Datum anwenden" : "Datum entfernen";
       });
     }
     function renderStatusDialog() {
@@ -5217,16 +5337,13 @@
       }
       return interviewIds;
     }
-    async function declineOpenInterviewsForMatch(matchId) {
-      const request = getRequest();
+    async function declineOpenInterviewsForMatch(matchId, onDeclined = () => {
+    }) {
       const interviewIds = await openInterviewIdsForMatch(matchId);
-      let declined = 0;
       for (const interviewId of interviewIds) {
-        if (kit.state.cancelRequested) break;
         await declineInterview(matchId, interviewId);
-        declined += 1;
+        onDeclined();
       }
-      return declined;
     }
     async function declineInterview(matchId, interviewId) {
       const request = getRequest();
@@ -5302,6 +5419,7 @@
       }
     };
     async function applyInterviewAction(dialog, matches, action) {
+      const setStatus = kit.statusFor(dialog);
       const selection = selectedMatches(dialog, matches);
       if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
       kit.begin(dialog);
@@ -5321,6 +5439,7 @@
         }
       }
       kit.end();
+      if (!kit.isLive(dialog)) return;
       if (kit.state.cancelRequested) {
         setStatus(`Lauf gestoppt, bevor etwas ${action.done} wurde.`, "busy");
         return kit.finish(dialog);
@@ -5331,7 +5450,7 @@
       }
       const matchCount = new Set(queue.map((item) => item.matchId)).size;
       const failureText = failures.length ? ` (${failures.length} Matches konnten nicht geladen werden und bleiben unverändert.)` : "";
-      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches (${scopeText(selection)}) ${action.verb}?${failureText}`)) {
+      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches (${scopeText(selection)}) ${action.verb}?${failureText}${hiddenSelectionText(dialog)}`)) {
         kit.abort(dialog);
         return setStatus(`Nichts ${action.done}.`, "");
       }
@@ -5350,10 +5469,11 @@
         doneWord: action.done,
         restText: "Die übrigen Vorschläge blieben unverändert.",
         successText: (count) => `${count} ${action.noun} erfolgreich ${action.done}.`
-      });
+      }, dialog);
       kit.finish(dialog);
     }
     async function applyStatus(dialog, matches) {
+      const setStatus = kit.statusFor(dialog);
       const selection = selectedMatches(dialog, matches);
       const targetValue = dialog.querySelector('[name="status"]').value;
       const targetStatus = statusOptions.find((status2) => status2.value === targetValue);
@@ -5375,52 +5495,83 @@
       const interviewText = declinesInterviews ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
       const reasonLabel = isOut ? outFeedback.freeText ? outFeedbackText : outFeedback.label : "";
       const reasonText = isOut ? ` Grund: „${reasonLabel}“.` : "";
-      if (!window.confirm(`${scopeText(selection)} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
+      if (!window.confirm(`${scopeText(selection)} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}${hiddenSelectionText(dialog)}`)) return;
       let declinedInterviews = 0;
+      const partial = [];
       const feedback = isOut ? resolveOutFeedback(outFeedback, outFeedbackText) : null;
       const result = await kit.runQueue(dialog, selection, {
         progress: (current, total) => `Ändere Status ${current} von ${total} …`,
         update: async (match, index) => {
           await updateMatchStatus(match.matchId, targetStatus, feedback);
-          if (clearsWvl) await updateMatchFollowUpDate(match.matchId, null);
+          kit.markWritten(dialog);
+          const missing = [];
+          if (clearsWvl) {
+            try {
+              await updateMatchFollowUpDate(match.matchId, null);
+            } catch (error) {
+              missing.push(`WVL nicht gelöscht (${error.message})`);
+            }
+          }
           if (declinesInterviews) {
             setStatus(`Lehne Terminvorschläge ${index + 1} von ${selection.length} ab …`, "busy");
-            declinedInterviews += await declineOpenInterviewsForMatch(match.matchId);
+            try {
+              await declineOpenInterviewsForMatch(match.matchId, () => {
+                declinedInterviews += 1;
+              });
+            } catch (error) {
+              missing.push(`Terminvorschläge nicht alle abgelehnt (${error.message})`);
+            }
           }
+          if (missing.length) partial.push(`${match.label}: Status gesetzt, ${missing.join(", ")}`);
         }
       });
-      if (result.changed > 0) dialog.dataset.needsReload = "true";
       kit.report(result, {
+        partial,
         restText: "Die übrigen Matches blieben unverändert.",
         successText: (count) => `${count} ${team}-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${declinesInterviews ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : ""}`
-      });
+      }, dialog);
       kit.finish(dialog);
     }
     async function applyWvl(dialog, matches) {
+      const setStatus = kit.statusFor(dialog);
       const selection = selectedMatches(dialog, matches);
-      const isoDate = dialog.querySelector('[name="date"]').value;
+      const input = dialog.querySelector('[name="date"]');
+      const { iso: isoDate, date, error } = checkFollowUpDate(input.value, { badInput: Boolean(input.validity?.badInput) });
       const clearing = !isoDate;
-      const date = clearing ? null : parseIsoDate(isoDate);
       if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
-      if (!clearing && !date) return setStatus("Bitte ein gültiges Datum auswählen oder das Feld leer lassen.", "error");
+      if (error) return setStatus(error, "error");
       const formatted = date ? `${date.day}.${date.month}.${date.year}` : "";
       const confirmText = clearing ? `Bei ${scopeText(selection)} die ${team} WVL entfernen?` : `${scopeText(selection)} auf ${formatted} setzen?`;
-      if (!window.confirm(confirmText)) return;
+      if (!window.confirm(`${confirmText}${hiddenSelectionText(dialog)}`)) return;
       const result = await kit.runQueue(dialog, selection, {
         progress: (current, total) => `Ändere ${current} von ${total} …`,
-        update: (match) => updateMatchFollowUpDate(match.matchId, isoDate || null)
+        update: (match) => updateMatchFollowUpDate(match.matchId, isoDate || null),
+        reload: true
       });
-      if (result.changed > 0) dialog.dataset.needsReload = "true";
       kit.report(result, {
         restText: "Die übrigen Matches blieben unverändert.",
         successText: (count) => clearing ? `${count} ${team}-WVL-Daten erfolgreich entfernt.` : `${count} ${team}-WVL-Daten erfolgreich auf ${formatted} gesetzt.`
-      });
+      }, dialog);
       kit.finish(dialog);
+    }
+    let opening = false;
+    async function openWhenListReady(render) {
+      if (opening) return;
+      opening = true;
+      try {
+        if (listIsLoading()) {
+          const ready = await waitFor(() => !listIsLoading(), 3e3, 100);
+          if (!ready) return window.alert("Die Liste lädt noch. Bitte warten, bis sie vollständig geladen ist, und dann erneut klicken.");
+        }
+        if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
+        render();
+      } finally {
+        opening = false;
+      }
     }
     function installButton(column, id, label2, title, render) {
       kit.installButton(document.querySelector(`th.column-${column}`), id, label2, title, () => {
-        if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
-        render();
+        openWhenListReady(render);
       });
     }
     function installHeaderButtons() {
@@ -5438,7 +5589,7 @@
       runtime.setTimeout(() => {
         scheduled = false;
         if (!isTargetPage3()) {
-          document.getElementById(IDS4.dialog)?.remove();
+          kit.discard();
           return;
         }
         installHeaderButtons();
@@ -5633,9 +5784,8 @@
           const queue = selectedCandidates(dialog, candidates);
           if (!queue.length) return setStatus("Bitte mindestens einen Kandidaten anhaken.", "error");
           if (!target) return setStatus("Bitte einen Status auswählen.", "error");
-          if (!window.confirm(`${queue.length} Kandidaten auf Status „${target.label}“ setzen?`)) return;
-          const result = await kit.runQueue(dialog, queue, { ...runOptions("Status"), update: (candidate) => updateStatus(candidate, target) });
-          if (result.changed > 0) dialog.dataset.needsReload = "true";
+          if (!window.confirm(`${queue.length} Kandidaten auf Status „${target.label}“ setzen?${hiddenSelectionText(dialog)}`)) return;
+          const result = await kit.runQueue(dialog, queue, { ...runOptions("Status"), reload: true, update: (candidate) => updateStatus(candidate, target) });
           kit.report(result, { restText, successText: (changed) => `${changed} Kandidaten erfolgreich auf „${target.label}“ gesetzt.` });
           kit.finish(dialog);
         }
@@ -5650,14 +5800,15 @@
         applyLabel: "WVL entfernen",
         focusSelector: '[name="date"]',
         onApply: async (dialogRef, candidates) => {
-          const date = dialogRef.querySelector('[name="date"]').value || null;
+          const input = dialogRef.querySelector('[name="date"]');
+          const { iso: date, error } = checkFollowUpDate(input.value, { badInput: Boolean(input.validity?.badInput) });
           const queue = selectedCandidates(dialogRef, candidates);
           if (!queue.length) return setStatus("Bitte mindestens einen Kandidaten anhaken.", "error");
+          if (error) return setStatus(error, "error");
           const formatted = date ? date.split("-").reverse().join(".") : "";
           const question = date ? `Kandidat-WVL von ${queue.length} Kandidaten auf ${formatted} setzen?` : `Kandidat-WVL von ${queue.length} Kandidaten entfernen?`;
-          if (!window.confirm(question)) return;
-          const result = await kit.runQueue(dialogRef, queue, { ...runOptions("WVL"), update: (candidate) => updateFollowUp(candidate, date) });
-          if (result.changed > 0) dialogRef.dataset.needsReload = "true";
+          if (!window.confirm(`${question}${hiddenSelectionText(dialogRef)}`)) return;
+          const result = await kit.runQueue(dialogRef, queue, { ...runOptions("WVL"), reload: true, update: (candidate) => updateFollowUp(candidate, date) });
           kit.report(result, {
             restText,
             successText: (changed) => date ? `${changed} Kandidat-WVL erfolgreich auf ${formatted} gesetzt.` : `${changed} Kandidat-WVL erfolgreich entfernt.`
@@ -5669,7 +5820,7 @@
       const dateInput = dialog.querySelector('[name="date"]');
       const applyButton = dialog.querySelector('[data-action="apply"]');
       dateInput.addEventListener("input", () => {
-        applyButton.textContent = dateInput.value ? "Datum anwenden" : "WVL entfernen";
+        applyButton.textContent = dateInput.value || dateInput.validity?.badInput ? "Datum anwenden" : "WVL entfernen";
       });
     }
     function installHeaderButtons() {
@@ -5684,7 +5835,7 @@
       runtime.setTimeout(() => {
         scheduled = false;
         if (!isTargetPage2()) {
-          if (!kit.state.running) document.getElementById(IDS2.dialog)?.remove();
+          kit.discard();
           return;
         }
         installHeaderButtons();

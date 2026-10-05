@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.108
+// @version      1.5.109
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -473,13 +473,28 @@
         setValue(fingerprintStorageKey, fingerprint);
       }
     }
+    function getAuth() {
+      try {
+        const storedBearer = normaliseBearer(getValue(bearerStorageKey, ""));
+        const storedFingerprint = String(getValue(fingerprintStorageKey, "") || "").trim();
+        if (storedBearer) bearer = storedBearer;
+        if (storedFingerprint) fingerprint = storedFingerprint;
+      } catch {
+      }
+      return { bearer, fingerprint };
+    }
     return {
       capture,
-      getAuth: () => ({ bearer, fingerprint })
+      getAuth
     };
   }
   function isGraphqlUrl(url) {
-    return String(url || "").includes(GRAPHQL_URL_PART);
+    try {
+      const parsed = new URL(String(url || ""), "https://invalid.local/");
+      return `${parsed.host}${parsed.pathname}`.startsWith(GRAPHQL_URL_PART);
+    } catch {
+      return false;
+    }
   }
   function installGraphqlAuthCapture({ pageWindow, authStore, installedFlag }) {
     if (!pageWindow || pageWindow[installedFlag]) return;
@@ -513,7 +528,8 @@
 
   // ../../shared/js/werkia-graphql/client.js
   var GRAPHQL_URL = "https://api.werkia.de/graphql";
-  function createGraphqlRequest({ request, getAuth }) {
+  var GRAPHQL_TIMEOUT_MS = 3e4;
+  function createGraphqlRequest({ request, getAuth, timeoutMs = GRAPHQL_TIMEOUT_MS }) {
     return (query, variables) => new Promise((resolve, reject) => {
       const { bearer, fingerprint } = getAuth();
       if (!bearer || !fingerprint) {
@@ -531,12 +547,13 @@
           Referer: "https://admin.werkia.de/"
         },
         data: JSON.stringify({ query, variables }),
+        timeout: timeoutMs,
         onload(response) {
           let payload;
           try {
             payload = JSON.parse(response.responseText);
           } catch {
-            reject(new Error(`GraphQL-Antwort ist kein JSON (HTTP ${response.status}).`));
+            reject(new Error(response.status !== 200 ? `GraphQL HTTP ${response.status}: Antwort ist kein JSON.` : `GraphQL-Antwort ist kein JSON (HTTP ${response.status}).`));
             return;
           }
           if (response.status !== 200 || payload.errors) {
@@ -1596,13 +1613,14 @@
       steps: [
         "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
         "„Alle ändern“ klicken.",
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         "Ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
       ],
       notes: [
         "Geändert werden nur die Zeilen, die gerade in der Tabelle geladen sind, keine weiteren Seiten.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "„Lauf stoppen“ oder Escape bricht nach dem aktuellen Match ab. Bereits geänderte Matches bleiben geändert.",
+        "Das Jahr muss zwischen dem Vorjahr und fünf Jahren voraus liegen. Ein halb ausgefülltes Datum wird abgelehnt, statt die WVL zu entfernen.",
         "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte.",
         ...extraNotes
       ]
@@ -1617,7 +1635,7 @@
       kind: "write",
       summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         `Den neuen ${team} Status wählen. „Leer“ entfernt den Status. Bei „Out“ ist ein Grund Pflicht${freeTextReason ? ", bei „Anderes“ zusätzlich ein eigener Text" : ""}.`,
         "Die Rückfrage prüfen und bestätigen."
       ],
@@ -1625,7 +1643,8 @@
         `Bei „Hired“ und „Out“ wird zusätzlich die ${team} WVL gelöscht.`,
         declinesInterviews ? "Bei „Out“ werden außerdem alle offenen Terminvorschläge dieser Matches abgelehnt." : "",
         "Zur Auswahl stehen nur die aktuell sichtbaren Zeilen.",
-        "„Lauf stoppen“ bricht nach der aktuellen Zeile ab. Bereits geänderte Matches bleiben geändert.",
+        "„Lauf stoppen“ oder Escape bricht nach dem aktuellen Match ab; dessen WVL und Terminvorschläge werden noch fertig bearbeitet. Bereits geänderte Matches bleiben geändert.",
+        "Ist der Status gesetzt, aber das Löschen der WVL oder das Ablehnen der Termine scheitert, nennt das Ergebnis das Match als „nur teilweise“ geändert.",
         "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte.",
         ...extraNotes
       ].filter(Boolean)
@@ -1640,7 +1659,7 @@
       kind: "write",
       summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
       ],
@@ -1660,7 +1679,7 @@
       kind: "write",
       summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
         "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
       ],
@@ -1898,7 +1917,8 @@
         "Den Grund wählen und die Rückfrage bestätigen."
       ],
       notes: [
-        "Gesetzt wird KAM Status „Out“ mit Grund. Außerdem wird die KAM WVL gelöscht und offene Terminvorschläge werden abgelehnt.",
+        "Gesetzt wird KAM Status „Out“ mit Grund. Außerdem wird die KAM WVL gelöscht und offene Terminvorschläge werden abgelehnt. Klappt einer dieser Schritte nicht, nennt der Dialog ihn einzeln, etwa „WVL nicht gelöscht“. Das holst du dann im Adminpanel nach.",
+        "Hat ein Kandidat mehrere Matches beim selben Arbeitgeber, entscheidet der Vakanztitel aus dem Betreff („✓ Vakanz“). Ist kein Treffer eindeutig, ist nichts vorausgewählt und du wählst selbst.",
         "Lässt sich aus der Mail kein Arbeitgeber ablesen, trägst du ihn im Dialog selbst ein.",
         "Gleichnamige Kandidaten (etwa bei RVM nur mit Vornamen) unterscheidet die Toolbox über PLZ, Deutschkenntnisse und Ausbildung aus dem Kurzprofil. Treffer sind mit „✓ PLZ“, „✓ Deutsch“, „✓ Ausbildung“ markiert. „Alle zeigen“ hebt die Eingrenzung auf.",
         "Dafür braucht es eine Anmeldung am Adminpanel. Fehlt sie, öffnet sich kurz ein Fenster auf admin.werkia.de."
@@ -1934,9 +1954,10 @@
     return `
     <input type="search" class="wkw-search" data-search placeholder="${escapeHtml(placeholder)}" autocomplete="off">
     <div class="wkw-list">
-      <label class="wkw-all"><input type="checkbox" data-all checked> ${escapeHtml(allLabel)}</label>
+      <label class="wkw-all"><input type="checkbox" data-all checked> <span data-all-label data-default="${escapeHtml(allLabel)}">${escapeHtml(allLabel)}</span></label>
       ${body}
-    </div>`;
+    </div>
+    <div class="wkw-count" data-count>${items.length} von ${items.length} ausgewählt</div>`;
   }
   var normalize = (text) => String(text || "").toLocaleLowerCase("de").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim();
   function syncBox(box, children) {
@@ -1944,8 +1965,11 @@
     box.checked = checked === children.length && checked > 0;
     box.indeterminate = checked > 0 && checked < children.length;
   }
+  var isHiddenItem = (item) => Boolean(item.closest("label")?.hidden);
   function wireChecklist(root) {
     const all = root.querySelector("[data-all]");
+    const allLabel = root.querySelector("[data-all-label]");
+    const count = root.querySelector("[data-count]");
     const search = root.querySelector("[data-search]");
     const items = [...root.querySelectorAll('input[name="item"]')];
     const groups = [...root.querySelectorAll(".wkw-group")].map((group) => ({
@@ -1954,49 +1978,85 @@
       label: normalize(group.querySelector(".wkw-group-head")?.textContent.replace(/\s*\(\d+\)\s*$/, "")),
       items: [...group.querySelectorAll('input[name="item"]')]
     }));
-    const shown = (list) => list.filter((item) => !item.closest("label").hidden);
+    let pristine = true;
+    const shown = (list) => list.filter((item) => !isHiddenItem(item));
+    const query = () => normalize(search?.value).replace(/\s+/g, " ");
     const sync = () => {
       groups.forEach((group) => syncBox(group.box, shown(group.items)));
-      syncBox(all, shown(items));
+      const visible = shown(items);
+      syncBox(all, visible);
+      if (allLabel) {
+        allLabel.textContent = query() ? `Alle ${visible.length} Suchtreffer` : allLabel.dataset.default;
+      }
+      if (count) {
+        const checked = items.filter((item) => item.checked).length;
+        const hidden = items.filter((item) => item.checked && isHiddenItem(item)).length;
+        count.textContent = `${checked} von ${items.length} ausgewählt${hidden ? `, davon ${hidden} durch die Suche ausgeblendet` : ""}`;
+      }
+    };
+    const touch = () => {
+      pristine = false;
     };
     const applyFilter = () => {
-      const query = normalize(search?.value).replace(/\s+/g, " ");
+      const text = query();
       const groupOf = new Map(groups.flatMap((group) => group.items.map((item) => [item, group])));
       items.forEach((item) => {
         const group = groupOf.get(item);
-        const text = `${group ? `${group.label} ` : ""}${normalize(item.closest("label").textContent)}`;
-        item.closest("label").hidden = !text.replace(/\s+/g, " ").includes(query);
+        const haystack = `${group ? `${group.label} ` : ""}${normalize(item.closest("label").textContent)}`;
+        item.closest("label").hidden = !haystack.replace(/\s+/g, " ").includes(text);
       });
       groups.forEach((group) => {
         group.element.hidden = shown(group.items).length === 0;
       });
+      if (pristine) items.forEach((item) => {
+        item.checked = !text;
+      });
       sync();
     };
     all.addEventListener("change", () => {
+      touch();
       shown(items).forEach((item) => {
         item.checked = all.checked;
       });
       sync();
     });
     groups.forEach((group) => group.box.addEventListener("change", () => {
+      touch();
       shown(group.items).forEach((item) => {
         item.checked = group.box.checked;
       });
       sync();
     }));
-    items.forEach((item) => item.addEventListener("change", sync));
+    items.forEach((item) => item.addEventListener("change", () => {
+      touch();
+      sync();
+    }));
     if (search) {
       search.addEventListener("input", applyFilter);
       search.addEventListener("keydown", (event) => {
         if (event.key === "Enter") event.preventDefault();
+        if (event.key === "Escape" && search.value) {
+          event.preventDefault();
+          event.stopPropagation();
+          search.value = "";
+          applyFilter();
+        }
       });
     }
+    sync();
   }
   function checkedValues(root) {
     return new Set([...root.querySelectorAll('input[name="item"]:checked')].map((box) => box.value));
   }
+  function hiddenCheckedCount(root) {
+    return [...root.querySelectorAll('input[name="item"]:checked')].filter(isHiddenItem).length;
+  }
+  function hiddenSelectionText(root) {
+    const hidden = hiddenCheckedCount(root);
+    return hidden ? ` Davon ${hidden === 1 ? "ist 1" : `sind ${hidden}`} gerade durch die Suche ausgeblendet.` : "";
+  }
   function createBulkDialogKit({ ids, buttonIds = [], extraCss = "", stopNoun = "Zeile", reloadMissingText }) {
-    const state = { running: false, cancelRequested: false };
+    const state = { running: false, cancelRequested: false, runDialog: null, openDialog: null };
     function injectStyle() {
       if (document.getElementById(ids.style)) return;
       const style = document.createElement("style");
@@ -2019,6 +2079,7 @@
       ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
       ${dialog} .wkw-list label.wkw-group-head { font-weight: 700; margin-top: 4px; }
       ${dialog} .wkw-group label.wkw-item { padding-left: 22px; }
+      ${dialog} .wkw-count { margin-top: -8px; color: #555; font-size: 13px; }
       ${dialog} .wkw-note { padding: 10px; border-radius: 5px; background: #f5f5f5; color: #444; }
       ${dialog} .wkw-actions { display: flex; justify-content: flex-end; gap: 8px; }
       ${dialog} button { padding: 8px 13px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; font-weight: 600; }
@@ -2031,12 +2092,13 @@
     `;
       document.head.appendChild(style);
     }
-    function setStatus(text, tone = "") {
-      const status = document.getElementById(ids.status);
+    function setStatus(text, tone = "", dialog = state.openDialog) {
+      const status = dialog?.querySelector(`#${ids.status}`);
       if (!status) return;
       status.textContent = text;
       status.dataset.tone = tone;
     }
+    const statusFor = (dialog) => (text, tone = "") => setStatus(text, tone, dialog);
     function setRunningControls(dialog, isRunning) {
       dialog.querySelectorAll('select, input, [data-action="apply"]').forEach((element) => {
         element.disabled = isRunning;
@@ -2051,11 +2113,16 @@
     function begin(dialog) {
       state.running = true;
       state.cancelRequested = false;
+      state.runDialog = dialog;
       dialog.querySelector('[data-action="apply"]').dataset.completed = "false";
       setRunningControls(dialog, true);
     }
     function end() {
       state.running = false;
+      const dialog = state.runDialog;
+      if (dialog && !dialog.open && dialog.dataset.needsReload === "true" && dialog.dataset.reloaded !== "true") {
+        handleDialogClose(dialog);
+      }
     }
     function abort(dialog) {
       state.running = false;
@@ -2069,6 +2136,10 @@
       dialog.querySelector('[data-action="close"]').hidden = true;
       applyButton.focus();
     }
+    const isLive = (dialog) => Boolean(dialog?.isConnected && dialog.open);
+    function markWritten(dialog) {
+      dialog.dataset.needsReload = "true";
+    }
     function handleCloseOrCancel(dialog) {
       if (!state.running) {
         dialog.close();
@@ -2080,15 +2151,24 @@
         stopButton.disabled = true;
         stopButton.textContent = "Wird gestoppt …";
       }
-      setStatus(`Stopp angefordert. Die aktuelle ${stopNoun} wird noch beendet; weitere bleiben unverändert.`, "busy");
+      setStatus(`Stopp angefordert. Die aktuelle ${stopNoun} wird noch beendet; weitere bleiben unverändert.`, "busy", dialog);
     }
     function handleDialogClose(dialog) {
-      if (dialog.dataset.needsReload === "true") {
+      const ownRun = state.running && state.runDialog === dialog;
+      if (dialog.dataset.needsReload === "true" && !ownRun) {
+        dialog.dataset.reloaded = "true";
         dialog.remove();
         if (!reloadAdminPanel()) window.alert(reloadMissingText || 'Änderung gespeichert. Der Adminpanel-Button "Neu laden" wurde nicht gefunden, bitte die Seite neu laden.');
         return;
       }
-      if (!state.running) dialog.remove();
+      if (!ownRun) dialog.remove();
+    }
+    function discard() {
+      if (state.running) state.cancelRequested = true;
+      const dialog = document.getElementById(ids.dialog);
+      if (!dialog) return;
+      if (dialog.open) dialog.close();
+      dialog.remove();
     }
     function open({ title, tipHtml = "", checklist = null, fieldsHtml = "", note = "", initialStatus = "", applyLabel, onApply, focusSelector }) {
       document.getElementById(ids.dialog)?.remove();
@@ -2108,6 +2188,7 @@
         </div>
       </form>`;
       document.body.appendChild(dialog);
+      state.openDialog = dialog;
       if (checklist) wireChecklist(dialog);
       dialog.querySelector('[data-action="close"]').addEventListener("click", () => handleCloseOrCancel(dialog));
       dialog.querySelector('[data-action="apply"]').addEventListener("click", (event) => {
@@ -2115,23 +2196,33 @@
           dialog.close();
           return;
         }
-        if (!state.running) onApply(dialog);
+        if (state.running) {
+          if (state.runDialog !== dialog) setStatus("Ein vorheriger Lauf wird noch beendet. Bitte kurz warten.", "busy", dialog);
+          return;
+        }
+        onApply(dialog);
+      });
+      dialog.addEventListener("cancel", (event) => {
+        if (!state.running || state.runDialog !== dialog) return;
+        event.preventDefault();
+        handleCloseOrCancel(dialog);
       });
       dialog.addEventListener("close", () => handleDialogClose(dialog));
       dialog.showModal();
       dialog.querySelector(focusSelector || '[data-action="apply"]')?.focus();
       return dialog;
     }
-    async function runQueue(dialog, queue, { progress, label = (item) => item.label, update }) {
+    async function runQueue(dialog, queue, { progress, label = (item) => item.label, update, reload = false }) {
       begin(dialog);
       let changed = 0;
       const failures = [];
       for (let index = 0; index < queue.length; index += 1) {
         if (state.cancelRequested) break;
-        setStatus(progress(index + 1, queue.length), "busy");
+        setStatus(progress(index + 1, queue.length), "busy", dialog);
         try {
           await update(queue[index], index);
           changed += 1;
+          if (reload) markWritten(dialog);
         } catch (error) {
           failures.push(`${label(queue[index], index)}: ${error.message}`);
         }
@@ -2139,13 +2230,14 @@
       end();
       return { changed, failures };
     }
-    function report({ changed, failures }, { doneWord = "geändert", restText = "Die übrigen blieben unverändert.", successText }) {
+    function report({ changed, failures }, { doneWord = "geändert", restText = "Die übrigen blieben unverändert.", successText, partial = [] }, dialog = state.runDialog) {
+      const partialText = partial.length ? ` Davon ${partial.length} nur teilweise: ${partial.slice(0, 3).join(" | ")}.` : "";
       if (state.cancelRequested) {
-        setStatus(`Lauf gestoppt: ${changed} ${doneWord}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}. ${restText}`, "busy");
+        setStatus(`Lauf gestoppt: ${changed} ${doneWord}${failures.length ? `, ${failures.length} fehlgeschlagen` : ""}.${partialText} ${restText}`, "busy", dialog);
       } else if (failures.length) {
-        setStatus(`${changed} ${doneWord}, ${failures.length} fehlgeschlagen. ${failures.slice(0, 3).join(" | ")}`, "error");
+        setStatus(`${changed} ${doneWord}, ${failures.length} fehlgeschlagen.${partialText} ${failures.slice(0, 3).join(" | ")}`, "error", dialog);
       } else {
-        setStatus(successText(changed), "ok");
+        setStatus(`${successText(changed)}${partialText}`, partial.length ? "error" : "ok", dialog);
       }
     }
     function installButton(header, id, label, title, onClick) {
@@ -2167,11 +2259,15 @@
       state,
       injectStyle,
       setStatus,
+      statusFor,
       setRunningControls,
       begin,
       end,
       abort,
       finish,
+      isLive,
+      markWritten,
+      discard,
       open,
       runQueue,
       report,
@@ -2250,6 +2346,23 @@
     if (!match) return null;
     return { year: match[1], month: match[2], day: match[3] };
   }
+  var FOLLOW_UP_YEARS_BACK = 1;
+  var FOLLOW_UP_YEARS_AHEAD = 5;
+  function checkFollowUpDate(value, { badInput = false, now = /* @__PURE__ */ new Date() } = {}) {
+    if (badInput) {
+      return { iso: null, date: null, error: "Das Datum ist unvollständig. Bitte vollständig ausfüllen oder das Feld ganz leeren." };
+    }
+    if (!value) return { iso: null, date: null, error: null };
+    const date = parseIsoDate(value);
+    if (!date) return { iso: null, date: null, error: "Bitte ein gültiges Datum auswählen oder das Feld leer lassen." };
+    const year = Number(date.year);
+    const first = now.getFullYear() - FOLLOW_UP_YEARS_BACK;
+    const last = now.getFullYear() + FOLLOW_UP_YEARS_AHEAD;
+    if (year < first || year > last) {
+      return { iso: null, date: null, error: `Das Jahr ${year} ist nicht plausibel. Erlaubt sind ${first} bis ${last}.` };
+    }
+    return { iso: value, date, error: null };
+  }
   function statusClearsWvl(statusValue) {
     return statusValue === "hired" || statusValue === "out";
   }
@@ -2309,6 +2422,8 @@
   var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
   var CANDIDATE_LINK_SELECTOR = 'a[href*="#/Candidate/"]';
   var JOB_POSITION_LINK_SELECTOR = 'a[href*="#/JobPosition/"]';
+  var MATCH_LINK_SELECTOR = 'a[href*="#/Match/"]';
+  var LOADING_SELECTOR = '.MuiLinearProgress-root, header [role="progressbar"], header .MuiCircularProgress-root';
   function executeBulkMatchActions(runtime, sourcePath, config) {
     runtime.registerSource(sourcePath);
     const {
@@ -2326,7 +2441,6 @@
       helpTip = {}
     } = config;
     const tip = (key) => helpTip[key]?.() || "";
-    const WVL_CELL_SELECTOR3 = `td.column-${columns.followUp}`;
     const INTERVIEW_CELL_SELECTOR2 = `td.column-${columns.interview}`;
     const STATUS_MUTATION = buildStatusMutation(fields.status);
     const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
@@ -2360,7 +2474,15 @@
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     }
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(WVL_CELL_SELECTOR3));
+      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(MATCH_LINK_SELECTOR) && !row.querySelector("tr"));
+    }
+    function shownOnPage(element) {
+      if (!element.isConnected || element.closest("[hidden]")) return false;
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden";
+    }
+    function listIsLoading() {
+      return [...document.querySelectorAll(LOADING_SELECTOR)].some((element) => !element.closest('dialog, [role="dialog"], [id^="werkia"]') && shownOnPage(element));
     }
     function employerFromRow(row) {
       const link = row.querySelector(EMPLOYER_LINK_SELECTOR);
@@ -2384,7 +2506,7 @@
       return label.length > 90 ? `${label.slice(0, 89)}…` : label;
     }
     function matchIdFromRow(row) {
-      const link = row.querySelector('a[href*="#/Match/"]');
+      const link = row.querySelector(MATCH_LINK_SELECTOR);
       return link?.href.match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
     }
     const kit = createBulkDialogKit({
@@ -2396,7 +2518,6 @@
       #${IDS4.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
       #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }`
     });
-    const { setStatus } = kit;
     function visibleMatches() {
       const seen = /* @__PURE__ */ new Set();
       return getRows().map((row, index) => {
@@ -2427,7 +2548,7 @@
       if (employers.size === 1) return `${selection.length} ausgewählte Matches von „${selection[0].employer.name}“`;
       return `${selection.length} ausgewählte Matches von ${employers.size} Arbeitgebern`;
     }
-    const SELECTION_HINT = "Alle sichtbaren Matches sind angehakt. Ein Haken am Arbeitgeber wählt alle seine Matches ab oder an.";
+    const SELECTION_HINT = "Alle sichtbaren Matches sind angehakt. Ein Haken am Arbeitgeber wählt alle seine Matches ab oder an. Wer zuerst sucht, startet ohne Haken und wählt aus den Treffern.";
     function renderWvlDialog() {
       const matches = visibleMatches();
       const dialog = kit.open({
@@ -2444,7 +2565,7 @@
       const dateInput = dialog.querySelector('input[name="date"]');
       const applyButton = dialog.querySelector('[data-action="apply"]');
       dateInput.addEventListener("input", () => {
-        applyButton.textContent = dateInput.value ? "Datum anwenden" : "Datum entfernen";
+        applyButton.textContent = dateInput.value || dateInput.validity?.badInput ? "Datum anwenden" : "Datum entfernen";
       });
     }
     function renderStatusDialog() {
@@ -2599,16 +2720,13 @@
       }
       return interviewIds;
     }
-    async function declineOpenInterviewsForMatch(matchId) {
-      const request = getRequest();
+    async function declineOpenInterviewsForMatch(matchId, onDeclined = () => {
+    }) {
       const interviewIds = await openInterviewIdsForMatch(matchId);
-      let declined = 0;
       for (const interviewId of interviewIds) {
-        if (kit.state.cancelRequested) break;
         await declineInterview(matchId, interviewId);
-        declined += 1;
+        onDeclined();
       }
-      return declined;
     }
     async function declineInterview(matchId, interviewId) {
       const request = getRequest();
@@ -2684,6 +2802,7 @@
       }
     };
     async function applyInterviewAction(dialog, matches, action) {
+      const setStatus = kit.statusFor(dialog);
       const selection = selectedMatches(dialog, matches);
       if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
       kit.begin(dialog);
@@ -2703,6 +2822,7 @@
         }
       }
       kit.end();
+      if (!kit.isLive(dialog)) return;
       if (kit.state.cancelRequested) {
         setStatus(`Lauf gestoppt, bevor etwas ${action.done} wurde.`, "busy");
         return kit.finish(dialog);
@@ -2713,7 +2833,7 @@
       }
       const matchCount = new Set(queue.map((item) => item.matchId)).size;
       const failureText = failures.length ? ` (${failures.length} Matches konnten nicht geladen werden und bleiben unverändert.)` : "";
-      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches (${scopeText(selection)}) ${action.verb}?${failureText}`)) {
+      if (!window.confirm(`${queue.length} ${action.noun} aus ${matchCount} Matches (${scopeText(selection)}) ${action.verb}?${failureText}${hiddenSelectionText(dialog)}`)) {
         kit.abort(dialog);
         return setStatus(`Nichts ${action.done}.`, "");
       }
@@ -2732,10 +2852,11 @@
         doneWord: action.done,
         restText: "Die übrigen Vorschläge blieben unverändert.",
         successText: (count) => `${count} ${action.noun} erfolgreich ${action.done}.`
-      });
+      }, dialog);
       kit.finish(dialog);
     }
     async function applyStatus(dialog, matches) {
+      const setStatus = kit.statusFor(dialog);
       const selection = selectedMatches(dialog, matches);
       const targetValue = dialog.querySelector('[name="status"]').value;
       const targetStatus = statusOptions.find((status) => status.value === targetValue);
@@ -2757,52 +2878,83 @@
       const interviewText = declinesInterviews ? " Offene Terminvorschläge werden ebenfalls abgelehnt." : "";
       const reasonLabel = isOut ? outFeedback.freeText ? outFeedbackText : outFeedback.label : "";
       const reasonText = isOut ? ` Grund: „${reasonLabel}“.` : "";
-      if (!window.confirm(`${scopeText(selection)} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}`)) return;
+      if (!window.confirm(`${scopeText(selection)} auf ${team} Status „${targetStatus.label}“ setzen?${reasonText}${cleanupText}${interviewText}${hiddenSelectionText(dialog)}`)) return;
       let declinedInterviews = 0;
+      const partial = [];
       const feedback = isOut ? resolveOutFeedback(outFeedback, outFeedbackText) : null;
       const result = await kit.runQueue(dialog, selection, {
         progress: (current, total) => `Ändere Status ${current} von ${total} …`,
         update: async (match, index) => {
           await updateMatchStatus(match.matchId, targetStatus, feedback);
-          if (clearsWvl) await updateMatchFollowUpDate(match.matchId, null);
+          kit.markWritten(dialog);
+          const missing = [];
+          if (clearsWvl) {
+            try {
+              await updateMatchFollowUpDate(match.matchId, null);
+            } catch (error) {
+              missing.push(`WVL nicht gelöscht (${error.message})`);
+            }
+          }
           if (declinesInterviews) {
             setStatus(`Lehne Terminvorschläge ${index + 1} von ${selection.length} ab …`, "busy");
-            declinedInterviews += await declineOpenInterviewsForMatch(match.matchId);
+            try {
+              await declineOpenInterviewsForMatch(match.matchId, () => {
+                declinedInterviews += 1;
+              });
+            } catch (error) {
+              missing.push(`Terminvorschläge nicht alle abgelehnt (${error.message})`);
+            }
           }
+          if (missing.length) partial.push(`${match.label}: Status gesetzt, ${missing.join(", ")}`);
         }
       });
-      if (result.changed > 0) dialog.dataset.needsReload = "true";
       kit.report(result, {
+        partial,
         restText: "Die übrigen Matches blieben unverändert.",
         successText: (count) => `${count} ${team}-Status-Felder erfolgreich auf „${targetStatus.label}“ gesetzt.${declinesInterviews ? ` ${declinedInterviews} Terminvorschläge abgelehnt.` : ""}`
-      });
+      }, dialog);
       kit.finish(dialog);
     }
     async function applyWvl(dialog, matches) {
+      const setStatus = kit.statusFor(dialog);
       const selection = selectedMatches(dialog, matches);
-      const isoDate = dialog.querySelector('[name="date"]').value;
+      const input = dialog.querySelector('[name="date"]');
+      const { iso: isoDate, date, error } = checkFollowUpDate(input.value, { badInput: Boolean(input.validity?.badInput) });
       const clearing = !isoDate;
-      const date = clearing ? null : parseIsoDate(isoDate);
       if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
-      if (!clearing && !date) return setStatus("Bitte ein gültiges Datum auswählen oder das Feld leer lassen.", "error");
+      if (error) return setStatus(error, "error");
       const formatted = date ? `${date.day}.${date.month}.${date.year}` : "";
       const confirmText = clearing ? `Bei ${scopeText(selection)} die ${team} WVL entfernen?` : `${scopeText(selection)} auf ${formatted} setzen?`;
-      if (!window.confirm(confirmText)) return;
+      if (!window.confirm(`${confirmText}${hiddenSelectionText(dialog)}`)) return;
       const result = await kit.runQueue(dialog, selection, {
         progress: (current, total) => `Ändere ${current} von ${total} …`,
-        update: (match) => updateMatchFollowUpDate(match.matchId, isoDate || null)
+        update: (match) => updateMatchFollowUpDate(match.matchId, isoDate || null),
+        reload: true
       });
-      if (result.changed > 0) dialog.dataset.needsReload = "true";
       kit.report(result, {
         restText: "Die übrigen Matches blieben unverändert.",
         successText: (count) => clearing ? `${count} ${team}-WVL-Daten erfolgreich entfernt.` : `${count} ${team}-WVL-Daten erfolgreich auf ${formatted} gesetzt.`
-      });
+      }, dialog);
       kit.finish(dialog);
+    }
+    let opening = false;
+    async function openWhenListReady(render) {
+      if (opening) return;
+      opening = true;
+      try {
+        if (listIsLoading()) {
+          const ready = await waitFor(() => !listIsLoading(), 3e3, 100);
+          if (!ready) return window.alert("Die Liste lädt noch. Bitte warten, bis sie vollständig geladen ist, und dann erneut klicken.");
+        }
+        if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
+        render();
+      } finally {
+        opening = false;
+      }
     }
     function installButton(column, id, label, title, render) {
       kit.installButton(document.querySelector(`th.column-${column}`), id, label, title, () => {
-        if (!getRows().length) return window.alert("Keine sichtbaren Match-Zeilen gefunden.");
-        render();
+        openWhenListReady(render);
       });
     }
     function installHeaderButtons() {
@@ -2820,7 +2972,7 @@
       runtime.setTimeout(() => {
         scheduled = false;
         if (!isTargetPage9()) {
-          document.getElementById(IDS4.dialog)?.remove();
+          kit.discard();
           return;
         }
         installHeaderButtons();
@@ -3316,7 +3468,7 @@
   // src/features/kam-suite/cem-status-line.js
   var ROW_SELECTOR4 = "tbody tr.RaDataTable-row";
   var KAM_STATUS_CELL_SELECTOR = "td.column-kamStatus";
-  var MATCH_LINK_SELECTOR = 'a[href*="#/Match/"]';
+  var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
   var LINE_CLASS = "werkia-kam-cem-line";
   var STYLE_ID3 = "werkia-kam-cem-line-style";
   var REFRESH_INTERVAL_MS3 = 5 * 60 * 1e3;
@@ -3344,7 +3496,7 @@
       return [...document.querySelectorAll(ROW_SELECTOR4)].filter((row) => row.querySelector(KAM_STATUS_CELL_SELECTOR));
     }
     function matchIdFromRow(row) {
-      return getMatchId(row.querySelector(MATCH_LINK_SELECTOR)?.getAttribute("href"));
+      return getMatchId(row.querySelector(MATCH_LINK_SELECTOR2)?.getAttribute("href"));
     }
     function ensureStyle() {
       if (document.getElementById(STYLE_ID3)) return;
@@ -3604,6 +3756,7 @@
     runtime.registerSource("kam/toolbox/src/features/kam-suite/vacancy-panel.js");
     const context = getQuestionnaireContext();
     const vacancyCache = /* @__PURE__ */ new Map();
+    let clickCounter = 0;
     const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     async function waitFor(find, timeoutMs = 3e3, intervalMs = 50) {
       const started = Date.now();
@@ -3694,15 +3847,16 @@
         color:#222; font-size:16px; align-items:flex-start; line-height:1.65;
       `;
         const iconColor = icon === "✓" ? "#16a34a" : "#888";
-        li.innerHTML = `<span style="color:${iconColor};flex-shrink:0;margin-top:2px;font-size:16px;">${icon}</span><span>${item}</span>`;
+        li.innerHTML = `<span style="color:${iconColor};flex-shrink:0;margin-top:2px;font-size:16px;">${escapeHtml(icon)}</span><span>${escapeHtml(item)}</span>`;
         ul.appendChild(li);
       });
       wrap2.appendChild(ul);
       return wrap2;
     }
-    function buildVacancyPanel(data, jobTitle, uuid) {
+    function buildVacancyPanel(data, jobTitle, uuid, token) {
       const panel = document.createElement("div");
       panel.id = PANEL_ID;
+      panel.dataset.werkiaClickToken = token;
       const { left, top, width, maxHeight } = getPanelGeometry();
       panel.style.cssText = `
       position:fixed;
@@ -3779,10 +3933,17 @@
     function removeVacancyPanel() {
       document.getElementById(PANEL_ID)?.remove();
     }
-    function showVacancyLoading(jobTitle) {
+    function ownsPanel(token) {
+      return document.getElementById(PANEL_ID)?.dataset.werkiaClickToken === token;
+    }
+    function removeOwnVacancyPanel(token) {
+      if (ownsPanel(token)) removeVacancyPanel();
+    }
+    function showVacancyLoading(jobTitle, token) {
       removeVacancyPanel();
       const panel = document.createElement("div");
       panel.id = PANEL_ID;
+      panel.dataset.werkiaClickToken = token;
       const { left, top, width, maxHeight } = getPanelGeometry();
       panel.style.cssText = `
       position:fixed; top:${top}px; left:${left}px; width:${width}px;
@@ -3791,7 +3952,7 @@
       padding:20px 24px; font-size:15px; color:#555;
       z-index:9999999; font-family:inherit; box-sizing:border-box;
     `;
-      panel.innerHTML = `<div style="font-weight:800;color:#1e3a8a;margin-bottom:10px;font-size:16px;">${jobTitle || "Stellenanzeige"}</div><div>⏳ Wird geladen...</div>`;
+      panel.innerHTML = `<div style="font-weight:800;color:#1e3a8a;margin-bottom:10px;font-size:16px;">${escapeHtml(jobTitle || "Stellenanzeige")}</div><div>⏳ Wird geladen...</div>`;
       document.body.appendChild(panel);
     }
     async function handleQuestionnaireButtonClick(event) {
@@ -3806,16 +3967,18 @@
       const jobTitleElement = row.querySelector(".column-jobPositionId a span, .column-jobPositionId a");
       const jobTitle = jobTitleElement?.textContent?.trim() || "";
       const routeKey = context.key || "";
-      showVacancyLoading(jobTitle);
+      const token = String(++clickCounter);
+      showVacancyLoading(jobTitle, token);
       const dataPromise = fetchVacancyInfo(uuid);
       const questionnaireDialog = await waitFor(findFragebogenDialog, 5e3, 75);
       const data = await dataPromise;
-      if (!questionnaireDialog || routeKey && context.key !== routeKey) {
-        removeVacancyPanel();
+      if (!ownsPanel(token)) return;
+      if (!questionnaireDialog || !findFragebogenDialog() || routeKey && context.key !== routeKey) {
+        removeOwnVacancyPanel(token);
         return;
       }
       removeVacancyPanel();
-      document.body.appendChild(buildVacancyPanel(data, jobTitle, uuid));
+      document.body.appendChild(buildVacancyPanel(data, jobTitle, uuid, token));
     }
     runtime.addDocumentListener("click", (event) => {
       handleQuestionnaireButtonClick(event).catch((error) => console.warn("[Werkia KAM Fragebogen] Fragebogen konnte nicht vorbereitet werden.", error));
@@ -3836,7 +3999,15 @@
         questionnaireWasOpen = false;
       }
     }
-    runtime.createMutationObserver(cleanupIfDialogClosed).observe(document.documentElement, { childList: true, subtree: true });
+    let cleanupTimer = null;
+    function scheduleCleanup() {
+      if (cleanupTimer !== null) return;
+      cleanupTimer = runtime.setTimeout(() => {
+        cleanupTimer = null;
+        cleanupIfDialogClosed();
+      }, 150);
+    }
+    runtime.createMutationObserver(scheduleCleanup).observe(document.documentElement, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", cleanupIfDialogClosed);
   }
 
@@ -4509,11 +4680,8 @@
       banner.style.background = evaluation.color;
       banner.innerHTML = `
       <div style="display:flex;align-items:center;">${evaluation.title}${kamHelp.tipHtml("questionnaire-evaluation")}</div>
-      ${evaluation.details.length ? `<div style="margin-top:6px;font-weight:500;font-size:13px;line-height:1.4;">${evaluation.details.join("<br>")}</div>` : ""}
+      ${evaluation.details.length ? `<div style="margin-top:6px;font-weight:500;font-size:13px;line-height:1.4;">${evaluation.details.map(escapeHtml).join("<br>")}</div>` : ""}
     `;
-    }
-    function escapeHtml2(str) {
-      return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
     function createOrUpdateOmNotes(dialog) {
       document.getElementById(OM_NOTES_ID)?.remove();
@@ -4600,7 +4768,7 @@
       bullets.forEach((point) => {
         const li = document.createElement("li");
         li.style.cssText = "display:flex;gap:8px;margin-bottom:8px;align-items:flex-start;font-size:15px;line-height:1.6;";
-        li.innerHTML = `<span style="color:#e67700;flex-shrink:0;font-weight:900;margin-top:1px;">•</span><span>${escapeHtml2(point)}</span>`;
+        li.innerHTML = `<span style="color:#e67700;flex-shrink:0;font-weight:900;margin-top:1px;">•</span><span>${escapeHtml(point)}</span>`;
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -4639,6 +4807,58 @@
     attachQuestionnaireObserver(runtime, runQuestionnaireFeatures);
   }
 
+  // ../../shared/js/werkia-toolbox/cache-storage.js
+  function pruneExpiredCacheEntries(cache, isExpired) {
+    let changed = false;
+    for (const key of Object.keys(cache)) {
+      if (isExpired(cache[key], key)) {
+        delete cache[key];
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  function setCacheItemWithQuotaRetry(storageKey, cache, isExpired) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(cache));
+    } catch (error) {
+      if (error?.name !== "QuotaExceededError") {
+        console.warn("[Werkia Cache] Konnte nicht gespeichert werden:", storageKey, error);
+        return;
+      }
+      const pruned = pruneExpiredCacheEntries(cache, isExpired);
+      if (pruned) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(cache));
+          return;
+        } catch (retryError) {
+          console.warn("[Werkia Cache] localStorage weiterhin voll nach Bereinigung:", storageKey, retryError);
+        }
+      } else {
+        console.warn("[Werkia Cache] localStorage voll, keine abgelaufenen Eintraege zum Entfernen:", storageKey, error);
+      }
+      for (const key of Object.keys(cache)) delete cache[key];
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(cache));
+      } catch (wipeError) {
+        console.warn("[Werkia Cache] localStorage weiterhin voll trotz komplett geleertem Cache:", storageKey, wipeError);
+      }
+    }
+  }
+  function limitCacheEntries(cache, maxEntries, getTime = (entry) => Number(entry?.time) || 0) {
+    const keys = Object.keys(cache);
+    if (keys.length <= maxEntries) return false;
+    keys.sort((a, b) => getTime(cache[a], a) - getTime(cache[b], b)).slice(0, keys.length - Math.max(0, maxEntries)).forEach((key) => {
+      delete cache[key];
+    });
+    return true;
+  }
+  function saveBoundedCache(storageKey, cache, { isExpired, maxEntries = Infinity, getTime } = {}) {
+    if (isExpired) pruneExpiredCacheEntries(cache, isExpired);
+    if (Number.isFinite(maxEntries)) limitCacheEntries(cache, maxEntries, getTime);
+    setCacheItemWithQuotaRetry(storageKey, cache, isExpired || (() => false));
+  }
+
   // src/features/kam-suite/route-calculation.js
   var ROUTE_BOX_ID = "werkia-obc-route-box";
   var ROUTE_ADDRESS_CACHE_KEY = "werkia_obc_route_address_cache_v1";
@@ -4647,6 +4867,12 @@
   var ROUTE_ADDRESS_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
   var ROUTE_GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
   var ROUTE_DISTANCE_CACHE_TTL = 7 * 24 * 60 * 60 * 1e3;
+  var ROUTE_CACHE_LIMITS = {
+    [ROUTE_ADDRESS_CACHE_KEY]: { ttl: ROUTE_ADDRESS_CACHE_TTL, maxEntries: 500 },
+    [ROUTE_GEOCODE_CACHE_KEY]: { ttl: ROUTE_GEOCODE_CACHE_TTL, maxEntries: 500 },
+    [ROUTE_DISTANCE_CACHE_KEY]: { ttl: ROUTE_DISTANCE_CACHE_TTL, maxEntries: 100 }
+  };
+  var isRouteCacheEntryExpired = (entry, ttl, now = Date.now()) => !entry || typeof entry !== "object" || !(now - Number(entry.time) < ttl);
   var QUESTIONNAIRE_LABELS3 = [
     "Reisehäufigkeit",
     "Montagebereitschaft",
@@ -4671,6 +4897,12 @@
     const withoutBerlinDistrict = original.replace(/\bBerlin-Bezirk\s+[^,]+/i, "Berlin").replace(/\s*,\s*,\s*/g, ", ");
     return [...new Set([original, withoutBerlinDistrict].filter(Boolean))];
   };
+  function samplePreviewCoordinates(geometry, maxPoints = 180) {
+    const points = Array.isArray(geometry) ? geometry : [];
+    const sampleStep = Math.max(1, Math.ceil(points.length / maxPoints));
+    const round = (value) => Math.round(Number(value) * 1e5) / 1e5;
+    return points.filter((_, index) => index % sampleStep === 0 || index === points.length - 1).map((point) => [round(point?.[0]), round(point?.[1])]).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+  }
   var unavailableRoute = (reason) => ({ displayText: "Route nicht verfügbar", unavailable: true, reason });
   function formatRouteResult(distanceMeters, durationSeconds) {
     const totalMinutes = Math.max(1, Math.round(durationSeconds / 60));
@@ -4707,8 +4939,16 @@
       }
     }
     function saveJson(key, value) {
+      const limits = ROUTE_CACHE_LIMITS[key];
       try {
-        localStorage.setItem(key, JSON.stringify(value));
+        if (!limits) {
+          localStorage.setItem(key, JSON.stringify(value));
+          return;
+        }
+        saveBoundedCache(key, value, {
+          isExpired: (entry) => isRouteCacheEntryExpired(entry, limits.ttl),
+          maxEntries: limits.maxEntries
+        });
       } catch {
       }
     }
@@ -4791,9 +5031,7 @@
       const url = `https://router.project-osrm.org/route/v1/driving/${candidate.coords.lon},${candidate.coords.lat};${jobPosition.coords.lon},${jobPosition.coords.lat}?overview=full&geometries=geojson&alternatives=false&steps=false`;
       const route = (await requestJson(url))?.routes?.[0];
       if (!route?.distance || !route?.duration) return unavailableRoute("Der Routenservice hat keine Fahrtroute geliefert.");
-      const geometry = Array.isArray(route.geometry?.coordinates) ? route.geometry.coordinates : [];
-      const sampleStep = Math.max(1, Math.ceil(geometry.length / 180));
-      const previewCoordinates = geometry.filter((_, index) => index % sampleStep === 0 || index === geometry.length - 1).map((point) => [Number(point[0]), Number(point[1])]).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+      const previewCoordinates = samplePreviewCoordinates(route.geometry?.coordinates);
       const result = { displayText: formatRouteResult(route.distance, route.duration), previewCoordinates, unavailable: false };
       cacheResult(candidateAddress, jobPositionAddress, result);
       return result;
@@ -5306,9 +5544,15 @@
       characterData: true,
       attributes: true
     });
+    const scheduleInteractionCheck = () => {
+      scheduleCheck();
+      runtime.setTimeout(scheduleCheck, 400);
+    };
+    runtime.addDocumentListener("click", scheduleInteractionCheck, true);
+    runtime.addDocumentListener("keyup", scheduleInteractionCheck, true);
+    runtime.addDocumentListener("change", scheduleInteractionCheck, true);
     runtime.setTimeout(() => {
       initSelectStates();
-      runtime.setInterval(checkSelects, 400);
     }, 1e3);
   }
 
@@ -5316,6 +5560,10 @@
   var BOX_ID = "werkia-cem-kam-banner";
   var CACHE_KEY = "werkia_cem_kam_cache_smooth_v1";
   var MATCH_ID_RE = /#\/Match\/([a-f0-9-]{36})\/show/i;
+  var BANNER_CACHE_TTL = 7 * 24 * 60 * 60 * 1e3;
+  var BANNER_CACHE_MAX_ENTRIES = 300;
+  var BANNER_REFRESH_INTERVAL = 30 * 1e3;
+  var isBannerCacheEntryExpired = (entry, now = Date.now()) => !entry || typeof entry !== "object" || !(now - Number(entry.time) < BANNER_CACHE_TTL);
   var clean2 = (v) => (v || "").trim().toLowerCase().replace(/\s+/g, " ");
   function badgeColor(value) {
     const v = clean2(value);
@@ -5331,25 +5579,35 @@
   function getMatchIdFromUrl(url) {
     return String(url || "").match(MATCH_ID_RE)?.[1] || "";
   }
-  function executeChatStatusBanner(runtime) {
+  function executeChatStatusBanner(runtime, deps = {}) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/chat-status-banner.js");
     let currentUrl = null;
-    let loadingUrl = null;
+    const inFlight = /* @__PURE__ */ new Set();
+    const lastFetched = /* @__PURE__ */ new Map();
     let cache = loadCache();
     let updateTimer = null;
     function loadCache() {
       try {
-        return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+        const parsed = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
       } catch {
         return {};
       }
     }
-    function saveCache() {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
-    }
     function setCache(url, cem, kam) {
       cache[url] = { cem, kam, time: Date.now() };
-      saveCache();
+      try {
+        saveBoundedCache(CACHE_KEY, cache, {
+          isExpired: (entry) => isBannerCacheEntryExpired(entry),
+          maxEntries: BANNER_CACHE_MAX_ENTRIES
+        });
+      } catch (error) {
+        console.warn("[KAM Chat-Banner] Cache konnte nicht gespeichert werden:", error);
+      }
+    }
+    function cachedEntry(url) {
+      const entry = cache[url];
+      return entry && !isBannerCacheEntryExpired(entry) ? entry : null;
     }
     function findMatchUrl() {
       if (!isChatRoute()) return null;
@@ -5399,7 +5657,7 @@
         font-weight:700;
         border:1px solid rgba(0,0,0,.2);
         white-space:nowrap;
-      ">${label}: ${value || "-"}</span>
+      ">${escapeHtml(label)}: ${escapeHtml(value || "-")}</span>
     `;
     }
     function show(cem, kam) {
@@ -5415,30 +5673,34 @@
       }
     }
     async function loadFromMatchGraphql(matchId) {
+      if (deps.loadStatus) return deps.loadStatus(matchId);
       const match = await getKamGraphqlAdapter().matchProvider.loadMatch(matchId);
       return { cem: match.cemStatus?.label || "-", kam: match.kamStatus?.label || "-" };
     }
     async function loadFromMatch(url) {
-      if (loadingUrl === url) return;
-      loadingUrl = url;
-      show("lädt...", "lädt...");
+      if (inFlight.has(url)) return;
+      inFlight.add(url);
+      lastFetched.set(url, Date.now());
       const matchId = getMatchIdFromUrl(url);
       let result = null;
-      if (matchId) {
-        try {
-          result = await loadFromMatchGraphql(matchId);
-        } catch (error) {
-          console.warn("[KAM Chat-Banner] GraphQL-Status konnte nicht geladen werden:", error);
+      try {
+        if (matchId) {
+          try {
+            result = await loadFromMatchGraphql(matchId);
+          } catch (error) {
+            console.warn("[KAM Chat-Banner] GraphQL-Status konnte nicht geladen werden:", error);
+          }
         }
+      } finally {
+        inFlight.delete(url);
       }
       if (!result) {
-        show("Fehler", "Fehler");
-        loadingUrl = null;
+        lastFetched.delete(url);
+        if (url === currentUrl && !cachedEntry(url)) show("Fehler", "Fehler");
         return;
       }
       setCache(url, result.cem, result.kam);
-      show(result.cem, result.kam);
-      loadingUrl = null;
+      if (url === currentUrl) show(result.cem, result.kam);
     }
     function update(force = false) {
       if (!isChatRoute()) {
@@ -5450,16 +5712,19 @@
       if (!url) return;
       if (!force && currentUrl === url && document.getElementById(BOX_ID)) return;
       currentUrl = url;
-      const cached = cache[url];
-      if (cached && !force) {
-        show(cached.cem, cached.kam);
-        return;
-      }
+      const cached = cachedEntry(url);
+      if (cached) show(cached.cem, cached.kam);
+      else if (!inFlight.has(url)) show("lädt...", "lädt...");
+      const fetchedAt = lastFetched.get(url);
+      if (!force && fetchedAt && Date.now() - fetchedAt < BANNER_REFRESH_INTERVAL) return;
       loadFromMatch(url);
     }
     function scheduleUpdate(force = false, delay = 120) {
-      runtime.clearTimeout(updateTimer);
-      updateTimer = runtime.setTimeout(() => update(force), delay);
+      if (updateTimer !== null) return;
+      updateTimer = runtime.setTimeout(() => {
+        updateTimer = null;
+        update(force);
+      }, delay);
     }
     runtime.createMutationObserver(() => scheduleUpdate(false, 150)).observe(document.body, {
       childList: true,
@@ -5481,10 +5746,10 @@
   // src/features/kam-suite/chat-icon-redirect.js
   var CHAT_LINK_SELECTOR = 'a[aria-label="Chat"][href*="#/Chat/?filter"]';
   var ROW_SELECTOR6 = "tr.RaDataTable-row";
-  var MATCH_LINK_SELECTOR2 = 'a[href*="#/Match/"]';
+  var MATCH_LINK_SELECTOR3 = 'a[href*="#/Match/"]';
   var EMPLOYER_LINK_SELECTOR3 = 'a[href*="#/Employer/"]';
   function getMatchIdFromChatRow(row) {
-    const link = row?.querySelector(MATCH_LINK_SELECTOR2);
+    const link = row?.querySelector(MATCH_LINK_SELECTOR3);
     return link?.getAttribute("href")?.match(/#\/Match\/([^/?]+)/i)?.[1] || "";
   }
   function getEmployerIdFromChatRow(row) {
@@ -5878,7 +6143,7 @@
 
   // ../../shared/js/slack-exports/index.js
   var ROW_SELECTOR7 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
-  var MATCH_LINK_SELECTOR3 = 'a[href*="#/Match/"]';
+  var MATCH_LINK_SELECTOR4 = 'a[href*="#/Match/"]';
   var EXPORTS_SELECTOR = ".werkia-slack-exports";
   var STYLE_ID4 = "werkia-slack-exports-style";
   var SENT_STORE_KEY = "werkia_vt_slack_exports_sent_v1";
@@ -6017,7 +6282,7 @@
       return [...row.querySelectorAll("td")].find((cell) => hasAppointmentDate(cell.innerText));
     }
     function matchIdFromRow(row) {
-      return matchIdFromHref(row.querySelector(MATCH_LINK_SELECTOR3)?.href);
+      return matchIdFromHref(row.querySelector(MATCH_LINK_SELECTOR4)?.href);
     }
     async function loadMatchData(matchId) {
       if (matchDataCache.has(matchId)) return matchDataCache.get(matchId);
@@ -6194,7 +6459,7 @@
   var defaultWebhookUrl = true ? "https://srv-a1.tail4b9d62.ts.net/webhook/ops-bot/kam-match/b41e7c2a-9d35-4f08-a6c1-3e8f5d2b7a94" : "";
   var ROW_SELECTOR8 = "tbody tr.RaDataTable-row";
   var JOB_TITLE_LINK_SELECTOR2 = '.column-jobPositionId a[href*="#/JobPosition/"]';
-  var MATCH_LINK_SELECTOR4 = 'a[href*="#/Match/"]';
+  var MATCH_LINK_SELECTOR5 = 'a[href*="#/Match/"]';
   var BAR_CLASS = "werkia-kam-match-actions";
   var FALLBACK_BLOCK_CLASS = "werkia-kam-match-actions-block";
   var VT_BLOCK_SELECTOR = ".werkia-slack-exports";
@@ -6297,7 +6562,7 @@
     function rowIds(row) {
       return {
         jobPositionId: jobPositionIdFromHref(row.querySelector(JOB_TITLE_LINK_SELECTOR2)?.href),
-        matchId: matchIdFromHref2(row.querySelector(MATCH_LINK_SELECTOR4)?.href)
+        matchId: matchIdFromHref2(row.querySelector(MATCH_LINK_SELECTOR5)?.href)
       };
     }
     function visibleJobPositionIds() {
@@ -6515,8 +6780,9 @@
   var EMPLOYERS_BY_NAME_QUERY = `query OutenEmployersByName($filter: EmployerFilter) {
   items: allEmployers(filter: $filter) { id name __typename }
 }`;
-  var MATCHES_BY_EMPLOYER_QUERY = `query OutenMatchesByEmployer($filter: MatchFilter) {
-  items: allMatches(filter: $filter) {
+  var MATCHES_BY_EMPLOYER_QUERY = `query OutenMatchesByEmployer($filter: MatchFilter, $page: Int, $perPage: Int, $sortField: String, $sortOrder: String) {
+  total: _allMatchesMeta(page: $page, perPage: $perPage, filter: $filter) { count }
+  items: allMatches(filter: $filter, page: $page, perPage: $perPage, sortField: $sortField, sortOrder: $sortOrder) {
     id
     candidateId
     jobPositionId
@@ -6554,6 +6820,26 @@
   function isAuthError(error) {
     const message = String(error?.message || "");
     return message === AUTH_MISSING_MESSAGE || AUTH_HTTP_ERROR_RE.test(message) || AUTH_KEYWORD_RE.test(message);
+  }
+  function isTimeoutError(error) {
+    return /^GraphQL-Timeout\b/.test(String(error?.message || ""));
+  }
+  function timeoutMessage({ mutation = false } = {}) {
+    return mutation ? "Das Adminpanel hat nicht rechtzeitig geantwortet. Die Änderung kann trotzdem gespeichert sein – bitte den Match im Adminpanel prüfen, bevor du es erneut versuchst." : "Das Adminpanel hat nicht rechtzeitig geantwortet. Bitte den Dialog erneut öffnen.";
+  }
+  function describeOutResult(result) {
+    const parts = ["KAM Status auf „Out“ gesetzt"];
+    parts.push(result?.wvlCleared ? "WVL gelöscht" : "WVL nicht gelöscht");
+    const interviews = result?.interviews || {};
+    if (interviews.listFailed) parts.push("offene Terminvorschläge konnten nicht geladen werden");
+    else if (!interviews.total) parts.push("keine offenen Terminvorschläge");
+    else if (interviews.declined === interviews.total) parts.push(`${interviews.total} Terminvorschläge abgelehnt`);
+    else parts.push(`${interviews.declined} von ${interviews.total} Terminvorschlägen abgelehnt`);
+    return `${parts.join(", ")}.`;
+  }
+  function isCompleteOutResult(result) {
+    const interviews = result?.interviews || {};
+    return Boolean(result?.wvlCleared) && !interviews.listFailed && interviews.declined === (interviews.total || 0);
   }
   function stripSubjectPrefixes(subject) {
     let value = String(subject || "").trim();
@@ -6636,7 +6922,31 @@
     });
     const best = scored.reduce((highest, entry) => Math.max(highest, entry.score), 0);
     if (best === 0) return matches || [];
-    return scored.filter((entry) => entry.score === best).map((entry) => entry.match);
+    return scored.filter((entry) => entry.score === best || entry.match?.profileMissing).map((entry) => entry.match);
+  }
+  function titleWords(value) {
+    return normalise(value).replace(/\((?:m|w|d|f|x|div)(?:\s*\/\s*(?:m|w|d|f|x|div))*\)/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  }
+  function vacancyTitleScore(match, vacancyTitle) {
+    const wanted = titleWords(vacancyTitle);
+    if (!wanted) return 0;
+    const main = titleWords(match?.jobPosition?.mainTitle);
+    const full = titleWords([match?.jobPosition?.mainTitle, match?.jobPosition?.subTitle].filter(Boolean).join(" "));
+    if (!full) return 0;
+    if (wanted === main || wanted === full) return 3;
+    if (full.includes(wanted) || main && wanted.includes(main)) return 2;
+    const wantedTokens = wanted.split(" ");
+    const fullTokens = new Set(full.split(" "));
+    const shared = wantedTokens.filter((token) => fullTokens.has(token)).length;
+    return shared && shared * 2 >= wantedTokens.length ? 1 : 0;
+  }
+  function preselectIndex(keys) {
+    if (!keys?.length) return -1;
+    if (keys.length === 1) return 0;
+    const [first, second] = keys;
+    if (!first.some((value) => value > 0)) return -1;
+    const cmp = first.findIndex((value, index) => value !== second[index]);
+    return cmp >= 0 && first[cmp] > second[cmp] ? 0 : -1;
   }
   function detectApplicationMail({ subjects = [], bodyText = "" } = {}) {
     if (subjects.some(looksLikeApplicationSubject)) return { matched: true, reason: "subject" };
@@ -6660,9 +6970,9 @@
       vacancyTitle: parsed?.vacancyTitle || ""
     };
   }
-  function filterMatchesByName(matches, wantedName) {
+  function rankMatchesByName(matches, wantedName) {
     const wanted = normalise(wantedName);
-    if (!wanted) return [];
+    if (!wanted) return { matches: [], strong: false };
     const wantedTokens = wanted.split(/\s+/).filter(Boolean);
     const scored = (matches || []).map((match) => {
       const name = normalise(candidateFullName(match));
@@ -6674,14 +6984,18 @@
       return { match, score: 99 };
     });
     const best = scored.reduce((lowest, entry) => Math.min(lowest, entry.score), 99);
-    if (best === 99) return [];
-    return scored.filter((entry) => entry.score === best).map((entry) => entry.match);
+    if (best === 99) return { matches: [], strong: false };
+    return {
+      matches: scored.filter((entry) => entry.score === best).map((entry) => entry.match),
+      strong: best === 0 || best === 1 && wantedTokens.length >= 2
+    };
   }
+  var SPECIAL_LETTERS = { ı: "i", ł: "l", ø: "o", đ: "d" };
   function normalise(value) {
-    return String(value || "").trim().toLocaleLowerCase("de-DE");
+    return String(value || "").toLocaleLowerCase("de-DE").normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "").replace(/[ıłøđ]/g, (letter) => SPECIAL_LETTERS[letter]).replace(/[\s\-‐‑‒–—]+/g, " ").trim();
   }
   function employerSearchPrefixes(term) {
-    const wanted = normalise(term);
+    const wanted = String(term || "").trim().toLocaleLowerCase("de-DE");
     if (!wanted) return [];
     const firstWord = wanted.split(/\s+/)[0];
     const letter = wanted.slice(0, 1);
@@ -6727,11 +7041,24 @@
   function isVisible(element) {
     return element.getClientRects().length > 0;
   }
+  var OUTSIDE_READING_PANE_SELECTOR = '[role="listbox"], [role="grid"], [role="tree"], [role="navigation"]';
+  function readingPaneRoot() {
+    const heading = [...document.querySelectorAll('[id$="_SUBJECT"]')].find(isVisible);
+    if (!heading) return null;
+    let node = heading;
+    while (node.parentElement && node.parentElement !== document.body && node.parentElement !== document.documentElement) {
+      if (node.matches?.('[role="main"]')) break;
+      const parent = node.parentElement;
+      if ([...parent.querySelectorAll(OUTSIDE_READING_PANE_SELECTOR)].some((element) => !node.contains(element))) break;
+      node = parent;
+    }
+    return node;
+  }
   function readMailBodyText() {
     const containers = [...document.querySelectorAll(MAIL_BODY_SELECTORS.join(","))].filter(isVisible);
     const text = containers.map((container) => container.innerText || "").join("\n");
     if (quotedApplicationSubjects(text).length || hasApplicationProfile(parseProfileFromMailBody(text))) return text;
-    return document.body?.innerText || text;
+    return readingPaneRoot()?.innerText || text;
   }
   function readSubjectsFromReadingPane() {
     const subjects = [...document.querySelectorAll('[id$="_SUBJECT"]')].filter(isVisible).map((element) => (element.getAttribute("title") || element.textContent || "").trim()).filter(Boolean);
@@ -6779,22 +7106,43 @@
       const current = getKamBearerSnapshot();
       return Boolean(current) && current !== before;
     }
-    const REQUEST_TIMEOUT_MS = 3e4;
+    const FAILED_RECOVERY_COOLDOWN_MS = 5e3;
+    let authRecovery = null;
+    let lastFailedRecoveryAt = 0;
+    function recoverAuthOnce() {
+      if (!authRecovery) {
+        authRecovery = ensureAuthViaPopup().then((recovered) => {
+          if (!recovered) lastFailedRecoveryAt = Date.now();
+          return recovered;
+        }).finally(() => {
+          authRecovery = null;
+        });
+      }
+      return authRecovery;
+    }
+    const REQUEST_TIMEOUT_MS = 35e3;
     function withTimeout(promise) {
       let handle;
       const timeout = new Promise((_, reject) => {
-        handle = runtime.setTimeout(() => reject(new Error(`Das Adminpanel hat nach ${REQUEST_TIMEOUT_MS / 1e3} Sekunden nicht geantwortet. Bitte den Dialog erneut öffnen.`)), REQUEST_TIMEOUT_MS);
+        handle = runtime.setTimeout(() => reject(new Error("GraphQL-Timeout.")), REQUEST_TIMEOUT_MS);
       });
       return Promise.race([promise, timeout]).finally(() => runtime.clearTimeout(handle));
     }
-    async function graphqlRequestWithRetry(query, variables) {
+    async function graphqlRequestWithRetry(query, variables, { optional = false, mutation = false } = {}) {
       const { request: rawRequest } = getKamGraphqlAdapter();
-      const request = (q, v) => withTimeout(rawRequest(q, v));
+      const request = (q, v) => withTimeout(rawRequest(q, v)).catch((error) => {
+        throw isTimeoutError(error) ? new Error(timeoutMessage({ mutation })) : error;
+      });
+      const bearerBefore = getKamBearerSnapshot();
       try {
         return await request(query, variables);
       } catch (error) {
         if (!isAuthError(error)) throw error;
-        const recovered = await ensureAuthViaPopup();
+        let recovered;
+        if (authRecovery) recovered = await authRecovery;
+        else if (getKamBearerSnapshot() !== bearerBefore) recovered = true;
+        else if (optional || Date.now() - lastFailedRecoveryAt < FAILED_RECOVERY_COOLDOWN_MS) recovered = false;
+        else recovered = await recoverAuthOnce();
         if (!recovered) throw error;
         return request(query, variables);
       }
@@ -6818,7 +7166,7 @@
             filter: { candidateId },
             sortField: "id",
             sortOrder: "DESC"
-          });
+          }, { optional: true });
           const location2 = (data.items || [])[0];
           if (location2) entries.set(candidateId, { postalCode: location2.postalCode || "", city: location2.city || "" });
         } catch {
@@ -6843,13 +7191,29 @@
       }));
       return matches.map((match) => {
         const profile = profiles.get(match.candidateId);
-        if (!profile) return match;
+        if (!profile) return { ...match, profileMissing: true };
         return { ...match, candidate: { ...match.candidate, germanSpeakingLevel: profile.germanSpeakingLevel, jobTitles: profile.jobTitles } };
       });
     }
+    const MATCHES_PER_PAGE = 200;
+    const MATCHES_MAX_PAGES = 25;
     async function matchesForEmployer(employerId) {
-      const data = await graphqlRequestWithRetry(MATCHES_BY_EMPLOYER_QUERY, { filter: { employerIds: [employerId] } });
-      return data.items || [];
+      const filter = { employerIds: [employerId] };
+      const byId = /* @__PURE__ */ new Map();
+      for (let page = 0; page < MATCHES_MAX_PAGES; page += 1) {
+        const data = await graphqlRequestWithRetry(MATCHES_BY_EMPLOYER_QUERY, {
+          filter,
+          page,
+          perPage: MATCHES_PER_PAGE,
+          sortField: "createdAt",
+          sortOrder: "DESC"
+        });
+        const items = data?.items || [];
+        items.forEach((item) => byId.set(item.id, item));
+        const total = Number(data?.total?.count);
+        if (items.length < MATCHES_PER_PAGE || Number.isFinite(total) && byId.size >= total) break;
+      }
+      return [...byId.values()];
     }
     async function openInterviewIdsForMatch(matchId) {
       const perPage = 100;
@@ -6873,27 +7237,38 @@
       return interviewIds;
     }
     async function declineOpenInterviewsForMatch(matchId) {
-      const interviewIds = await openInterviewIdsForMatch(matchId);
-      await Promise.all(interviewIds.map(async (interviewId) => {
-        const result = await graphqlRequestWithRetry(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
+      let interviewIds;
+      try {
+        interviewIds = await openInterviewIdsForMatch(matchId);
+      } catch (error) {
+        return { total: 0, declined: 0, listFailed: true, errors: [error] };
+      }
+      const results = await Promise.allSettled(interviewIds.map(async (interviewId) => {
+        const result = await graphqlRequestWithRetry(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" }, { mutation: true });
         const interview = result?.data;
         if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
           throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
         }
       }));
-      return interviewIds.length;
+      const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+      return { total: interviewIds.length, declined: interviewIds.length - errors.length, listFailed: false, errors };
     }
     async function setMatchOut(matchId, kamFeedback) {
-      const result = await graphqlRequestWithRetry(UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION, { id: matchId, kamStatus: "out", kamFeedback });
+      const result = await graphqlRequestWithRetry(UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION, { id: matchId, kamStatus: "out", kamFeedback }, { mutation: true });
       const match = result?.data;
       if (match?.id !== matchId || match.kamStatus !== "out") {
         throw new Error("KAM Status wurde nicht auf „Out“ bestätigt");
       }
-      const [, declined] = await Promise.all([
-        graphqlRequestWithRetry(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: null }),
+      const [wvl, interviews] = await Promise.allSettled([
+        graphqlRequestWithRetry(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: null }, { mutation: true }),
         declineOpenInterviewsForMatch(matchId)
       ]);
-      return declined;
+      const interviewResult = interviews.status === "fulfilled" ? interviews.value : { total: 0, declined: 0, listFailed: true, errors: [interviews.reason] };
+      return {
+        wvlCleared: wvl.status === "fulfilled",
+        wvlError: wvl.status === "rejected" ? wvl.reason : null,
+        interviews: interviewResult
+      };
     }
     function styled2(node, styles) {
       Object.assign(node.style, styles);
@@ -7102,10 +7477,21 @@
       styled2(body, { padding: "12px 14px", gap: "6px" });
       popover.replaceChildren(head, body);
     }
+    function isDialogClosed(dialog) {
+      return !dialog.isConnected || !dialog.open;
+    }
+    function setBusy(dialog, busy) {
+      if (busy) dialog.dataset.busy = "true";
+      else delete dialog.dataset.busy;
+    }
     function renderLoading(dialog, text) {
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, true);
       dialog.replaceChildren(buildHead("Match Outen"), buildBody([buildNote(text)]));
     }
     function renderError(dialog, parts) {
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, false);
       const closeBtn = buildButton("Schließen", { action: "close" });
       closeBtn.addEventListener("click", () => dialog.close());
       dialog.replaceChildren(
@@ -7126,6 +7512,8 @@
       renderError(dialog, `Fehler: ${error?.message || String(error)}`);
     }
     function renderEmployerPicker(dialog, state, employers) {
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, false);
       const list = buildList();
       const radios = employers.map((employer, index) => {
         const { option, radio } = buildOptionRow({
@@ -7160,11 +7548,12 @@
     async function loadMatches2(dialog, state) {
       renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
       const matches = await matchesForEmployer(state.employer.id);
+      if (isDialogClosed(dialog)) return;
       state.matches = matches;
       const wantedName = state.parsed.source === "manual" ? state.parsed.candidateName : state.profile?.candidateName || state.parsed.candidateName;
       state.wantedName = wantedName;
-      const byName = filterMatchesByName(matches, wantedName);
-      if (byName.length === 1) {
+      const { matches: byName, strong: strongName } = rankMatchesByName(matches, wantedName);
+      if (byName.length === 1 && strongName) {
         state.matchId = byName[0].id;
         renderReasonStep(dialog, state, byName[0]);
         return;
@@ -7173,10 +7562,12 @@
       if (state.profile?.germanLevel || state.profile?.training) {
         renderLoading(dialog, `Lade Profile zu ${Math.min(nameList.length, PROFILE_LOOKUP_LIMIT)} Kandidaten …`);
         nameList = await attachCandidateProfiles(nameList);
+        if (isDialogClosed(dialog)) return;
       }
       const shortlist = narrowByProfile(nameList, state.profile);
       renderLoading(dialog, `Lade Adressen zu ${shortlist.length} Kandidaten …`);
       const postalCodes = await postalCodesForCandidates(shortlist.map((match) => match.candidateId));
+      if (isDialogClosed(dialog)) return;
       renderMatchPicker(dialog, state, shortlist, {
         nameNarrowed: byName.length > 0,
         profileNarrowed: shortlist.length < nameList.length,
@@ -7186,6 +7577,8 @@
       });
     }
     function renderMatchPicker(dialog, state, matches, { nameNarrowed, profileNarrowed = false, fullList = matches, totalMatches, postalCodes }) {
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, false);
       if (!matches.length) {
         renderError(dialog, [
           `Bei „${state.employer.name}“ wurden keine Matches gefunden. `,
@@ -7200,19 +7593,27 @@
         const hits = profileHits(match, state.profile);
         return (hits.german ? 1 : 0) + (hits.training ? 1 : 0);
       };
-      const sorted = [...matches].sort((left, right) => {
-        const leftHit = wantedPostalCode && postalOf(left) === wantedPostalCode ? 0 : 1;
-        const rightHit = wantedPostalCode && postalOf(right) === wantedPostalCode ? 0 : 1;
-        return leftHit - rightHit || profileScore(right) - profileScore(left);
+      const sortKey = (match) => [
+        wantedPostalCode && postalOf(match) === wantedPostalCode ? 1 : 0,
+        vacancyTitleScore(match, state.parsed?.vacancyTitle),
+        profileScore(match)
+      ];
+      const sorted = [...matches].map((match) => ({ match, key: sortKey(match) })).sort((left, right) => {
+        const index = left.key.findIndex((value, position) => value !== right.key[position]);
+        return index < 0 ? 0 : right.key[index] - left.key[index];
       });
+      const preselected = preselectIndex(sorted.map((entry) => entry.key));
+      const sortedMatches = sorted.map((entry) => entry.match);
+      let noteSuffix = "";
       const list = buildList();
-      const radios = sorted.map((match, index) => {
+      const radios = sortedMatches.map((match, index) => {
         const jobLabel = [match.jobPosition?.mainTitle, match.jobPosition?.subTitle].filter(Boolean).join(" ");
         const location2 = postalCodes?.get(match.candidateId);
         const locationLabel = location2?.postalCode ? ` · ${location2.postalCode}${location2.city ? ` ${location2.city}` : ""}` : "";
         const hits = profileHits(match, state.profile);
         const marks = [
           wantedPostalCode && location2?.postalCode === wantedPostalCode ? "✓ PLZ" : "",
+          vacancyTitleScore(match, state.parsed?.vacancyTitle) >= 2 ? "✓ Vakanz" : "",
           hits.german ? "✓ Deutsch" : "",
           hits.training ? "✓ Ausbildung" : ""
         ].filter(Boolean).join(" ");
@@ -7220,13 +7621,14 @@
         const { option, radio } = buildOptionRow({
           name: "match",
           index,
-          checked: index === 0,
+          checked: index === preselected,
           labelText,
           href: matchShowUrl(match.id)
         });
         list.appendChild(option);
         return radio;
       });
+      if (preselected < 0) noteSuffix = " Keine eindeutige Vorauswahl – bitte selbst auswählen.";
       const noteParts = [`Gesuchter Kandidat: „${state.wantedName || state.parsed.candidateName}“`];
       if (wantedPostalCode) noteParts.push(`, PLZ ${wantedPostalCode}${state.profile?.city ? ` ${state.profile.city}` : ""} (aus der Mail)`);
       const profileFacts = [state.profile?.germanLevel && `Deutsch ${state.profile.germanLevel}`, state.profile?.training && `Ausbildung ${state.profile.training}`].filter(Boolean);
@@ -7236,15 +7638,22 @@
       } else {
         noteParts.push(nameNarrowed ? `. ${matches.length} von ${totalMatches} Matches bei „${state.employer.name}“ passen zum Namen – bitte den richtigen auswählen.` : `. Kein Match bei „${state.employer.name}“ passt zu diesem Namen – hier alle ${matches.length} Matches des Arbeitgebers.`);
       }
+      noteParts.push(noteSuffix);
       const closeBtn = buildButton("Abbrechen", { action: "close" });
       const continueBtn = buildButton("Weiter", { action: "continue", primary: true });
       closeBtn.addEventListener("click", () => dialog.close());
       continueBtn.addEventListener("click", () => {
         const selectedIndex = radios.findIndex((radio) => radio.checked);
-        const selected = sorted[selectedIndex >= 0 ? selectedIndex : 0];
+        if (selectedIndex < 0) return;
+        const selected = sortedMatches[selectedIndex];
         state.matchId = selected.id;
         renderReasonStep(dialog, state, selected);
       });
+      if (preselected < 0) {
+        setButtonDisabled(continueBtn, true);
+        styled2(continueBtn, { cursor: "not-allowed" });
+        radios.forEach((radio) => radio.addEventListener("change", () => setButtonDisabled(continueBtn, false)));
+      }
       const leftActions = [];
       if (profileNarrowed) {
         const showAllBtn = buildButton(`Alle ${fullList.length} zeigen`, { action: "show-all" });
@@ -7270,6 +7679,8 @@
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
     }
     function renderReasonStep(dialog, state, match) {
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, false);
       const noteText = `${candidateFullName(match) || state.parsed.candidateName} bei ${state.employer.name}${match.jobPosition?.mainTitle ? ` (${match.jobPosition.mainTitle})` : ""} auf KAM Status „Out“ setzen. Offene Terminvorschläge werden dabei automatisch abgelehnt.`;
       const select = document.createElement("select");
       select.name = "outFeedback";
@@ -7330,14 +7741,18 @@
         setButtonDisabled(closeBtn, true);
         setButtonDisabled(applyBtn, true);
         setStatus("Setze KAM Status „Out“ …", "busy");
+        setBusy(dialog, true);
         try {
-          const declined = await setMatchOut(state.matchId, resolveOutFeedbackText(reason));
-          setStatus(`KAM Status auf „Out“ gesetzt. ${declined} Terminvorschläge abgelehnt.`, "ok");
+          const result = await setMatchOut(state.matchId, resolveOutFeedbackText(reason));
+          setBusy(dialog, false);
+          const complete = isCompleteOutResult(result);
+          setStatus(complete ? describeOutResult(result) : `${describeOutResult(result)} Bitte den Rest im Adminpanel nachholen.`, complete ? "ok" : "busy");
           applyBtn.dataset.completed = "true";
           applyBtn.textContent = "Fertig – schließen";
           setButtonDisabled(applyBtn, false);
           closeBtn.hidden = true;
         } catch (error) {
+          setBusy(dialog, false);
           select.disabled = false;
           setButtonDisabled(closeBtn, false);
           setButtonDisabled(applyBtn, false);
@@ -7359,6 +7774,8 @@
       return `Betreff: „${parsed.candidateName}: ${parsed.vacancyTitle} - ${parsed.employerName}“`;
     }
     function renderManualStep(dialog, state, message) {
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, false);
       const buildInput = (labelText, value) => {
         const input = document.createElement("input");
         input.type = "text";
@@ -7424,6 +7841,9 @@
       document.body.appendChild(dialog);
       const resolved = resolveApplicationSubject(context);
       const state = { parsed: resolved?.parsed || null, profile: parseProfileFromMailBody(context.bodyText), employer: null, matchId: null, matches: [] };
+      dialog.addEventListener("cancel", (event) => {
+        if (dialog.dataset.busy === "true") event.preventDefault();
+      });
       dialog.showModal();
       if (!state.parsed) {
         const shownSubject = context.subjects[0] || "(leer)";
@@ -7432,20 +7852,41 @@
       }
       startEmployerSearch(dialog, state);
     }
+    const MAIL_SETTLE_MS = 5e3;
     let scheduled = false;
+    let lastMailKey = null;
+    let settleUntil = 0;
+    let lastMatched = false;
+    function mailKey() {
+      const ids = [...document.querySelectorAll('[id$="_SUBJECT"]')].map((element) => element.id).join("|");
+      return `${location.href}#${ids}`;
+    }
+    function evaluateMail() {
+      const subjects = readSubjectsFromReadingPane();
+      if (subjects.some(looksLikeApplicationSubject)) return true;
+      return detectApplicationMail({ subjects: [], bodyText: readMailBodyText() }).matched;
+    }
     function scheduleCheck() {
       if (scheduled) return;
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        const context = readMailContext();
-        if (!detectApplicationMail(context).matched) {
+        const key = mailKey();
+        const changed = key !== lastMailKey;
+        if (changed) {
+          lastMailKey = key;
+          settleUntil = Date.now() + MAIL_SETTLE_MS;
+        } else if (lastMatched || Date.now() > settleUntil) {
+          return;
+        }
+        lastMatched = evaluateMail();
+        if (!lastMatched) {
           removeLauncher();
           return;
         }
         ensureLauncher();
         const popover = document.getElementById(IDS2.popover);
-        if (popover && popover.dataset.summary !== JSON.stringify(applicationSummary(context))) renderPopover();
+        if (popover && popover.dataset.summary !== JSON.stringify(applicationSummary(readMailContext()))) renderPopover();
       }, 400);
     }
     runtime.createMutationObserver(scheduleCheck).observe(document.documentElement, { childList: true, subtree: true });
@@ -7454,6 +7895,17 @@
       document.getElementById(IDS2.dialog)?.remove();
     });
     scheduleCheck();
+  }
+
+  // src/features/kam-suite/host-filter.js
+  var OUTLOOK_HOSTNAMES = ["outlook.office.com", "outlook.cloud.microsoft"];
+  var OUTLOOK_FEATURE_IDS = ["toolbox-help", "kam-suite-outlook-match-outen"];
+  function isOutlookHost(hostname) {
+    return OUTLOOK_HOSTNAMES.includes(String(hostname || "").toLowerCase());
+  }
+  function selectFeaturesForHost(features, hostname) {
+    if (!isOutlookHost(hostname)) return features;
+    return features.filter(({ id }) => OUTLOOK_FEATURE_IDS.includes(id));
   }
 
   // ../../shared/js/list-filter-presets/core.js
@@ -8467,7 +8919,7 @@ ${next}`;
 
   // src/main.js
   initKamGraphqlAdapter();
-  bootstrapToolbox({ label: "KAM", marker: "data-werkia-kam-toolbox-loaded" }, [
+  bootstrapToolbox({ label: "KAM", marker: "data-werkia-kam-toolbox-loaded" }, selectFeaturesForHost([
     // First: installs the delegated ?-button handling the features below use.
     { id: "toolbox-help", execute: executeToolboxHelp },
     { id: "kam-suite-bulk-match-actions", execute: executeBulkMatchActions2 },
@@ -8493,5 +8945,5 @@ ${next}`;
     { id: "filter-presets", execute: executeFilterPresets },
     { id: "om-notes-templates", execute: (runtime) => executeOmNotesTemplates(runtime, { helpTip: () => kamHelp.tip("om-notes-templates", { tone: "dark" }) }) },
     { id: "urgent-vacancy-highlight", execute: executeLegacyModule }
-  ]);
+  ], location.hostname));
 })();

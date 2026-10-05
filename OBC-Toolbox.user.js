@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.5.108
+// @version      1.5.109
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -469,13 +469,28 @@
         setValue(fingerprintStorageKey, fingerprint);
       }
     }
+    function getAuth() {
+      try {
+        const storedBearer = normaliseBearer(getValue(bearerStorageKey, ""));
+        const storedFingerprint = String(getValue(fingerprintStorageKey, "") || "").trim();
+        if (storedBearer) bearer = storedBearer;
+        if (storedFingerprint) fingerprint = storedFingerprint;
+      } catch {
+      }
+      return { bearer, fingerprint };
+    }
     return {
       capture,
-      getAuth: () => ({ bearer, fingerprint })
+      getAuth
     };
   }
   function isGraphqlUrl(url) {
-    return String(url || "").includes(GRAPHQL_URL_PART);
+    try {
+      const parsed = new URL(String(url || ""), "https://invalid.local/");
+      return `${parsed.host}${parsed.pathname}`.startsWith(GRAPHQL_URL_PART);
+    } catch {
+      return false;
+    }
   }
   function installGraphqlAuthCapture({ pageWindow, authStore, installedFlag }) {
     if (!pageWindow || pageWindow[installedFlag]) return;
@@ -509,7 +524,8 @@
 
   // ../../shared/js/werkia-graphql/client.js
   var GRAPHQL_URL = "https://api.werkia.de/graphql";
-  function createGraphqlRequest({ request, getAuth }) {
+  var GRAPHQL_TIMEOUT_MS = 3e4;
+  function createGraphqlRequest({ request, getAuth, timeoutMs = GRAPHQL_TIMEOUT_MS }) {
     return (query, variables) => new Promise((resolve, reject) => {
       const { bearer, fingerprint } = getAuth();
       if (!bearer || !fingerprint) {
@@ -527,12 +543,13 @@
           Referer: "https://admin.werkia.de/"
         },
         data: JSON.stringify({ query, variables }),
+        timeout: timeoutMs,
         onload(response) {
           let payload;
           try {
             payload = JSON.parse(response.responseText);
           } catch {
-            reject(new Error(`GraphQL-Antwort ist kein JSON (HTTP ${response.status}).`));
+            reject(new Error(response.status !== 200 ? `GraphQL HTTP ${response.status}: Antwort ist kein JSON.` : `GraphQL-Antwort ist kein JSON (HTTP ${response.status}).`));
             return;
           }
           if (response.status !== 200 || payload.errors) {
