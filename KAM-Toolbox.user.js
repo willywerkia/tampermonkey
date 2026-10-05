@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.4.101
+// @version      1.5.102
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1856,14 +1856,15 @@
       page: "Outlook › Bewerbungsmail",
       hosts: [/(^|\.)outlook\.(office\.com|cloud\.microsoft)$/i],
       kind: "write",
-      summary: "Bei einer geöffneten Bewerbungsmail erscheint in Outlook unten rechts „Match Outen“. Damit setzt du den passenden Match auf KAM Status „Out“, ohne das Adminpanel zu öffnen.",
+      summary: "Bei einer geöffneten Bewerbungsmail erscheint in Outlook unten rechts ein runder „KAM“-Knopf. Er klappt eine Karte mit Kandidat, Arbeitgeber und „Match outen“ auf. Damit setzt du den passenden Match auf KAM Status „Out“, ohne das Adminpanel zu öffnen.",
       steps: [
-        "Die Bewerbungsmail öffnen. Der Betreff hat die Form „Bewerbung: Kandidat: Vakanz - Firma (Werkia)“.",
-        "„Match Outen“ klicken. Die Toolbox sucht Arbeitgeber und Match. Gibt es mehrere Treffer, wählst du den richtigen aus. „im AP prüfen“ öffnet ihn zur Kontrolle.",
+        "Die Bewerbungsmail oder eine Antwort darauf öffnen. Der Button erscheint, wenn „Bewerbung“ im Betreff steht oder unsere Bewerbungsmail mit Kurzprofil im Text zitiert ist.",
+        "Den „KAM“-Knopf und dann „Match outen“ klicken. Die Toolbox sucht Arbeitgeber und Match. Gibt es mehrere Treffer, wählst du den richtigen aus. „im AP prüfen“ öffnet ihn zur Kontrolle.",
         "Den Grund wählen und die Rückfrage bestätigen."
       ],
       notes: [
         "Gesetzt wird KAM Status „Out“ mit Grund. Außerdem wird die KAM WVL gelöscht und offene Terminvorschläge werden abgelehnt.",
+        "Lässt sich aus der Mail kein Arbeitgeber ablesen, trägst du ihn im Dialog selbst ein.",
         "Gleichnamige Kandidaten unterscheidet die Toolbox über die PLZ aus der Mail. Treffer mit passender PLZ stehen oben und sind mit „✓ PLZ“ markiert.",
         "Dafür braucht es eine Anmeldung am Adminpanel. Fehlt sie, öffnet sich kurz ein Fenster auf admin.werkia.de."
       ]
@@ -5502,14 +5503,14 @@
   }
   function executeAppointmentCopyPaste(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/appointment-copy-paste.js");
-    function isVisible(element) {
+    function isVisible2(element) {
       if (!element) return false;
       const rect = element.getBoundingClientRect();
       const style = window.getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     }
     function appointmentDialog() {
-      return [...document.querySelectorAll('.MuiDialog-paper, [role="dialog"]')].filter((dialog) => isVisible(dialog) && hasAppointmentFields(dialog)).at(-1) || null;
+      return [...document.querySelectorAll('.MuiDialog-paper, [role="dialog"]')].filter((dialog) => isVisible2(dialog) && hasAppointmentFields(dialog)).at(-1) || null;
     }
     function appointmentArrayRoot(dialog) {
       return [...dialog.querySelectorAll(".RaArrayInput-root")].find((root) => root.querySelector(APPOINTMENT_INPUT_SELECTOR)) || null;
@@ -5616,7 +5617,7 @@
       if (!select) return;
       select.click();
       await new Promise((resolve) => runtime.setTimeout(resolve, 300));
-      const option = [...document.querySelectorAll('[role="option"], .MuiMenuItem-root')].find((o) => isVisible(o) && o.innerText.trim() === text.trim());
+      const option = [...document.querySelectorAll('[role="option"], .MuiMenuItem-root')].find((o) => isVisible2(o) && o.innerText.trim() === text.trim());
       if (option) option.click();
     }
     async function waitFor(check, timeoutMs = 2500, intervalMs = 80) {
@@ -5632,7 +5633,7 @@
     }
     function removeAppointmentButton(root) {
       const buttons = [...root?.querySelectorAll('.RaSimpleFormIterator-line button[class*="button-remove-"], .RaSimpleFormIterator-line button.button-remove, .RaSimpleFormIterator-line button[aria-label="Entfernen"], .RaSimpleFormIterator-line button[aria-label="Löschen"]') || []];
-      return buttons.filter(isVisible).at(-1) || buttons.at(-1) || null;
+      return buttons.filter(isVisible2).at(-1) || buttons.at(-1) || null;
     }
     async function ensureAppointmentCount(dialog, targetCount) {
       const target = Math.max(0, targetCount);
@@ -6525,6 +6526,36 @@
       locationLine
     };
   }
+  var QUOTED_SUBJECT_RE = /Bewerbung:[^\n]*?\(Werkia\)/gi;
+  function quotedApplicationSubjects(bodyText) {
+    return [...String(bodyText || "").matchAll(QUOTED_SUBJECT_RE)].map((match) => match[0].trim());
+  }
+  function hasApplicationProfile(profile) {
+    if (!profile?.candidateName) return false;
+    return Boolean(profile.phone || profile.email || profile.postalCode);
+  }
+  function detectApplicationMail({ subjects = [], bodyText = "" } = {}) {
+    if (subjects.some(looksLikeApplicationSubject)) return { matched: true, reason: "subject" };
+    if (quotedApplicationSubjects(bodyText).length) return { matched: true, reason: "quoted-subject" };
+    if (hasApplicationProfile(parseProfileFromMailBody(bodyText))) return { matched: true, reason: "profile" };
+    return { matched: false, reason: "" };
+  }
+  function resolveApplicationSubject({ subjects = [], bodyText = "" } = {}) {
+    for (const subject of [...subjects, ...quotedApplicationSubjects(bodyText)]) {
+      const parsed = parseSubject(subject);
+      if (parsed) return { parsed, subject };
+    }
+    return null;
+  }
+  function applicationSummary(context = {}) {
+    const parsed = resolveApplicationSubject(context)?.parsed;
+    const profile = parseProfileFromMailBody(context.bodyText);
+    return {
+      candidateName: profile.candidateName || parsed?.candidateName || "",
+      employerName: parsed?.employerName || "",
+      vacancyTitle: parsed?.vacancyTitle || ""
+    };
+  }
   function filterMatchesByName(matches, wantedName) {
     const wanted = normalise(wantedName);
     if (!wanted) return [];
@@ -6577,16 +6608,29 @@
       return { employer, score };
     }).filter(({ score }) => score < 99).sort((left, right) => left.score - right.score || String(left.employer.name).localeCompare(String(right.employer.name), "de")).map(({ employer }) => employer);
   }
+  var MAIL_BODY_SELECTORS = [
+    'div[aria-label="Nachrichtentext"]',
+    'div[aria-label="Message body"]',
+    'div[role="document"]'
+  ];
+  function isVisible(element) {
+    return element.getClientRects().length > 0;
+  }
   function readMailBodyText() {
+    const containers = [...document.querySelectorAll(MAIL_BODY_SELECTORS.join(","))].filter(isVisible);
+    if (containers.length) return containers.map((container) => container.innerText || "").join("\n");
     return document.body?.innerText || "";
   }
-  function readSubjectFromReadingPane() {
-    const heading = document.querySelector('div[role="heading"][id$="_SUBJECT"][title]') || document.querySelector('[role="heading"][id$="_SUBJECT"]');
-    if (!heading) return "";
-    return (heading.getAttribute("title") || heading.textContent || "").trim();
+  function readSubjectsFromReadingPane() {
+    const subjects = [...document.querySelectorAll('[id$="_SUBJECT"]')].filter(isVisible).map((element) => (element.getAttribute("title") || element.textContent || "").trim()).filter(Boolean);
+    return [...new Set(subjects)];
+  }
+  function readMailContext() {
+    return { subjects: readSubjectsFromReadingPane(), bodyText: readMailBodyText() };
   }
   var IDS2 = {
-    button: "werkia-outen-float-button",
+    launcher: "werkia-outen-launcher",
+    popover: "werkia-outen-popover",
     dialog: "werkia-outen-dialog"
   };
   var SUPPORTED_OUTLOOK_HOSTNAMES = ["outlook.office.com", "outlook.cloud.microsoft"];
@@ -6812,34 +6856,105 @@
         zIndex: "2147483001"
       });
     }
-    function ensureButton() {
-      let button = document.getElementById(IDS2.button);
-      if (!button) {
-        button = document.createElement("button");
-        button.id = IDS2.button;
-        button.type = "button";
-        button.textContent = "Match Outen";
-        styled2(button, {
+    function ensureLauncher() {
+      let launcher = document.getElementById(IDS2.launcher);
+      if (!launcher) {
+        launcher = document.createElement("button");
+        launcher.id = IDS2.launcher;
+        launcher.type = "button";
+        launcher.textContent = "KAM";
+        launcher.title = "KAM-Toolbox: Bewerbungsmail erkannt";
+        launcher.setAttribute("aria-label", "KAM-Toolbox öffnen");
+        launcher.setAttribute("aria-expanded", "false");
+        styled2(launcher, {
           position: "fixed",
-          right: "24px",
-          bottom: "24px",
+          right: "20px",
+          bottom: "20px",
           zIndex: "2147483000",
-          padding: "12px 18px",
-          border: "2px solid #ef6c00",
-          borderRadius: "8px",
-          background: "#fff",
-          color: "#bf4d00",
-          font: "700 14px/1.2 Arial,sans-serif",
+          width: "54px",
+          height: "54px",
+          padding: "0",
+          border: "0",
+          borderRadius: "50%",
+          background: "#ef6c00",
+          color: "#fff",
+          font: "700 13px/1 Arial,sans-serif",
           cursor: "pointer",
-          boxShadow: "0 4px 14px rgba(0,0,0,.22)"
+          boxShadow: "0 4px 14px rgba(0,0,0,.25)"
         });
-        button.addEventListener("click", () => openWizard(readSubjectFromReadingPane()));
-        document.body.appendChild(button);
+        launcher.addEventListener("click", togglePopover);
+        document.body.appendChild(launcher);
       }
-      return button;
+      return launcher;
     }
-    function removeButton() {
-      document.getElementById(IDS2.button)?.remove();
+    function closePopover() {
+      document.getElementById(IDS2.popover)?.remove();
+      document.getElementById(IDS2.launcher)?.setAttribute("aria-expanded", "false");
+    }
+    function removeLauncher() {
+      closePopover();
+      document.getElementById(IDS2.launcher)?.remove();
+    }
+    function togglePopover() {
+      if (document.getElementById(IDS2.popover)) closePopover();
+      else renderPopover();
+    }
+    function renderPopover() {
+      let popover = document.getElementById(IDS2.popover);
+      if (!popover) {
+        popover = document.createElement("div");
+        popover.id = IDS2.popover;
+        popover.setAttribute("role", "dialog");
+        popover.setAttribute("aria-label", "KAM-Toolbox");
+        styled2(popover, {
+          position: "fixed",
+          right: "20px",
+          bottom: "84px",
+          zIndex: "2147483000",
+          width: "300px",
+          borderRadius: "10px",
+          overflow: "hidden",
+          background: "#fff",
+          boxShadow: "0 12px 45px rgba(0,0,0,.3)",
+          font: "14px/1.4 Arial,sans-serif",
+          color: "#222"
+        });
+        document.body.appendChild(popover);
+      }
+      document.getElementById(IDS2.launcher)?.setAttribute("aria-expanded", "true");
+      const summary = applicationSummary(readMailContext());
+      popover.dataset.summary = JSON.stringify(summary);
+      const line = (label, value) => {
+        const row = document.createElement("div");
+        const strong = document.createElement("strong");
+        strong.textContent = `${label}: `;
+        row.append(strong, value || "aus der Mail nicht ablesbar");
+        return row;
+      };
+      const head = document.createElement("div");
+      styled2(head, { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", color: "#fff", background: "#ef6c00", fontWeight: "700" });
+      const title = document.createElement("span");
+      title.textContent = "Bewerbungsmail erkannt";
+      title.appendChild(kamHelp.tip("outlook-match-outen", { tone: "dark" }));
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.textContent = "×";
+      closeBtn.setAttribute("aria-label", "Schließen");
+      styled2(closeBtn, { border: "0", background: "transparent", color: "#fff", fontSize: "20px", lineHeight: "1", cursor: "pointer" });
+      closeBtn.addEventListener("click", closePopover);
+      head.append(title, closeBtn);
+      const outenBtn = buildButton("Match outen", { action: "outen", primary: true });
+      outenBtn.addEventListener("click", () => {
+        closePopover();
+        openWizard(readMailContext());
+      });
+      const body = buildBody([
+        line("Kandidat", summary.candidateName),
+        line("Arbeitgeber", summary.employerName),
+        buildActions([outenBtn])
+      ]);
+      styled2(body, { padding: "12px 14px", gap: "6px" });
+      popover.replaceChildren(head, body);
     }
     function renderLoading(dialog, text) {
       dialog.replaceChildren(buildHead("Match Outen"), buildBody([buildNote(text)]));
@@ -6889,7 +7004,7 @@
       dialog.replaceChildren(
         buildHead("Match Outen – Arbeitgeber bestätigen"),
         buildBody([
-          buildNote(`Betreff: „${state.parsed.candidateName}: ${state.parsed.vacancyTitle} - ${state.parsed.employerName}“. Bitte den passenden Arbeitgeber auswählen.`),
+          buildNote(`${describeParsed(state.parsed)}. Bitte den passenden Arbeitgeber auswählen.`),
           list,
           buildActions([closeBtn, continueBtn])
         ])
@@ -6900,7 +7015,7 @@
       renderLoading(dialog, `Lade Matches bei „${state.employer.name}“ …`);
       const matches = await matchesForEmployer(state.employer.id);
       state.matches = matches;
-      const wantedName = state.profile?.candidateName || state.parsed.candidateName;
+      const wantedName = state.parsed.source === "manual" ? state.parsed.candidateName : state.profile?.candidateName || state.parsed.candidateName;
       state.wantedName = wantedName;
       const byName = filterMatchesByName(matches, wantedName);
       if (byName.length === 1) {
@@ -7057,36 +7172,83 @@
       );
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
     }
-    function openWizard(rawSubject) {
-      document.getElementById(IDS2.dialog)?.remove();
-      const parsed = parseSubject(rawSubject);
-      const dialog = document.createElement("dialog");
-      dialog.id = IDS2.dialog;
-      styleDialogFrame(dialog);
-      document.body.appendChild(dialog);
-      const state = { parsed, profile: parseProfileFromMailBody(readMailBodyText()), employer: null, matchId: null, matches: [] };
-      if (!parsed) {
-        renderError(dialog, `Der Betreff „${rawSubject || "(leer)"}“ passt nicht auf das erwartete Muster „Bewerbung: Kandidat: Vakanztitel - Firma (Werkia)“. Bitte die passende Mail öffnen oder den Match im Adminpanel manuell suchen.`);
-        dialog.showModal();
-        return;
-      }
-      renderLoading(dialog, `Suche Arbeitgeber „${parsed.employerName}“ …`);
-      dialog.showModal();
-      searchEmployersByName(parsed.employerName).then((employers) => {
+    function describeParsed(parsed) {
+      if (parsed.source === "manual") return `Eingabe: Kandidat „${parsed.candidateName || "(leer)"}“, Arbeitgeber „${parsed.employerName}“`;
+      return `Betreff: „${parsed.candidateName}: ${parsed.vacancyTitle} - ${parsed.employerName}“`;
+    }
+    function renderManualStep(dialog, state, message) {
+      const buildInput = (labelText, value) => {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = value || "";
+        styled2(input, { boxSizing: "border-box", width: "100%", padding: "9px", border: "1px solid #bbb", borderRadius: "5px", font: "inherit" });
+        const label = document.createElement("label");
+        styled2(label, { display: "grid", gap: "5px", fontWeight: "700" });
+        label.append(labelText, input);
+        return { label, input };
+      };
+      const employerField = buildInput("Arbeitgeber", state.parsed?.employerName);
+      const candidateField = buildInput("Kandidat", state.parsed?.source === "manual" ? state.parsed.candidateName : state.profile?.candidateName || state.parsed?.candidateName);
+      const closeBtn = buildButton("Abbrechen", { action: "close" });
+      const continueBtn = buildButton("Suchen", { action: "continue", primary: true });
+      closeBtn.addEventListener("click", () => dialog.close());
+      const submit = () => {
+        const employerName = employerField.input.value.trim();
+        if (!employerName) {
+          employerField.input.focus();
+          return;
+        }
+        state.parsed = { candidateName: candidateField.input.value.trim(), vacancyTitle: "", employerName, source: "manual" };
+        startEmployerSearch(dialog, state);
+      };
+      continueBtn.addEventListener("click", submit);
+      [employerField.input, candidateField.input].forEach((input) => input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submit();
+        }
+      }));
+      dialog.replaceChildren(
+        buildHead("Match Outen – Arbeitgeber suchen"),
+        buildBody([buildNote(message), employerField.label, candidateField.label, buildActions([closeBtn, continueBtn])])
+      );
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+      (employerField.input.value ? candidateField.input : employerField.input).focus();
+    }
+    function startEmployerSearch(dialog, state) {
+      const { employerName } = state.parsed;
+      renderLoading(dialog, `Suche Arbeitgeber „${employerName}“ …`);
+      searchEmployersByName(employerName).then((employers) => {
         if (!employers.length) {
-          renderError(dialog, [
-            `Kein Arbeitgeber gefunden für „${parsed.employerName}“. `,
-            { text: "Arbeitgeberliste im Adminpanel öffnen", href: employerListUrl() },
-            " und manuell prüfen."
+          renderManualStep(dialog, state, [
+            `Kein Arbeitgeber gefunden für „${employerName}“. Bitte den Namen anpassen oder in der `,
+            { text: "Arbeitgeberliste im Adminpanel", href: employerListUrl() },
+            " nachsehen."
           ]);
           return;
         }
-        if (employers.length === 1 && normalise(employers[0].name) === normalise(parsed.employerName)) {
+        if (employers.length === 1 && normalise(employers[0].name) === normalise(employerName)) {
           state.employer = employers[0];
           return loadMatches2(dialog, state);
         }
         renderEmployerPicker(dialog, state, employers);
       }).catch((error) => renderCaughtError(dialog, error));
+    }
+    function openWizard(context) {
+      document.getElementById(IDS2.dialog)?.remove();
+      const dialog = document.createElement("dialog");
+      dialog.id = IDS2.dialog;
+      styleDialogFrame(dialog);
+      document.body.appendChild(dialog);
+      const resolved = resolveApplicationSubject(context);
+      const state = { parsed: resolved?.parsed || null, profile: parseProfileFromMailBody(context.bodyText), employer: null, matchId: null, matches: [] };
+      dialog.showModal();
+      if (!state.parsed) {
+        const shownSubject = context.subjects[0] || "(leer)";
+        renderManualStep(dialog, state, `Der Betreff „${shownSubject}“ hat nicht das Format „Bewerbung: Kandidat: Vakanz - Firma (Werkia)“, und im Mailtext steht keine zitierte Bewerbungsmail. Bitte den Arbeitgeber eintragen.`);
+        return;
+      }
+      startEmployerSearch(dialog, state);
     }
     let scheduled = false;
     function scheduleCheck() {
@@ -7094,14 +7256,19 @@
       scheduled = true;
       runtime.setTimeout(() => {
         scheduled = false;
-        const subject = readSubjectFromReadingPane();
-        if (looksLikeApplicationSubject(subject)) ensureButton();
-        else removeButton();
+        const context = readMailContext();
+        if (!detectApplicationMail(context).matched) {
+          removeLauncher();
+          return;
+        }
+        ensureLauncher();
+        const popover = document.getElementById(IDS2.popover);
+        if (popover && popover.dataset.summary !== JSON.stringify(applicationSummary(context))) renderPopover();
       }, 400);
     }
     runtime.createMutationObserver(scheduleCheck).observe(document.documentElement, { childList: true, subtree: true });
     runtime.addCleanup(() => {
-      document.getElementById(IDS2.button)?.remove();
+      removeLauncher();
       document.getElementById(IDS2.dialog)?.remove();
     });
     scheduleCheck();
