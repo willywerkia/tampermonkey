@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.7.106
+// @version      1.7.107
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1683,7 +1683,7 @@
       steps: [
         "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
         "„Alle ändern“ klicken.",
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         "Ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
       ],
@@ -1704,7 +1704,7 @@
       kind: "write",
       summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         `Den neuen ${team} Status wählen. „Leer“ entfernt den Status. Bei „Out“ ist ein Grund Pflicht${freeTextReason ? ", bei „Anderes“ zusätzlich ein eigener Text" : ""}.`,
         "Die Rückfrage prüfen und bestätigen."
       ],
@@ -1727,7 +1727,7 @@
       kind: "write",
       summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
       ],
@@ -1747,7 +1747,7 @@
       kind: "write",
       summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
       ],
@@ -4539,21 +4539,24 @@
   }
 
   // ../../shared/js/bulk-match-actions/dialog-kit.js
-  function checklistHtml({ items, allLabel }) {
+  function checklistHtml({ items, allLabel, searchPlaceholder }) {
     const groups = /* @__PURE__ */ new Map();
     items.forEach((item) => {
       const key = item.groupKey ?? item.group ?? "";
       if (!groups.has(key)) groups.set(key, { label: item.group || "", entries: [] });
       groups.get(key).entries.push(item);
     });
+    const placeholder = searchPlaceholder || (groups.size > 1 ? "Arbeitgeber oder Kandidat suchen …" : "Suchen …");
     const entry = (item) => `<label class="wkw-item"><input type="checkbox" name="item" value="${escapeHtml(item.value)}" checked> ${escapeHtml(item.label)}</label>`;
     const body = [...groups.values()].map(({ label: label2, entries }) => label2 ? `<div class="wkw-group"><label class="wkw-group-head"><input type="checkbox" data-group checked> ${escapeHtml(label2)} (${entries.length})</label>${entries.map(entry).join("")}</div>` : entries.map(entry).join("")).join("");
     return `
+    <input type="search" class="wkw-search" data-search placeholder="${escapeHtml(placeholder)}" autocomplete="off">
     <div class="wkw-list">
       <label class="wkw-all"><input type="checkbox" data-all checked> ${escapeHtml(allLabel)}</label>
       ${body}
     </div>`;
   }
+  var normalize2 = (text) => String(text || "").toLocaleLowerCase("de").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim();
   function syncBox(box, children) {
     const checked = children.filter((child) => child.checked).length;
     box.checked = checked === children.length && checked > 0;
@@ -4561,28 +4564,51 @@
   }
   function wireChecklist(root) {
     const all = root.querySelector("[data-all]");
+    const search = root.querySelector("[data-search]");
     const items = [...root.querySelectorAll('input[name="item"]')];
     const groups = [...root.querySelectorAll(".wkw-group")].map((group) => ({
+      element: group,
       box: group.querySelector("[data-group]"),
+      label: normalize2(group.querySelector(".wkw-group-head")?.textContent.replace(/\s*\(\d+\)\s*$/, "")),
       items: [...group.querySelectorAll('input[name="item"]')]
     }));
+    const shown = (list) => list.filter((item) => !item.closest("label").hidden);
     const sync = () => {
-      groups.forEach((group) => syncBox(group.box, group.items));
-      syncBox(all, items);
+      groups.forEach((group) => syncBox(group.box, shown(group.items)));
+      syncBox(all, shown(items));
+    };
+    const applyFilter = () => {
+      const query = normalize2(search?.value).replace(/\s+/g, " ");
+      const groupOf = new Map(groups.flatMap((group) => group.items.map((item) => [item, group])));
+      items.forEach((item) => {
+        const group = groupOf.get(item);
+        const text = `${group ? `${group.label} ` : ""}${normalize2(item.closest("label").textContent)}`;
+        item.closest("label").hidden = !text.replace(/\s+/g, " ").includes(query);
+      });
+      groups.forEach((group) => {
+        group.element.hidden = shown(group.items).length === 0;
+      });
+      sync();
     };
     all.addEventListener("change", () => {
-      items.forEach((item) => {
+      shown(items).forEach((item) => {
         item.checked = all.checked;
       });
       sync();
     });
     groups.forEach((group) => group.box.addEventListener("change", () => {
-      group.items.forEach((item) => {
+      shown(group.items).forEach((item) => {
         item.checked = group.box.checked;
       });
       sync();
     }));
     items.forEach((item) => item.addEventListener("change", sync));
+    if (search) {
+      search.addEventListener("input", applyFilter);
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.preventDefault();
+      });
+    }
   }
   function checkedValues(root) {
     return new Set([...root.querySelectorAll('input[name="item"]:checked')].map((box) => box.value));
@@ -4605,6 +4631,7 @@
       ${dialog} .wkw-body [hidden] { display: none !important; }
       ${dialog} label { display: grid; gap: 5px; font-weight: 700; }
       ${dialog} select, ${dialog} input:not([type="checkbox"]) { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      ${dialog} .wkw-search { margin-bottom: -8px; }
       ${dialog} .wkw-list { max-height: 260px; overflow: auto; border: 1px solid #ddd; border-radius: 5px; padding: 6px 10px; }
       ${dialog} .wkw-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; padding: 3px 0; }
       ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
@@ -4833,7 +4860,7 @@
   }
 }`;
   }
-  function normalize2(value) {
+  function normalize3(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
   function parseIsoDate(isoDate) {
@@ -4959,18 +4986,18 @@
       const match = link.href.match(/#\/Employer\/([^/]+)\//i);
       return {
         id: match?.[1] || link.href,
-        name: normalize2(link.textContent) || "Unbekannter Arbeitgeber"
+        name: normalize3(link.textContent) || "Unbekannter Arbeitgeber"
       };
     }
     function candidateNameFromRow(row) {
       const own = row.querySelector(CANDIDATE_LINK_SELECTOR);
-      if (own) return normalize2(own.textContent);
+      if (own) return normalize3(own.textContent);
       const parentRow = row.closest("table")?.closest("tr")?.previousElementSibling;
-      return normalize2(parentRow?.querySelector(CANDIDATE_LINK_SELECTOR)?.textContent);
+      return normalize3(parentRow?.querySelector(CANDIDATE_LINK_SELECTOR)?.textContent);
     }
     function labelFromRow(row) {
       const candidate = candidateNameFromRow(row);
-      const vacancy = normalize2(row.querySelector(JOB_POSITION_LINK_SELECTOR)?.textContent);
+      const vacancy = normalize3(row.querySelector(JOB_POSITION_LINK_SELECTOR)?.textContent);
       const label2 = [candidate, vacancy].filter(Boolean).join(" – ");
       return label2.length > 90 ? `${label2.slice(0, 89)}…` : label2;
     }
@@ -5332,7 +5359,7 @@
       const targetStatus = statusOptions.find((status2) => status2.value === targetValue);
       const outFeedbackValue = dialog.querySelector('[name="outFeedback"]').value;
       const outFeedback = outFeedbackOptions.find((reason) => reason.value === outFeedbackValue);
-      const outFeedbackText = normalize2(dialog.querySelector('[name="outFeedbackText"]').value);
+      const outFeedbackText = normalize3(dialog.querySelector('[name="outFeedbackText"]').value);
       if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
       if (!targetStatus || targetValue === "__choose__") return setStatus(`Bitte einen ${team} Status auswählen.`, "error");
       const isOut = targetStatus.value === "out";
@@ -5541,18 +5568,19 @@
     const kit = createBulkDialogKit({ ids: IDS2, buttonIds: [IDS2.wvlButton, IDS2.statusButton], stopNoun: "Kandidat" });
     const { setStatus } = kit;
     const tip = (id) => cemHelp.tipHtml(id, { tone: "dark" });
-    const normalize3 = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const normalize4 = (value) => String(value || "").replace(/\s+/g, " ").trim();
     function getCandidates() {
       const seen = /* @__PURE__ */ new Set();
       return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(":scope > td.column-status") && row.querySelector(":scope > td.column-followUpDate")).map((row) => {
         const link = row.querySelector(`:scope > td ${CANDIDATE_LINK_SELECTOR2}`);
         const id = candidateIdFromHref(link?.getAttribute("href") || link?.href);
-        return id ? { id, name: normalize3(link.textContent) || id } : null;
+        return id ? { id, name: normalize4(link.textContent) || id } : null;
       }).filter((candidate) => candidate && !seen.has(candidate.id) && seen.add(candidate.id));
     }
     function candidateChecklist(candidates) {
       return {
         allLabel: `Alle (${candidates.length} sichtbare Kandidaten)`,
+        searchPlaceholder: "Kandidat suchen …",
         items: candidates.map((candidate) => ({ value: candidate.id, label: candidate.name }))
       };
     }

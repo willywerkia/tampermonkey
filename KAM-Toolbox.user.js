@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.106
+// @version      1.5.107
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1596,7 +1596,7 @@
       steps: [
         "Die Liste so filtern, dass nur die gewünschten Matches sichtbar sind.",
         "„Alle ändern“ klicken.",
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         "Ein Datum setzen. Ein leeres Datumsfeld entfernt die WVL.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird gespeichert."
       ],
@@ -1617,7 +1617,7 @@
       kind: "write",
       summary: `„Alle ändern“ im Spaltenkopf ${team} Status setzt denselben Status für viele sichtbare Matches.`,
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         `Den neuen ${team} Status wählen. „Leer“ entfernt den Status. Bei „Out“ ist ein Grund Pflicht${freeTextReason ? ", bei „Anderes“ zusätzlich ein eigener Text" : ""}.`,
         "Die Rückfrage prüfen und bestätigen."
       ],
@@ -1640,7 +1640,7 @@
       kind: "write",
       summary: "„Alle weiterleiten“ im Spaltenkopf der Termine setzt alle Terminvorschläge mit Status „Vorschlag“ auf „Weitergeleitet“, genau wie der Knopf „Weiterleiten“ im Termindialog.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         "„Weiterleiten“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird weitergeleitet."
       ],
@@ -1660,7 +1660,7 @@
       kind: "write",
       summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
       steps: [
-        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen.",
+        "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen.",
         "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
       ],
@@ -1921,21 +1921,24 @@
   }
 
   // ../../shared/js/bulk-match-actions/dialog-kit.js
-  function checklistHtml({ items, allLabel }) {
+  function checklistHtml({ items, allLabel, searchPlaceholder }) {
     const groups = /* @__PURE__ */ new Map();
     items.forEach((item) => {
       const key = item.groupKey ?? item.group ?? "";
       if (!groups.has(key)) groups.set(key, { label: item.group || "", entries: [] });
       groups.get(key).entries.push(item);
     });
+    const placeholder = searchPlaceholder || (groups.size > 1 ? "Arbeitgeber oder Kandidat suchen …" : "Suchen …");
     const entry = (item) => `<label class="wkw-item"><input type="checkbox" name="item" value="${escapeHtml(item.value)}" checked> ${escapeHtml(item.label)}</label>`;
     const body = [...groups.values()].map(({ label, entries }) => label ? `<div class="wkw-group"><label class="wkw-group-head"><input type="checkbox" data-group checked> ${escapeHtml(label)} (${entries.length})</label>${entries.map(entry).join("")}</div>` : entries.map(entry).join("")).join("");
     return `
+    <input type="search" class="wkw-search" data-search placeholder="${escapeHtml(placeholder)}" autocomplete="off">
     <div class="wkw-list">
       <label class="wkw-all"><input type="checkbox" data-all checked> ${escapeHtml(allLabel)}</label>
       ${body}
     </div>`;
   }
+  var normalize = (text) => String(text || "").toLocaleLowerCase("de").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim();
   function syncBox(box, children) {
     const checked = children.filter((child) => child.checked).length;
     box.checked = checked === children.length && checked > 0;
@@ -1943,28 +1946,51 @@
   }
   function wireChecklist(root) {
     const all = root.querySelector("[data-all]");
+    const search = root.querySelector("[data-search]");
     const items = [...root.querySelectorAll('input[name="item"]')];
     const groups = [...root.querySelectorAll(".wkw-group")].map((group) => ({
+      element: group,
       box: group.querySelector("[data-group]"),
+      label: normalize(group.querySelector(".wkw-group-head")?.textContent.replace(/\s*\(\d+\)\s*$/, "")),
       items: [...group.querySelectorAll('input[name="item"]')]
     }));
+    const shown = (list) => list.filter((item) => !item.closest("label").hidden);
     const sync = () => {
-      groups.forEach((group) => syncBox(group.box, group.items));
-      syncBox(all, items);
+      groups.forEach((group) => syncBox(group.box, shown(group.items)));
+      syncBox(all, shown(items));
+    };
+    const applyFilter = () => {
+      const query = normalize(search?.value).replace(/\s+/g, " ");
+      const groupOf = new Map(groups.flatMap((group) => group.items.map((item) => [item, group])));
+      items.forEach((item) => {
+        const group = groupOf.get(item);
+        const text = `${group ? `${group.label} ` : ""}${normalize(item.closest("label").textContent)}`;
+        item.closest("label").hidden = !text.replace(/\s+/g, " ").includes(query);
+      });
+      groups.forEach((group) => {
+        group.element.hidden = shown(group.items).length === 0;
+      });
+      sync();
     };
     all.addEventListener("change", () => {
-      items.forEach((item) => {
+      shown(items).forEach((item) => {
         item.checked = all.checked;
       });
       sync();
     });
     groups.forEach((group) => group.box.addEventListener("change", () => {
-      group.items.forEach((item) => {
+      shown(group.items).forEach((item) => {
         item.checked = group.box.checked;
       });
       sync();
     }));
     items.forEach((item) => item.addEventListener("change", sync));
+    if (search) {
+      search.addEventListener("input", applyFilter);
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.preventDefault();
+      });
+    }
   }
   function checkedValues(root) {
     return new Set([...root.querySelectorAll('input[name="item"]:checked')].map((box) => box.value));
@@ -1987,6 +2013,7 @@
       ${dialog} .wkw-body [hidden] { display: none !important; }
       ${dialog} label { display: grid; gap: 5px; font-weight: 700; }
       ${dialog} select, ${dialog} input:not([type="checkbox"]) { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }
+      ${dialog} .wkw-search { margin-bottom: -8px; }
       ${dialog} .wkw-list { max-height: 260px; overflow: auto; border: 1px solid #ddd; border-radius: 5px; padding: 6px 10px; }
       ${dialog} .wkw-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; padding: 3px 0; }
       ${dialog} .wkw-list label.wkw-all { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 3px; }
@@ -2215,7 +2242,7 @@
   }
 }`;
   }
-  function normalize(value) {
+  function normalize2(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
   function parseIsoDate(isoDate) {
@@ -2341,18 +2368,18 @@
       const match = link.href.match(/#\/Employer\/([^/]+)\//i);
       return {
         id: match?.[1] || link.href,
-        name: normalize(link.textContent) || "Unbekannter Arbeitgeber"
+        name: normalize2(link.textContent) || "Unbekannter Arbeitgeber"
       };
     }
     function candidateNameFromRow(row) {
       const own = row.querySelector(CANDIDATE_LINK_SELECTOR);
-      if (own) return normalize(own.textContent);
+      if (own) return normalize2(own.textContent);
       const parentRow = row.closest("table")?.closest("tr")?.previousElementSibling;
-      return normalize(parentRow?.querySelector(CANDIDATE_LINK_SELECTOR)?.textContent);
+      return normalize2(parentRow?.querySelector(CANDIDATE_LINK_SELECTOR)?.textContent);
     }
     function labelFromRow(row) {
       const candidate = candidateNameFromRow(row);
-      const vacancy = normalize(row.querySelector(JOB_POSITION_LINK_SELECTOR)?.textContent);
+      const vacancy = normalize2(row.querySelector(JOB_POSITION_LINK_SELECTOR)?.textContent);
       const label = [candidate, vacancy].filter(Boolean).join(" – ");
       return label.length > 90 ? `${label.slice(0, 89)}…` : label;
     }
@@ -2714,7 +2741,7 @@
       const targetStatus = statusOptions.find((status) => status.value === targetValue);
       const outFeedbackValue = dialog.querySelector('[name="outFeedback"]').value;
       const outFeedback = outFeedbackOptions.find((reason) => reason.value === outFeedbackValue);
-      const outFeedbackText = normalize(dialog.querySelector('[name="outFeedbackText"]').value);
+      const outFeedbackText = normalize2(dialog.querySelector('[name="outFeedbackText"]').value);
       if (!selection.length) return setStatus("Bitte mindestens ein Match anhaken.", "error");
       if (!targetStatus || targetValue === "__choose__") return setStatus(`Bitte einen ${team} Status auswählen.`, "error");
       const isOut = targetStatus.value === "out";
@@ -2893,7 +2920,7 @@
     __typename
   }
 }`;
-  function normalize2(value) {
+  function normalize3(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
   async function fetchEmployerContacts(request, employerIds) {
@@ -2901,7 +2928,7 @@
     if (!employerIds.length) return index;
     const result = await request(EMPLOYER_CONTACT_QUERY, { filter: { ids: employerIds } });
     for (const item of result?.items || []) {
-      if (item?.id) index.set(item.id, normalize2(item.directContact));
+      if (item?.id) index.set(item.id, normalize3(item.directContact));
     }
     return index;
   }
@@ -2922,7 +2949,7 @@
   function isTargetPage2(hash = location.hash) {
     return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(hash);
   }
-  function normalize3(value) {
+  function normalize4(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
   function getContactEmployerId(href) {
@@ -2940,7 +2967,7 @@
       const link = row.querySelector(EMPLOYER_LINK_SELECTOR2);
       if (!link) return null;
       const id = getContactEmployerId(link.href) || link.href;
-      return { id, name: normalize3(link.textContent) || "Unbekannter Arbeitgeber" };
+      return { id, name: normalize4(link.textContent) || "Unbekannter Arbeitgeber" };
     }
     function getEmployerChoices() {
       const choices = /* @__PURE__ */ new Map();
@@ -4127,7 +4154,7 @@
   var COMPANY_FLAG_TEXT = "[absprache vor ofm]";
 
   // ../../shared/js/werkia-questionnaire/dialog.js
-  function normalize4(value, fold) {
+  function normalize5(value, fold) {
     const v = clean(value);
     return fold ? asciiFold(v) : v;
   }
@@ -4151,8 +4178,8 @@
     if (/Kandidat Dateien/i.test(text)) return false;
     if (strictMode && /Kandidatendateien|Zusammenführen|Halb anonym/i.test(text)) return false;
     const rawLabels = getDialogLabelTexts(dialog);
-    const labelSet = new Set(rawLabels.map((l) => normalize4(l, fold)));
-    const has = (literal) => labelSet.has(normalize4(literal, fold));
+    const labelSet = new Set(rawLabels.map((l) => normalize5(l, fold)));
+    const has = (literal) => labelSet.has(normalize5(literal, fold));
     const count = labels.filter((l) => has(l)).length;
     const hasHeader = has("Kandidat") && has("Job");
     if (!strictMode) return hasHeader && count >= 3;
@@ -4168,10 +4195,10 @@
   }
   function getFieldsByLabel(dialog, labelText, { fold = false } = {}) {
     if (!dialog) return [];
-    const wanted = normalize4(labelText, fold);
+    const wanted = normalize5(labelText, fold);
     return [...dialog.querySelectorAll("span.ra-field")].filter((field) => {
       const lbl = field.querySelector("p span")?.innerText?.trim() || "";
-      return normalize4(lbl, fold) === wanted;
+      return normalize5(lbl, fold) === wanted;
     });
   }
   var VALUE_SELECTOR = "span.MuiTypography-body2, p.MuiTypography-body2, .MuiTypography-body2";
@@ -4197,14 +4224,14 @@
   function getPositionEls(dialog, labelText, { fold = false } = {}) {
     const fields = getFieldsByLabel(dialog, labelText, { fold });
     if (!fields.length) return [];
-    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize4(el2.innerText || el2.textContent, fold) !== "berufsausbildung");
+    return [...fields[0].querySelectorAll(VALUE_SELECTOR)].filter((el2) => (el2.innerText || el2.textContent || "").trim() && normalize5(el2.innerText || el2.textContent, fold) !== "berufsausbildung");
   }
   function getQuestionnaireHeaderValue(dialog, labelText, { fold = false } = {}) {
     const field = getFieldsByLabel(dialog, labelText, { fold })[0];
-    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize4(el2.textContent, fold) !== normalize4(labelText, fold)) : null;
+    const value = field ? [...field.querySelectorAll(`${VALUE_SELECTOR}, a, .MuiChip-label`)].find((el2) => el2.textContent?.trim() && normalize5(el2.textContent, fold) !== normalize5(labelText, fold)) : null;
     if (value?.textContent?.trim()) return value.textContent.trim();
     const lines = (dialog.innerText || dialog.textContent || "").split("\n").map((line) => line.trim()).filter(Boolean);
-    const labelIndex = lines.findIndex((line) => normalize4(line, fold) === normalize4(labelText, fold));
+    const labelIndex = lines.findIndex((line) => normalize5(line, fold) === normalize5(labelText, fold));
     return labelIndex >= 0 ? lines[labelIndex + 1] || "" : "";
   }
 
