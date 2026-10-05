@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.112
+// @version      1.6.113
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2068,11 +2068,12 @@
     {
       id: "vacancy-status-inline",
       title: "Vakanz-Status direkt in der Liste",
-      page: "Vakanzen",
-      routes: [ROUTES.vacancyList],
+      page: `Vakanzen, ${MY_MATCHES}`,
+      routes: [ROUTES.vacancyList, ...onMyMatches],
       kind: "write",
-      summary: "In der Vakanzliste ist die Statusspalte ein Dropdown. Eine Auswahl speichert den neuen Status sofort, ohne dass du die Vakanz öffnest.",
+      summary: "In der Vakanzliste ist die Statusspalte ein Dropdown, in Meine Matches sitzt dasselbe Dropdown unter dem Vakanztitel. Eine Auswahl speichert den neuen Status der Vakanz sofort, ohne dass du sie öffnest.",
       notes: [
+        "In Meine Matches gilt der Status für die Vakanz, nicht für den Match. Hat dieselbe Vakanz mehrere Matches in der Liste, ändern sich alle Zeilen mit.",
         "Neben dem Dropdown erscheint kurz ✓, wenn gespeichert wurde. Schlägt das Speichern fehl, springt das Dropdown auf den alten Status zurück und eine Meldung erklärt den Fehler.",
         "Der farbige Rand zeigt den Status auf einen Blick, zum Beispiel grün für „Veröffentlicht“ und orange für „Pausiert“.",
         "Die Liste lädt nicht neu. Ist sie nach Status gefiltert, verschwindet die Zeile erst beim nächsten Neu laden."
@@ -8611,7 +8612,11 @@
   }
   var clean3 = (text) => String(text || "").replace(/\s+/g, " ").trim();
   function executeVacancyStatus(runtime, config) {
-    const { sourcePath, getRequest, namespace, runLock = null, lockId = "vacancy-status", bulk = null } = config;
+    const { sourcePath, getRequest, namespace, runLock = null, lockId = "vacancy-status" } = config;
+    const inMatchList = config.placement === "match-list";
+    const bulk = inMatchList ? null : config.bulk || null;
+    const isRoute = inMatchList ? config.isRoute : isVacancyListRoute;
+    const placement = inMatchList ? "match-list" : "vacancy-list";
     runtime.registerSource?.(sourcePath);
     const IDS4 = {
       style: `werkia-${namespace}-vacancy-status-style`,
@@ -8622,6 +8627,7 @@
     };
     const loaded = /* @__PURE__ */ new Map();
     const loading = /* @__PURE__ */ new Set();
+    const failed = /* @__PURE__ */ new Set();
     const written = /* @__PURE__ */ new Map();
     function injectStyle() {
       if (document.getElementById(IDS4.style)) return;
@@ -8635,6 +8641,7 @@
       .${WRAP_CLASS} select:hover { border-color: #b6a4ff; border-left-color: var(--wvs-tone); }
       .${WRAP_CLASS} select:focus-visible { outline: 2px solid #b6a4ff; outline-offset: 1px; }
       .${WRAP_CLASS} select:disabled { opacity: .6; cursor: wait; }
+      .${WRAP_CLASS}[data-placement="match-list"] { display: flex; margin-top: 4px; }
       .${WRAP_CLASS} [data-state] { min-width: 14px; font-weight: 700; }
       .${WRAP_CLASS} [data-state="ok"] { color: #18752b; }
       .${WRAP_CLASS} [data-state="error"] { color: #b3261e; }
@@ -8653,6 +8660,13 @@
       return "";
     }
     function visibleRows() {
+      if (inMatchList) {
+        return [...document.querySelectorAll("tbody tr.RaDataTable-row")].map((row) => {
+          const cell = row.querySelector(":scope > td.column-jobPositionId");
+          const id = cell ? vacancyIdFromRow(cell) : "";
+          return id ? { row, cell, id } : null;
+        }).filter(Boolean);
+      }
       return [...document.querySelectorAll("tbody tr")].map((row) => {
         const cell = row.querySelector(":scope > td.column-status");
         const id = cell ? vacancyIdFromRow(row) : "";
@@ -8660,6 +8674,7 @@
       }).filter(Boolean);
     }
     function currentStatus({ cell, id }) {
+      if (inMatchList) return loaded.get(id) || "";
       const text = cellText(cell);
       const own = written.get(id);
       if (own && own.staleText === text) return own.value;
@@ -8667,7 +8682,7 @@
       return statusFromText(text) || loaded.get(id) || "";
     }
     async function loadUnknown(ids) {
-      const missing = ids.filter((id) => !loading.has(id) && !loaded.has(id));
+      const missing = [...new Set(ids)].filter((id) => !loading.has(id) && !loaded.has(id) && !failed.has(id));
       if (!missing.length) return;
       missing.forEach((id) => loading.add(id));
       try {
@@ -8676,8 +8691,12 @@
           (result?.items || []).forEach((item) => {
             if (item?.id) loaded.set(item.id, item.status || "");
           });
+          group.forEach((id) => {
+            if (!loaded.has(id)) loaded.set(id, "");
+          });
         }
       } catch (error) {
+        missing.forEach((id) => failed.add(id));
         console.warn("[Vakanz-Status] Status konnten nicht geladen werden:", error);
       } finally {
         missing.forEach((id) => loading.delete(id));
@@ -8722,6 +8741,7 @@
       const wrap2 = document.createElement("span");
       wrap2.className = WRAP_CLASS;
       wrap2.dataset.vacancyId = entry.id;
+      wrap2.dataset.placement = placement;
       wrap2.innerHTML = '<select aria-label="Vakanz-Status"></select><span data-state=""></span>';
       ["click", "mousedown", "mouseup", "pointerdown", "pointerup", "keydown"].forEach((type) => {
         wrap2.addEventListener(type, (event) => event.stopPropagation());
@@ -8743,6 +8763,7 @@
           remember({ id: entry.id, cell: wrap2.parentElement || entry.cell }, next);
           wrap2.dataset.value = next;
           setState(wrap2, "ok", `Gespeichert: ${statusLabel(next)}`);
+          scheduleInstall();
           runtime.setTimeout(() => {
             if (wrap2.querySelector('[data-state="ok"]')) setState(wrap2, "");
           }, 2500);
@@ -8765,7 +8786,7 @@
       }
       if (!wrap2) {
         wrap2 = buildWrap(entry);
-        entry.cell.setAttribute(CELL_ATTR, "");
+        if (!inMatchList) entry.cell.setAttribute(CELL_ATTR, "");
         entry.cell.appendChild(wrap2);
       }
       const select = wrap2.querySelector("select");
@@ -8778,8 +8799,8 @@
       setTone(select);
     }
     function removeInline() {
-      document.querySelectorAll(`.${WRAP_CLASS}`).forEach((wrap2) => wrap2.remove());
-      document.querySelectorAll(`td[${CELL_ATTR}]`).forEach((cell) => cell.removeAttribute(CELL_ATTR));
+      document.querySelectorAll(`.${WRAP_CLASS}[data-placement="${placement}"]`).forEach((wrap2) => wrap2.remove());
+      if (!inMatchList) document.querySelectorAll(`td[${CELL_ATTR}]`).forEach((cell) => cell.removeAttribute(CELL_ATTR));
     }
     const kit = bulk ? createBulkDialogKit({
       ids: { dialog: IDS4.dialog, style: IDS4.dialogStyle, status: IDS4.dialogStatus },
@@ -8864,7 +8885,7 @@
       });
     }
     function install() {
-      if (!isVacancyListRoute(location.hash)) {
+      if (!isRoute(location.hash)) {
         teardown();
         return;
       }
@@ -8878,6 +8899,8 @@
     }
     function teardown() {
       removeInline();
+      if (inMatchList) loaded.clear();
+      failed.clear();
       document.getElementById(IDS4.bulkButton)?.remove();
       if (!kit?.state.running) document.getElementById(IDS4.dialog)?.remove();
     }
@@ -8901,12 +8924,24 @@
   }
 
   // src/features/vacancy-status.js
+  var SOURCE_PATH = "kam/toolbox/src/features/vacancy-status.js";
+  function isKamMyMatchesRoute(hash) {
+    return /#\/KAM\/MyMatches(?:[/?]|$)/i.test(String(hash || ""));
+  }
   function executeVacancyStatus2(runtime) {
+    const getRequest = () => getKamGraphqlAdapter().request;
     executeVacancyStatus(runtime, {
-      sourcePath: "kam/toolbox/src/features/vacancy-status.js",
-      getRequest: () => getKamGraphqlAdapter().request,
+      sourcePath: SOURCE_PATH,
+      getRequest,
       namespace: "kam",
       bulk: { team: "KAM", tipHtml: () => kamHelp.tipHtml("vacancy-status-bulk", { tone: "dark" }) }
+    });
+    executeVacancyStatus(runtime, {
+      sourcePath: SOURCE_PATH,
+      getRequest,
+      namespace: "kam-matches",
+      placement: "match-list",
+      isRoute: isKamMyMatchesRoute
     });
   }
 
