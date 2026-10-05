@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.114
+// @version      1.6.115
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1856,15 +1856,16 @@
       page,
       routes,
       kind: "write",
-      summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ ab, deren vorgeschlagene Termine alle schon vorbei sind.",
+      summary: "„Vergangene ablehnen“ im Spaltenkopf der Termine lehnt alle Terminvorschläge mit Status „Vorschlag“ oder „Weitergeleitet“ ab, deren Termine alle schon vorbei sind.",
       steps: [
         "Im Dialog sind alle sichtbaren Matches angehakt, gruppiert nach Arbeitgeber. Einzelne Matches oder mit dem Haken am Arbeitgeber alle seine Matches abhaken, die unverändert bleiben sollen. Das Suchfeld über der Liste filtert nach Arbeitgeber oder Kandidat; „Alle“ wirkt dann nur auf die gefundenen. Wer sucht, bevor er einen Haken ändert, startet ohne Haken und wählt aus den Treffern. Hast du schon Haken geändert, bleibt deine Auswahl beim Suchen erhalten; die Rückfrage nennt dann, wie viele ausgewählte Matches die Suche gerade ausblendet.",
-        "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen Vorschläge.",
+        "„Ablehnen“ klicken. Die Toolbox lädt zuerst die offenen und weitergeleiteten Vorschläge.",
         "Die Rückfrage nennt die genaue Anzahl. Erst mit „OK“ wird abgelehnt."
       ],
       notes: [
         "Hat ein Vorschlag noch mindestens einen Termin in der Zukunft, bleibt er stehen.",
-        "Weitergeleitete, bestätigte und stattgefundene Termine bleiben unberührt.",
+        "Ein weitergeleiteter Termin ohne Datum gilt als vergangen: Beim Weiterleiten streicht das Adminpanel die bereits vergangenen Termine heraus.",
+        "Bestätigte und stattgefundene Termine bleiben unberührt.",
         "Die Tabelle lädt danach nicht neu, damit du direkt weiterarbeiten kannst. Sind alle Vorschläge eines Matches abgelehnt, werden seine Pills ausgegraut und durchgestrichen.",
         ...extraNotes
       ]
@@ -2592,15 +2593,20 @@
   function openInterviewIds(items) {
     return [...items || []].filter((interview) => interview?.id && OPEN_INTERVIEW_STATUSES.includes(interview.status)).map((interview) => interview.id);
   }
-  function suggestedInterviews(items) {
-    return [...items || []].filter((interview) => interview?.id && interview.status === "suggestion").map((interview) => ({ id: interview.id, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
+  function interviewsWithDates(items, statuses) {
+    return [...items || []].filter((interview) => interview?.id && statuses.includes(interview.status)).map((interview) => ({ id: interview.id, status: interview.status, dates: Array.isArray(interview.dates) ? interview.dates : [] }));
   }
+  var PAST_DECLINE_STATUSES = ["suggestion", "forwarded"];
   function isPastSuggestion(interview, now = Date.now()) {
     const dates = Array.isArray(interview?.dates) ? interview.dates : [];
     if (!dates.length) return false;
     const times = dates.map((date) => Date.parse(date));
     if (times.some(Number.isNaN)) return false;
     return Math.max(...times) < now;
+  }
+  function isPastInterview(interview, now = Date.now()) {
+    if (interview?.status === "forwarded" && !interview.dates?.length) return true;
+    return isPastSuggestion(interview, now);
   }
   var FORWARDED_CHIP_CLASSES = ["MuiChip-colorInterviewForwarded", "MuiChip-filledInterviewForwarded"];
   var FORWARDED_CHIP_BACKGROUND = "#b9e5fd";
@@ -2622,9 +2628,15 @@
     });
     return chips.length;
   }
-  function markSuggestionChipsDeclined(cell) {
+  function isForwardedChip(chip) {
+    if (!chip?.classList?.contains("MuiChip-root")) return false;
+    if (chip.dataset?.werkiaDeclined === "true") return false;
+    if ([...chip.classList].some((name) => /^MuiChip-(?:color|filled)InterviewForward/i.test(name))) return true;
+    return /^weitergeleitet$/i.test(String(chip.getAttribute("aria-label") || "").trim());
+  }
+  function markSuggestionChipsDeclined(cell, { includeForwarded = false } = {}) {
     if (!cell) return 0;
-    const chips = [...cell.querySelectorAll(".MuiChip-root")].filter(isSuggestionChip);
+    const chips = [...cell.querySelectorAll(".MuiChip-root")].filter((chip) => isSuggestionChip(chip) || includeForwarded && isForwardedChip(chip));
     chips.forEach((chip) => {
       chip.style.opacity = "0.45";
       chip.style.textDecoration = "line-through";
@@ -2959,7 +2971,7 @@
         throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
       }
     }
-    async function suggestedInterviewsForMatch(matchId) {
+    async function interviewsForMatch(matchId, statuses) {
       const request = getRequest();
       const perPage = 100;
       const interviews = [];
@@ -2968,7 +2980,7 @@
       let loaded = 0;
       while (loaded < total) {
         const result = await request(SUGGESTED_INTERVIEWS_QUERY, {
-          filter: { matchId, statuses: ["suggestion"] },
+          filter: { matchId, statuses },
           page,
           perPage,
           sortField: "status",
@@ -2976,7 +2988,7 @@
         });
         const items = result?.items || [];
         loaded += items.length;
-        interviews.push(...suggestedInterviews(items));
+        interviews.push(...interviewsWithDates(items, statuses));
         total = Number(result?.total?.count) || 0;
         if (!items.length || items.length < perPage) break;
         page += 1;
@@ -3005,6 +3017,7 @@
         done: "weitergeleitet",
         progress: "Leite weiter",
         empty: "Keine Terminvorschläge mit Status „Vorschlag“ gefunden.",
+        statuses: ["suggestion"],
         select: () => true,
         write: forwardInterview,
         markCell: markSuggestionChipsForwarded
@@ -3012,16 +3025,17 @@
       declinePast: {
         title: "Vergangene Terminvorschläge ablehnen",
         helpKey: "declinePast",
-        note: "Terminvorschläge mit Status „Vorschlag“, deren vorgeschlagene Termine alle in der Vergangenheit liegen, werden abgelehnt. Vorschläge mit mindestens einem Termin in der Zukunft und Termine mit anderem Status bleiben unverändert. Vor dem Ablehnen wird die genaue Anzahl angezeigt.",
+        note: "Terminvorschläge mit Status „Vorschlag“ oder „Weitergeleitet“, deren Termine alle in der Vergangenheit liegen, werden abgelehnt. Vorschläge mit mindestens einem Termin in der Zukunft und Termine mit anderem Status bleiben unverändert. Vor dem Ablehnen wird die genaue Anzahl angezeigt.",
         applyLabel: "Ablehnen",
         noun: "vergangene Terminvorschläge",
         verb: "ablehnen",
         done: "abgelehnt",
         progress: "Lehne ab",
-        empty: "Keine vergangenen Terminvorschläge mit Status „Vorschlag“ gefunden.",
-        select: (interview) => isPastSuggestion(interview),
+        empty: "Keine vergangenen Terminvorschläge mit Status „Vorschlag“ oder „Weitergeleitet“ gefunden.",
+        statuses: PAST_DECLINE_STATUSES,
+        select: (interview) => isPastInterview(interview),
         write: (matchId, interview) => declineInterview(matchId, interview.id),
-        markCell: markSuggestionChipsDeclined
+        markCell: (cell) => markSuggestionChipsDeclined(cell, { includeForwarded: true })
       }
     };
     async function applyInterviewAction(dialog, matches, action) {
@@ -3037,7 +3051,7 @@
         const { matchId } = selection[index];
         setStatus(`Lade Terminvorschläge ${index + 1} von ${selection.length} …`, "busy");
         try {
-          const interviews = await suggestedInterviewsForMatch(matchId);
+          const interviews = await interviewsForMatch(matchId, action.statuses);
           pendingByMatch.set(matchId, interviews.length);
           interviews.filter(action.select).forEach((interview) => queue.push({ matchId, interview }));
         } catch (error) {
