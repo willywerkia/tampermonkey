@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.104
+// @version      1.5.105
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1900,7 +1900,7 @@
       notes: [
         "Gesetzt wird KAM Status „Out“ mit Grund. Außerdem wird die KAM WVL gelöscht und offene Terminvorschläge werden abgelehnt.",
         "Lässt sich aus der Mail kein Arbeitgeber ablesen, trägst du ihn im Dialog selbst ein.",
-        "Gleichnamige Kandidaten unterscheidet die Toolbox über die PLZ aus der Mail. Treffer mit passender PLZ stehen oben und sind mit „✓ PLZ“ markiert.",
+        "Gleichnamige Kandidaten (etwa bei RVM nur mit Vornamen) unterscheidet die Toolbox über PLZ, Deutschkenntnisse und Ausbildung aus dem Kurzprofil. Treffer sind mit „✓ PLZ“, „✓ Deutsch“, „✓ Ausbildung“ markiert. „Alle zeigen“ hebt die Eingrenzung auf.",
         "Dafür braucht es eine Anmeldung am Adminpanel. Fehlt sie, öffnet sich kurz ein Fenster auf admin.werkia.de."
       ]
     }
@@ -6496,7 +6496,13 @@
     kamStatus
     matchedAt
     jobPosition { id mainTitle subTitle }
-    candidate { id firstName lastName }
+    candidate {
+      id
+      firstName
+      lastName
+      germanSpeakingLevel
+      jobTitles { education jobTitle { id title } }
+    }
   }
 }`;
   var CANDIDATE_LOCATIONS_QUERY2 = `query OutenCandidateLocations($filter: CandidateLocationFilter!, $sortField: String, $sortOrder: String) {
@@ -6544,7 +6550,9 @@
     name: /^[\s>*•\-]*Name\s*:\s*(.+?)\s*$/im,
     phone: /^[\s>*•\-]*Telefon\s*:\s*(.+?)\s*$/im,
     email: /^[\s>*•\-]*E-?mail\s*:\s*(.+?)\s*$/im,
-    location: /^[\s>*•\-]*PLZ\s*\/?\s*Kreis\s*:\s*(.+?)\s*$/im
+    location: /^[\s>*•\-]*PLZ\s*\/?\s*Kreis\s*:\s*(.+?)\s*$/im,
+    germanLevel: /^[\s>*•\-]*Deutschkenntnisse\s*:\s*(.+?)\s*$/im,
+    training: /^[\s>*•\-]*Ausbildung\s*:\s*(.+?)\s*$/im
   };
   function parseProfileFromMailBody(bodyText) {
     const text = String(bodyText || "");
@@ -6558,7 +6566,9 @@
       email: read("email"),
       postalCode,
       city,
-      locationLine
+      locationLine,
+      germanLevel: read("germanLevel"),
+      training: read("training")
     };
   }
   var QUOTED_SUBJECT_RE = /Bewerbung:[^\n]*?\(Werkia\)/gi;
@@ -6566,8 +6576,39 @@
     return [...String(bodyText || "").matchAll(QUOTED_SUBJECT_RE)].map((match) => match[0].trim());
   }
   function hasApplicationProfile(profile) {
-    if (!profile?.candidateName) return false;
-    return Boolean(profile.phone || profile.email || profile.postalCode);
+    if (!profile) return false;
+    if (profile.candidateName && (profile.phone || profile.email || profile.postalCode)) return true;
+    return [profile.locationLine, profile.germanLevel, profile.training].filter(Boolean).length >= 2;
+  }
+  var GERMAN_LEVEL_LABELS = {
+    none: "Keine Kenntnisse",
+    low: "Grundkenntnisse",
+    mid: "Verhandlungssicher",
+    high: "Muttersprachlich"
+  };
+  function profileHits(match, profile) {
+    const candidate = match?.candidate || {};
+    let german = null;
+    if (profile?.germanLevel && candidate.germanSpeakingLevel) {
+      german = normalise(GERMAN_LEVEL_LABELS[candidate.germanSpeakingLevel] || candidate.germanSpeakingLevel) === normalise(profile.germanLevel);
+    }
+    let training = null;
+    const titles = (candidate.jobTitles || []).map((item) => normalise(item?.jobTitle?.title)).filter(Boolean);
+    const wanted = normalise(profile?.training);
+    if (wanted && titles.length) {
+      training = titles.some((title) => title.includes(wanted) || wanted.includes(title));
+    }
+    return { german, training };
+  }
+  function narrowByProfile(matches, profile) {
+    const scored = (matches || []).map((match) => {
+      const hits = profileHits(match, profile);
+      const score = (hits.german ? 1 : 0) + (hits.training ? 1 : 0);
+      return { match, score };
+    });
+    const best = scored.reduce((highest, entry) => Math.max(highest, entry.score), 0);
+    if (best === 0) return matches || [];
+    return scored.filter((entry) => entry.score === best).map((entry) => entry.match);
   }
   function detectApplicationMail({ subjects = [], bodyText = "" } = {}) {
     if (subjects.some(looksLikeApplicationSubject)) return { matched: true, reason: "subject" };
@@ -7059,16 +7100,19 @@
         renderReasonStep(dialog, state, byName[0]);
         return;
       }
-      const shortlist = byName.length ? byName : matches;
+      const nameList = byName.length ? byName : matches;
+      const shortlist = narrowByProfile(nameList, state.profile);
       renderLoading(dialog, `Lade Adressen zu ${shortlist.length} Kandidaten …`);
       const postalCodes = await postalCodesForCandidates(shortlist.map((match) => match.candidateId));
       renderMatchPicker(dialog, state, shortlist, {
         nameNarrowed: byName.length > 0,
+        profileNarrowed: shortlist.length < nameList.length,
+        fullList: nameList,
         totalMatches: matches.length,
         postalCodes
       });
     }
-    function renderMatchPicker(dialog, state, matches, { nameNarrowed, totalMatches, postalCodes }) {
+    function renderMatchPicker(dialog, state, matches, { nameNarrowed, profileNarrowed = false, fullList = matches, totalMatches, postalCodes }) {
       if (!matches.length) {
         renderError(dialog, [
           `Bei „${state.employer.name}“ wurden keine Matches gefunden. `,
@@ -7079,18 +7123,27 @@
       }
       const wantedPostalCode = state.profile?.postalCode || "";
       const postalOf = (match) => postalCodes?.get(match.candidateId)?.postalCode || "";
+      const profileScore = (match) => {
+        const hits = profileHits(match, state.profile);
+        return (hits.german ? 1 : 0) + (hits.training ? 1 : 0);
+      };
       const sorted = [...matches].sort((left, right) => {
         const leftHit = wantedPostalCode && postalOf(left) === wantedPostalCode ? 0 : 1;
         const rightHit = wantedPostalCode && postalOf(right) === wantedPostalCode ? 0 : 1;
-        return leftHit - rightHit;
+        return leftHit - rightHit || profileScore(right) - profileScore(left);
       });
       const list = buildList();
       const radios = sorted.map((match, index) => {
         const jobLabel = [match.jobPosition?.mainTitle, match.jobPosition?.subTitle].filter(Boolean).join(" ");
         const location2 = postalCodes?.get(match.candidateId);
         const locationLabel = location2?.postalCode ? ` · ${location2.postalCode}${location2.city ? ` ${location2.city}` : ""}` : "";
-        const postalHit = wantedPostalCode && location2?.postalCode === wantedPostalCode ? " ✓ PLZ" : "";
-        const labelText = `${candidateFullName(match) || "(unbenannt)"}${locationLabel}${postalHit} — ${jobLabel} · KAM: ${match.kamStatus || "(leer)"}`;
+        const hits = profileHits(match, state.profile);
+        const marks = [
+          wantedPostalCode && location2?.postalCode === wantedPostalCode ? "✓ PLZ" : "",
+          hits.german ? "✓ Deutsch" : "",
+          hits.training ? "✓ Ausbildung" : ""
+        ].filter(Boolean).join(" ");
+        const labelText = `${candidateFullName(match) || "(unbenannt)"}${locationLabel}${marks ? ` ${marks}` : ""} — ${jobLabel} · KAM: ${match.kamStatus || "(leer)"}`;
         const { option, radio } = buildOptionRow({
           name: "match",
           index,
@@ -7103,7 +7156,13 @@
       });
       const noteParts = [`Gesuchter Kandidat: „${state.wantedName || state.parsed.candidateName}“`];
       if (wantedPostalCode) noteParts.push(`, PLZ ${wantedPostalCode}${state.profile?.city ? ` ${state.profile.city}` : ""} (aus der Mail)`);
-      noteParts.push(nameNarrowed ? `. ${matches.length} von ${totalMatches} Matches bei „${state.employer.name}“ passen zum Namen – bitte den richtigen auswählen.` : `. Kein Match bei „${state.employer.name}“ passt zu diesem Namen – hier alle ${matches.length} Matches des Arbeitgebers.`);
+      const profileFacts = [state.profile?.germanLevel && `Deutsch ${state.profile.germanLevel}`, state.profile?.training && `Ausbildung ${state.profile.training}`].filter(Boolean);
+      if (profileFacts.length) noteParts.push(`, ${profileFacts.join(", ")}`);
+      if (profileNarrowed) {
+        noteParts.push(`. ${matches.length} von ${fullList.length} ${nameNarrowed ? "namensgleichen " : ""}Matches bei „${state.employer.name}“ passen auch zu Deutschkenntnissen/Ausbildung – bitte den richtigen auswählen.`);
+      } else {
+        noteParts.push(nameNarrowed ? `. ${matches.length} von ${totalMatches} Matches bei „${state.employer.name}“ passen zum Namen – bitte den richtigen auswählen.` : `. Kein Match bei „${state.employer.name}“ passt zu diesem Namen – hier alle ${matches.length} Matches des Arbeitgebers.`);
+      }
       const closeBtn = buildButton("Abbrechen", { action: "close" });
       const continueBtn = buildButton("Weiter", { action: "continue", primary: true });
       closeBtn.addEventListener("click", () => dialog.close());
@@ -7113,12 +7172,26 @@
         state.matchId = selected.id;
         renderReasonStep(dialog, state, selected);
       });
+      const leftActions = [];
+      if (profileNarrowed) {
+        const showAllBtn = buildButton(`Alle ${fullList.length} zeigen`, { action: "show-all" });
+        showAllBtn.addEventListener("click", async () => {
+          renderLoading(dialog, `Lade Adressen zu ${fullList.length} Kandidaten …`);
+          try {
+            const allPostalCodes = await postalCodesForCandidates(fullList.map((match) => match.candidateId));
+            renderMatchPicker(dialog, state, fullList, { nameNarrowed, totalMatches, postalCodes: allPostalCodes });
+          } catch (error) {
+            renderCaughtError(dialog, error);
+          }
+        });
+        leftActions.push(showAllBtn);
+      }
       dialog.replaceChildren(
         buildHead("Match Outen – Match bestätigen"),
         buildBody([
           buildNote(noteParts.join("")),
           list,
-          buildActions([closeBtn, continueBtn])
+          buildSplitActions(leftActions, [closeBtn, continueBtn])
         ])
       );
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
