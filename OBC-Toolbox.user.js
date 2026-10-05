@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.5.102
+// @version      1.5.103
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -32,6 +32,10 @@
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __commonJS = (cb, mod) => function __require() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
   };
   var __copyProps = (to, from, except, desc) => {
     if (from && typeof from === "object" || typeof from === "function") {
@@ -103,6 +107,15 @@
         exports2.generateUniqueNumber = generateUniqueNumber3;
       });
     }
+  });
+
+  // ../../shared/node_modules/worker-timers/build/es2019/module.js
+  var module_exports = {};
+  __export(module_exports, {
+    clearInterval: () => clearInterval2,
+    clearTimeout: () => clearTimeout2,
+    setInterval: () => setInterval2,
+    setTimeout: () => setTimeout2
   });
 
   // ../../shared/node_modules/broker-factory/build/es2019/module.js
@@ -299,11 +312,33 @@
   var setTimeout2 = (...args) => loadOrReturnBroker().setTimeout(...args);
 
   // ../../shared/js/admin-dom/worker-timers.js
-  var workersAvailable = typeof Worker === "function";
-  var wSetTimeout = workersAvailable ? setTimeout2 : (...args) => setTimeout(...args);
-  var wClearTimeout = workersAvailable ? clearTimeout2 : (...args) => clearTimeout(...args);
-  var wSetInterval = workersAvailable ? setInterval2 : (...args) => setInterval(...args);
-  var wClearInterval = workersAvailable ? clearInterval2 : (...args) => clearInterval(...args);
+  var nativeTimers = {
+    setTimeout: (...args) => setTimeout(...args),
+    clearTimeout: (...args) => clearTimeout(...args),
+    setInterval: (...args) => setInterval(...args),
+    clearInterval: (...args) => clearInterval(...args)
+  };
+  var activeTimers = null;
+  function timers() {
+    if (activeTimers) return activeTimers;
+    if (typeof Worker !== "function") {
+      activeTimers = nativeTimers;
+      return activeTimers;
+    }
+    try {
+      clearTimeout2(setTimeout2(() => {
+      }, 0));
+      activeTimers = module_exports;
+    } catch (error) {
+      console.warn("[Werkia Timers] Web Worker nicht verfuegbar, native Timer als Fallback:", error);
+      activeTimers = nativeTimers;
+    }
+    return activeTimers;
+  }
+  var wSetTimeout = (...args) => timers().setTimeout(...args);
+  var wClearTimeout = (...args) => timers().clearTimeout(...args);
+  var wSetInterval = (...args) => timers().setInterval(...args);
+  var wClearInterval = (...args) => timers().clearInterval(...args);
 
   // ../../shared/js/werkia-toolbox/runtime.js
   function createRuntime({ label }) {
@@ -1227,7 +1262,7 @@
     let current = null;
     let showTimer = null;
     let hideTimer = null;
-    let timers = { setTimeout: (fn, ms) => window.setTimeout(fn, ms), clearTimeout: (handle) => window.clearTimeout(handle) };
+    let timers2 = { setTimeout: (fn, ms) => window.setTimeout(fn, ms), clearTimeout: (handle) => window.clearTimeout(handle) };
     const findTopic = (topicId) => {
       const topic = topicsById.get(topicId);
       if (!topic) console.warn(`[${toolboxName} Hilfe] Unbekanntes Hilfethema: ${topicId}`);
@@ -1254,8 +1289,8 @@
     }
     const popover = () => document.getElementById(popoverId);
     function closePopover() {
-      timers.clearTimeout(showTimer);
-      timers.clearTimeout(hideTimer);
+      timers2.clearTimeout(showTimer);
+      timers2.clearTimeout(hideTimer);
       popover()?.remove();
       current?.anchor?.setAttribute("aria-expanded", "false");
       current = null;
@@ -1328,16 +1363,16 @@
       current = { anchor, pinned };
     }
     function scheduleShow(anchor, topicId) {
-      timers.clearTimeout(hideTimer);
+      timers2.clearTimeout(hideTimer);
       if (current?.anchor === anchor) return;
-      timers.clearTimeout(showTimer);
-      showTimer = timers.setTimeout(() => showPopover(anchor, topicId, false), 150);
+      timers2.clearTimeout(showTimer);
+      showTimer = timers2.setTimeout(() => showPopover(anchor, topicId, false), 150);
     }
     function scheduleHide() {
-      timers.clearTimeout(showTimer);
+      timers2.clearTimeout(showTimer);
       if (!current || current.pinned) return;
-      timers.clearTimeout(hideTimer);
-      hideTimer = timers.setTimeout(() => {
+      timers2.clearTimeout(hideTimer);
+      hideTimer = timers2.setTimeout(() => {
         if (current && !current.pinned) closePopover();
       }, 200);
     }
@@ -1517,7 +1552,7 @@
     }
     function install(runtime, { dock = true, menu = true, dockHostPattern } = {}) {
       if (dockHostPattern) dockHosts = dockHostPattern;
-      timers = { setTimeout: (fn, ms) => runtime.setTimeout(fn, ms), clearTimeout: (handle) => runtime.clearTimeout(handle) };
+      timers2 = { setTimeout: (fn, ms) => runtime.setTimeout(fn, ms), clearTimeout: (handle) => runtime.clearTimeout(handle) };
       ensureExtraStyles();
       const swallow = (event) => {
         const target = event.target;
@@ -1547,7 +1582,7 @@
       runtime.addDocumentListener("mouseover", (event) => {
         const own = ownTipFrom(event.target);
         if (own) scheduleShow(own.button, own.topicId);
-        else if (current && popover()?.contains(event.target)) timers.clearTimeout(hideTimer);
+        else if (current && popover()?.contains(event.target)) timers2.clearTimeout(hideTimer);
       }, true);
       runtime.addDocumentListener("mouseout", (event) => {
         const leaving = ownTipFrom(event.target) || popover()?.contains(event.target);
