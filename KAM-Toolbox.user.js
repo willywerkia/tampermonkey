@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.105
+// @version      1.5.106
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -6496,13 +6496,14 @@
     kamStatus
     matchedAt
     jobPosition { id mainTitle subTitle }
-    candidate {
-      id
-      firstName
-      lastName
-      germanSpeakingLevel
-      jobTitles { education jobTitle { id title } }
-    }
+    candidate { id firstName lastName }
+  }
+}`;
+  var CANDIDATE_PROFILE_QUERY = `query OutenCandidateProfiles($filter: CandidateFilter, $page: Int, $perPage: Int) {
+  items: allCandidates(filter: $filter, page: $page, perPage: $perPage) {
+    id
+    germanSpeakingLevel
+    jobTitles { education jobTitle { id title } }
   }
 }`;
   var CANDIDATE_LOCATIONS_QUERY2 = `query OutenCandidateLocations($filter: CandidateLocationFilter!, $sortField: String, $sortOrder: String) {
@@ -6744,8 +6745,17 @@
       const current = getKamBearerSnapshot();
       return Boolean(current) && current !== before;
     }
+    const REQUEST_TIMEOUT_MS = 3e4;
+    function withTimeout(promise) {
+      let handle;
+      const timeout = new Promise((_, reject) => {
+        handle = runtime.setTimeout(() => reject(new Error(`Das Adminpanel hat nach ${REQUEST_TIMEOUT_MS / 1e3} Sekunden nicht geantwortet. Bitte den Dialog erneut öffnen.`)), REQUEST_TIMEOUT_MS);
+      });
+      return Promise.race([promise, timeout]).finally(() => runtime.clearTimeout(handle));
+    }
     async function graphqlRequestWithRetry(query, variables) {
-      const { request } = getKamGraphqlAdapter();
+      const { request: rawRequest } = getKamGraphqlAdapter();
+      const request = (q, v) => withTimeout(rawRequest(q, v));
       try {
         return await request(query, variables);
       } catch (error) {
@@ -6778,6 +6788,26 @@
         }
       }
       return entries;
+    }
+    const PROFILE_LOOKUP_LIMIT = 100;
+    const PROFILE_BATCH_SIZE = 25;
+    async function attachCandidateProfiles(matches) {
+      const ids = [...new Set(matches.map((match) => match.candidateId).filter(Boolean))].slice(0, PROFILE_LOOKUP_LIMIT);
+      const profiles = /* @__PURE__ */ new Map();
+      for (let index = 0; index < ids.length; index += PROFILE_BATCH_SIZE) {
+        const batch = ids.slice(index, index + PROFILE_BATCH_SIZE);
+        try {
+          const data = await graphqlRequestWithRetry(CANDIDATE_PROFILE_QUERY, { filter: { ids: batch }, page: 0, perPage: batch.length });
+          (data.items || []).forEach((candidate) => profiles.set(candidate.id, candidate));
+        } catch (error) {
+          if (isAuthError(error)) throw error;
+        }
+      }
+      return matches.map((match) => {
+        const profile = profiles.get(match.candidateId);
+        if (!profile) return match;
+        return { ...match, candidate: { ...match.candidate, germanSpeakingLevel: profile.germanSpeakingLevel, jobTitles: profile.jobTitles } };
+      });
     }
     async function matchesForEmployer(employerId) {
       const data = await graphqlRequestWithRetry(MATCHES_BY_EMPLOYER_QUERY, { filter: { employerIds: [employerId] } });
@@ -7100,7 +7130,11 @@
         renderReasonStep(dialog, state, byName[0]);
         return;
       }
-      const nameList = byName.length ? byName : matches;
+      let nameList = byName.length ? byName : matches;
+      if (state.profile?.germanLevel || state.profile?.training) {
+        renderLoading(dialog, `Lade Profile zu ${Math.min(nameList.length, PROFILE_LOOKUP_LIMIT)} Kandidaten …`);
+        nameList = await attachCandidateProfiles(nameList);
+      }
       const shortlist = narrowByProfile(nameList, state.profile);
       renderLoading(dialog, `Lade Adressen zu ${shortlist.length} Kandidaten …`);
       const postalCodes = await postalCodesForCandidates(shortlist.map((match) => match.candidateId));
