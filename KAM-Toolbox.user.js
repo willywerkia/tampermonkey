@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.5.107
+// @version      1.5.108
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -6680,6 +6680,13 @@
   function normalise(value) {
     return String(value || "").trim().toLocaleLowerCase("de-DE");
   }
+  function employerSearchPrefixes(term) {
+    const wanted = normalise(term);
+    if (!wanted) return [];
+    const firstWord = wanted.split(/\s+/)[0];
+    const letter = wanted.slice(0, 1);
+    return firstWord.length >= 2 && firstWord !== letter ? [firstWord, letter] : [letter];
+  }
   function candidateFullName(match) {
     return `${match?.candidate?.firstName || ""} ${match?.candidate?.lastName || ""}`.trim();
   }
@@ -6793,16 +6800,19 @@
       }
     }
     async function searchEmployersByName(term) {
-      const prefix = normalise(term).slice(0, 1);
-      if (!prefix) return [];
-      const data = await graphqlRequestWithRetry(EMPLOYERS_BY_NAME_QUERY, { filter: { name: prefix } });
-      return rankEmployers(data.items || [], term);
+      const prefixes = employerSearchPrefixes(term);
+      for (const prefix of prefixes) {
+        const data = await graphqlRequestWithRetry(EMPLOYERS_BY_NAME_QUERY, { filter: { name: prefix } });
+        const ranked = rankEmployers(data.items || [], term);
+        if (ranked.length) return ranked;
+      }
+      return [];
     }
     const POSTAL_LOOKUP_LIMIT = 12;
     async function postalCodesForCandidates(candidateIds) {
       const entries = /* @__PURE__ */ new Map();
-      for (const candidateId of candidateIds.slice(0, POSTAL_LOOKUP_LIMIT)) {
-        if (!candidateId || entries.has(candidateId)) continue;
+      const ids = [...new Set(candidateIds.filter(Boolean))].slice(0, POSTAL_LOOKUP_LIMIT);
+      await Promise.all(ids.map(async (candidateId) => {
         try {
           const data = await graphqlRequestWithRetry(CANDIDATE_LOCATIONS_QUERY2, {
             filter: { candidateId },
@@ -6813,7 +6823,7 @@
           if (location2) entries.set(candidateId, { postalCode: location2.postalCode || "", city: location2.city || "" });
         } catch {
         }
-      }
+      }));
       return entries;
     }
     const PROFILE_LOOKUP_LIMIT = 100;
@@ -6821,15 +6831,16 @@
     async function attachCandidateProfiles(matches) {
       const ids = [...new Set(matches.map((match) => match.candidateId).filter(Boolean))].slice(0, PROFILE_LOOKUP_LIMIT);
       const profiles = /* @__PURE__ */ new Map();
-      for (let index = 0; index < ids.length; index += PROFILE_BATCH_SIZE) {
-        const batch = ids.slice(index, index + PROFILE_BATCH_SIZE);
+      const batches = [];
+      for (let index = 0; index < ids.length; index += PROFILE_BATCH_SIZE) batches.push(ids.slice(index, index + PROFILE_BATCH_SIZE));
+      await Promise.all(batches.map(async (batch) => {
         try {
           const data = await graphqlRequestWithRetry(CANDIDATE_PROFILE_QUERY, { filter: { ids: batch }, page: 0, perPage: batch.length });
           (data.items || []).forEach((candidate) => profiles.set(candidate.id, candidate));
         } catch (error) {
           if (isAuthError(error)) throw error;
         }
-      }
+      }));
       return matches.map((match) => {
         const profile = profiles.get(match.candidateId);
         if (!profile) return match;
@@ -6863,16 +6874,14 @@
     }
     async function declineOpenInterviewsForMatch(matchId) {
       const interviewIds = await openInterviewIdsForMatch(matchId);
-      let declined = 0;
-      for (const interviewId of interviewIds) {
+      await Promise.all(interviewIds.map(async (interviewId) => {
         const result = await graphqlRequestWithRetry(UPDATE_INTERVIEW_MUTATION, { id: interviewId, status: "declined" });
         const interview = result?.data;
         if (interview?.id !== interviewId || interview.status !== "declined" || interview.matchId !== matchId) {
           throw new Error(`Terminvorschlag ${interviewId} wurde nicht als abgelehnt bestätigt`);
         }
-        declined += 1;
-      }
-      return declined;
+      }));
+      return interviewIds.length;
     }
     async function setMatchOut(matchId, kamFeedback) {
       const result = await graphqlRequestWithRetry(UPDATE_MATCH_STATUS_WITH_FEEDBACK_MUTATION, { id: matchId, kamStatus: "out", kamFeedback });
@@ -6880,8 +6889,11 @@
       if (match?.id !== matchId || match.kamStatus !== "out") {
         throw new Error("KAM Status wurde nicht auf „Out“ bestätigt");
       }
-      await graphqlRequestWithRetry(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: null });
-      return declineOpenInterviewsForMatch(matchId);
+      const [, declined] = await Promise.all([
+        graphqlRequestWithRetry(UPDATE_MATCH_WVL_MUTATION, { id: matchId, kamFollowUpDate: null }),
+        declineOpenInterviewsForMatch(matchId)
+      ]);
+      return declined;
     }
     function styled2(node, styles) {
       Object.assign(node.style, styles);
