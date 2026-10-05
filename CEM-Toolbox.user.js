@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.7.112
+// @version      1.7.114
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -111,7 +111,8 @@
 
   // ../../shared/js/werkia-toolbox/update-check.js
   var MIRROR_BASE_URL = "https://raw.githubusercontent.com/willywerkia/tampermonkey/main/";
-  var CHECK_INTERVAL_MS = 60 * 60 * 1e3;
+  var CHECK_INTERVAL_MS = 5 * 60 * 1e3;
+  var TICK_MS = 60 * 1e3;
   var FIRST_CHECK_DELAY_MS = 10 * 1e3;
   var SNOOZE_MS = 4 * 60 * 60 * 1e3;
   var STACK_ID = "werkia-update-notices";
@@ -138,6 +139,11 @@
       if (diff) return diff > 0;
     }
     return false;
+  }
+  function isCheckDue(cache, now, interval = CHECK_INTERVAL_MS) {
+    const checkedAt = Number(cache?.checkedAt);
+    if (!Number.isFinite(checkedAt)) return true;
+    return now - checkedAt >= interval || checkedAt > now;
   }
   function isSnoozed(snooze, version, now) {
     return Boolean(snooze && snooze.version === version && Number(snooze.until) > now);
@@ -202,6 +208,7 @@
     if (!currentVersion || !fileName) return;
     const url = MIRROR_BASE_URL + fileName;
     const snoozeKey = `werkia-update-snooze:${label2}`;
+    const cacheKey = `werkia-update-check:${label2}`;
     const canStore = typeof GM_getValue === "function" && typeof GM_setValue === "function";
     let notice = null;
     let shownVersion = null;
@@ -252,8 +259,18 @@
       }));
       notice.appendChild(actions);
     };
+    const latestVersion = async () => {
+      if (!canStore) return fetchRemoteVersion(url);
+      const cache = GM_getValue(cacheKey, null);
+      if (!isCheckDue(cache, Date.now())) return cache.version || null;
+      GM_setValue(cacheKey, { checkedAt: Date.now(), version: cache?.version || null });
+      const fetched = await fetchRemoteVersion(url);
+      const version = fetched || cache?.version || null;
+      GM_setValue(cacheKey, { checkedAt: Date.now(), version });
+      return version;
+    };
     const check = async () => {
-      const remoteVersion = await fetchRemoteVersion(url);
+      const remoteVersion = await latestVersion();
       if (!remoteVersion) return;
       if (!isNewerVersion(remoteVersion, currentVersion)) {
         removeNotice();
@@ -265,7 +282,7 @@
       render(remoteVersion);
     };
     runtime.setTimeout(check, FIRST_CHECK_DELAY_MS);
-    runtime.setInterval(check, CHECK_INTERVAL_MS);
+    runtime.setInterval(check, canStore ? TICK_MS : CHECK_INTERVAL_MS);
     runtime.addCleanup(removeNotice);
   }
 
