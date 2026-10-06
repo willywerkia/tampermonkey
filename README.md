@@ -49,7 +49,8 @@ Enthaltene Funktionen:
 - Blendet neben dem Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein.
 - Faerbt das Status-Auswahlfeld eines Matches passend zum gewaehlten Status ein (z. B. Hot Case orange, Hired gruen).
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Empfehlung an.
-- Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
+- Berechnet beim offenen Fragebogen Fahrzeit und Strecke zwischen Kandidatenwohnort und Arbeitsort, zeigt die Vakanzart und bei ortsgebundenen Vakanzen ab 50 Min einen Totenkopf.
+- Zeigt auf Potenzielle Matches in jeder Zeile die Fahrzeit vom Kandidatenwohnort zur Vakanz und die Vakanzart (Start von Zuhause, Landes-/bundesweit, Montage). Ortsgebundene Vakanzen ab 50 Min Fahrzeit bekommen einen Totenkopf. Die Routen laden nacheinander im Hintergrund und bleiben eine Woche im Browser gespeichert.
 - Ergaenzt die Kandidatenliste einer Vakanz um Zusatzinfos je Kandidat (Reisebereitschaft, Status, Registrierungsdatum, Telefonnummer) und eine Anruf-Empfehlung.
 - Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
@@ -71,10 +72,11 @@ Enthaltene Funktionen:
 - Blendet neben dem Fragebogen ein Panel mit den oeffentlichen Vakanzangaben ein.
 - Vergleicht Fragebogen-Antworten mit den Vakanzanforderungen und zeigt eine farbige Match-Entscheidungs-Empfehlung.
 - Zeigt eine hervorgehobene Box mit den OM-Notizen zum Fragebogen direkt im Dialog.
-- Berechnet und zeigt die Fahrstrecke/-zeit zwischen Kandidatenwohnort und Arbeitsort im Fragebogen.
+- Berechnet beim offenen Fragebogen Fahrzeit und Strecke zwischen Kandidatenwohnort und Arbeitsort, zeigt die Vakanzart und bei ortsgebundenen Vakanzen ab 50 Min einen Totenkopf.
 - Zeigt im Fragebogen unter der Routenbox alle Matches des Kandidaten beim selben Arbeitgeber und bei Schwesterfirmen derselben Unternehmensgruppe, jeweils mit OM Status. Warnt, wenn ein anderer Match schon gesendet oder hochgeladen ist.
 - Erlaubt auf Potenzielle Matches die Auswahl mehrerer Arbeitgeber und vorhandener Jobs für ein gemeinsames Offline-Match-Formular. Bei einem Arbeitgeber mit vorhandenem Match ist vor dem Öffnen eine Bestätigung nötig; Terminvorschläge lassen sich gesammelt löschen.
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 - Zeigt getrennt erkennbare OM-Hinweise aus Arbeitgeber- und Vakanz-Notizen. Eindeutig verletzte Anforderungen und bereits gematchte Arbeitgeber lassen sich ausblenden; je Arbeitgeber bleiben hoechstens die ersten drei Matches in AP-Score-Reihenfolge sichtbar, auch ueber Seitenwechsel hinweg.
+- Zeigt auf Potenzielle Matches in jeder Zeile die Fahrzeit vom Kandidatenwohnort zur Vakanz und die Vakanzart (Start von Zuhause, Landes-/bundesweit, Montage). Ortsgebundene Vakanzen ab 50 Min Fahrzeit bekommen einen Totenkopf. Die Routen laden nacheinander im Hintergrund und bleiben eine Woche im Browser gespeichert.
 - Dropdown ueber der Liste mit gespeicherten Filterkombinationen. "Aktuellen Filter speichern" uebernimmt Filter, Sortierung und Seitengroesse der Ansicht; Vorlagen liegen lokal im Browser und ueberstehen Toolbox-Updates.
 - Warnt auf Potenzielle Matches, wenn ein vorgeschlagener Arbeitgeber bei diesem Kandidaten als No-Go hinterlegt ist - rot bei demselben Arbeitgeberprofil oder derselben Firmengruppe (gleicher Webauftritt), gelb bei einem blossen Namenstreffer, der noch geprueft werden muss.

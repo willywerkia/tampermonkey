@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.7.115
+// @version      1.8.116
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -1048,6 +1048,24 @@
     if (name) return name;
     return [location2.city, location2.postalCode, location2.state, location2.country].map((part) => String(part || "").trim()).filter(Boolean).join(", ");
   }
+  function parseGeoPoint(geo) {
+    let value = geo;
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return null;
+      }
+    }
+    const coordinates = value?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+    const lon = Number(coordinates[0]);
+    const lat = Number(coordinates[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (lat === 0 && lon === 0) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat, lon };
+  }
   function createAddressProvider({ request }) {
     return {
       async loadCandidateAddress(candidateId) {
@@ -1211,6 +1229,136 @@
     };
   }
 
+  // ../../shared/js/route-commute/provider.js
+  var JOB_COMMUTE_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    startingPoint
+    locationIndependent
+    frequencyOfTravel
+    location { id name city postalCode state country geo __typename }
+    __typename
+  }
+}`;
+  var JOB_SERVICE_AREA_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    serviceAreas { id type __typename }
+    __typename
+  }
+}`;
+  var CACHE_MS = 5 * 60 * 1e3;
+  var ERROR_CACHE_MS = 15 * 1e3;
+  var BATCH_SIZE = 50;
+  function toCommuteLocation(location2) {
+    const address = formatLocation(location2);
+    return address ? { address, coords: parseGeoPoint(location2?.geo) } : null;
+  }
+  function toCommuteJob(item, serviceAreaTypes) {
+    if (!item?.id) return null;
+    return {
+      id: String(item.id).toLowerCase(),
+      startingPoint: item.startingPoint ?? null,
+      locationIndependent: item.locationIndependent === true,
+      frequencyOfTravel: item.frequencyOfTravel ?? null,
+      serviceAreaTypes: serviceAreaTypes ?? null,
+      location: toCommuteLocation(item.location)
+    };
+  }
+  function createCommuteProvider({ request }) {
+    const jobs = /* @__PURE__ */ new Map();
+    const candidates = /* @__PURE__ */ new Map();
+    const inFlight2 = /* @__PURE__ */ new Map();
+    let serviceAreasBroken = false;
+    const fresh = (entry) => entry && entry.expiresAt > Date.now();
+    async function loadServiceAreaTypes(ids) {
+      if (serviceAreasBroken) return /* @__PURE__ */ new Map();
+      try {
+        const result = await request(JOB_SERVICE_AREA_QUERY, { filter: { ids } });
+        return new Map((result?.items || []).filter((item) => item?.id).map((item) => [
+          String(item.id).toLowerCase(),
+          (item.serviceAreas || []).map((area) => area?.type).filter(Boolean)
+        ]));
+      } catch (error) {
+        serviceAreasBroken = true;
+        console.warn('[Werkia Fahrzeit] Servicegebiete nicht ladbar, "Landes-/bundesweit" wird nicht erkannt:', error);
+        return /* @__PURE__ */ new Map();
+      }
+    }
+    async function loadBatch(ids) {
+      const [result, areaTypes] = await Promise.all([
+        request(JOB_COMMUTE_QUERY, { filter: { ids } }),
+        loadServiceAreaTypes(ids)
+      ]);
+      const found = /* @__PURE__ */ new Set();
+      for (const item of result?.items || []) {
+        const id = String(item?.id || "").toLowerCase();
+        const job = toCommuteJob(item, serviceAreasBroken ? null : areaTypes.get(id) || []);
+        if (!job) continue;
+        found.add(job.id);
+        jobs.set(job.id, { job, expiresAt: Date.now() + CACHE_MS });
+      }
+      for (const id of ids) {
+        if (!found.has(id)) jobs.set(id, { job: null, expiresAt: Date.now() + CACHE_MS });
+      }
+    }
+    return {
+      // Liefert nur, was schon geladen ist - fuer synchrones Rendern.
+      getCachedJob(id) {
+        const entry = jobs.get(String(id || "").toLowerCase());
+        return fresh(entry) ? entry : null;
+      },
+      // Laedt fehlende Vakanzen in Paketen; laeuft fuer eine Vakanz schon eine
+      // Anfrage, wird auf diese gewartet statt neu gefragt.
+      async loadJobs(rawIds) {
+        const all = [...new Set(rawIds.map((id) => String(id || "").toLowerCase()).filter(Boolean))];
+        const missing = all.filter((id) => !fresh(jobs.get(id)) && !inFlight2.has(id));
+        for (let index = 0; index < missing.length; index += BATCH_SIZE) {
+          const batch = missing.slice(index, index + BATCH_SIZE);
+          const promise = loadBatch(batch).catch((error) => {
+            console.warn("[Werkia Fahrzeit] Vakanzdaten nicht ladbar:", error);
+            batch.forEach((id) => jobs.set(id, { job: null, expiresAt: Date.now() + ERROR_CACHE_MS }));
+          }).finally(() => batch.forEach((id) => inFlight2.delete(id)));
+          batch.forEach((id) => inFlight2.set(id, promise));
+        }
+        await Promise.all([...new Set(all.map((id) => inFlight2.get(id)).filter(Boolean))]);
+        return new Map(all.map((id) => [id, jobs.get(id)?.job || null]));
+      },
+      async loadJob(id) {
+        return (await this.loadJobs([id])).get(String(id || "").toLowerCase()) || null;
+      },
+      // undefined = noch nicht geladen, null = keine Adresse.
+      peekCandidateLocation(candidateId) {
+        const cached = candidates.get(String(candidateId || "").toLowerCase());
+        return fresh(cached) ? cached.location : void 0;
+      },
+      // Neueste Adresse des Kandidaten (id DESC) - dieselbe Auswahl wie der
+      // bisherige OBC/CEM-Distanzrechner.
+      async loadCandidateLocation(candidateId) {
+        const id = String(candidateId || "").toLowerCase();
+        const cached = candidates.get(id);
+        if (fresh(cached)) return cached.location;
+        if (cached?.promise) return cached.promise;
+        const promise = request(CANDIDATE_LOCATIONS_QUERY, {
+          filter: { candidateId: id },
+          page: 0,
+          perPage: 1,
+          sortField: "id",
+          sortOrder: "DESC"
+        }).then((result) => {
+          const location2 = toCommuteLocation(result?.items?.[0]);
+          candidates.set(id, { location: location2, expiresAt: Date.now() + CACHE_MS });
+          return location2;
+        }).catch((error) => {
+          candidates.set(id, { location: null, expiresAt: Date.now() + ERROR_CACHE_MS });
+          throw error;
+        });
+        candidates.set(id, { promise, expiresAt: 0 });
+        return promise;
+      }
+    };
+  }
+
   // src/graphql.js
   var BEARER_STORAGE_KEY = "werkia_candidate_info_graphql_bearer_v1";
   var FINGERPRINT_STORAGE_KEY = "werkia_candidate_info_graphql_fingerprint_v1";
@@ -1223,7 +1371,11 @@
       fingerprintStorageKey: FINGERPRINT_STORAGE_KEY,
       installedFlag: INSTALLED_FLAG
     });
-    adapter = { ...base, noGoProvider: createNoGoProvider({ request: base.request }) };
+    adapter = {
+      ...base,
+      noGoProvider: createNoGoProvider({ request: base.request }),
+      commuteProvider: createCommuteProvider({ request: base.request })
+    };
     return adapter;
   }
   function getCemGraphqlAdapter() {
@@ -2050,7 +2202,7 @@
       ].filter(Boolean)
     };
   }
-  function routeCalculationTopic({ routes, page = PAGES.questionnaire }) {
+  function routeCalculationTopic({ routes, page = PAGES.questionnaire, commute = false }) {
     return {
       id: "route-calculation",
       title: "Distanz & Fahrzeit",
@@ -2059,9 +2211,32 @@
       kind: "view",
       summary: "Berechnet beim offenen Fragebogen Strecke und Fahrzeit mit dem Auto zwischen Wohnort des Kandidaten und Arbeitsort.",
       notes: [
+        ...commute ? [
+          "Zeigt dieselbe Fahrzeit und Vakanzart wie das Badge in der Liste. Bei ortsgebundenen Vakanzen ab 50 Min steht ein 💀 davor und die Box wird rot."
+        ] : [],
         "Ein Klick auf die Box öffnet die Route in OpenStreetMap.",
         "„Route nicht verfügbar“ heißt meist: Eine der beiden Adressen fehlt oder ließ sich nicht finden. Dann bitte selbst nachsehen.",
         "Berechnete Routen werden eine Woche im Browser zwischengespeichert."
+      ]
+    };
+  }
+  function commuteBadgesTopic() {
+    return {
+      id: "commute-badges",
+      title: "Fahrzeit in der Liste",
+      page: PAGES.potentialMatches,
+      routes: [ROUTES.potentialMatches],
+      kind: "view",
+      summary: "Zeigt in jeder Zeile, wie lange der Kandidat mit dem Auto zur Vakanz fährt. Bei ortsgebundenen Stellen bitte vor allem kurze Fahrzeiten bevorzugen: Matches mit langer Fahrzeit führen deutlich seltener zum Erfolg.",
+      notes: [
+        "💀 50 Min oder mehr bei einer ortsgebundenen Vakanz: fester Arbeitsort, der Kandidat pendelt täglich. Nur in Ausnahmefällen senden.",
+        "🚗 Fahrzeit unter 50 Min bei einer ortsgebundenen Vakanz.",
+        "🏠 Start von Zuhause: Startpunkt „von zu Hause“ oder ortsunabhängig. Die Fahrzeit ist hier nur zur Info.",
+        "🗺️ Landes-/bundesweit: Einsatzgebiet ist ein ganzes Bundesland oder Deutschland. Die Fahrzeit ist nur zur Info.",
+        "🧳 Montage: Reisetätigkeit „uneingeschränkt“, mit Übernachtung. Die Fahrzeit ist nur zur Info.",
+        "Die Zeiten laden nacheinander im Hintergrund, etwa eine Zeile pro Sekunde. Danach bleiben sie eine Woche im Browser gespeichert. „…“ heißt: noch nicht berechnet.",
+        "„ca.“ heißt: Eine Adresse wurde nur ungefähr gefunden. „Luftlinie“ heißt: Der Routenservice hat nicht geantwortet. Dann gibt es keinen 💀.",
+        "Die Anzeige blendet nichts aus. Die Entscheidung liegt bei dir."
       ]
     };
   }
@@ -2184,7 +2359,8 @@
     vacancyPanelTopic({ routes: onPotentialMatches }),
     questionnaireEvaluationTopic({ routes: onPotentialMatches }),
     omNotesBoxTopic({ routes: onPotentialMatches, translatesTags: false }),
-    routeCalculationTopic({ routes: onPotentialMatches }),
+    routeCalculationTopic({ routes: onPotentialMatches, commute: true }),
+    commuteBadgesTopic(),
     filterPresetsTopic({ page: "CEM › Meine Matches", routes: [ROUTES.cemMyMatches] })
   ];
   var cemHelp = createToolboxHelp({ namespace: "cem", toolboxName: "CEM-Toolbox", topics: CEM_HELP_TOPICS });
@@ -2212,7 +2388,7 @@
       const ROW_CLASS2 = "werkia-urgent-vacancy-row";
       const BADGE_CLASS = "werkia-urgent-vacancy-badge";
       const MATCH_PRESENT_ROW_CLASS3 = "werkia-cem-match-present-row";
-      const POTENTIAL_MATCHES_ROUTE6 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
+      const POTENTIAL_MATCHES_ROUTE7 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
       const BEARER_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_bearer_v1";
       const FINGERPRINT_STORAGE_KEY2 = "werkia_urgent_vacancy_graphql_fingerprint_v1";
       const urgentIndex = /* @__PURE__ */ new Map();
@@ -2220,7 +2396,7 @@
       let loadPromise = null;
       const capturedAuth = { bearer: "", fingerprint: "" };
       function isPotentialMatchesPage() {
-        return POTENTIAL_MATCHES_ROUTE6.test(location.hash || "");
+        return POTENTIAL_MATCHES_ROUTE7.test(location.hash || "");
       }
       function getHeaderValue2(headers, name) {
         if (!headers) return "";
@@ -2952,7 +3128,7 @@
     let questionnaireLaunchPending = false;
     let questionnaireLaunchTimer = null;
     let clickGeneration = 0;
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    const sleep2 = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     const isPotentialMatchesPage = () => POTENTIAL_MATCHES_ROUTE3.test(location.hash || "");
     const getResourceId = (row, resource) => row?.querySelector(`a[href*="#/${resource}/"][href*="/show"]`)?.getAttribute("href")?.match(new RegExp(`/${resource}/([a-f0-9-]{36})/show`, "i"))?.[1] || "";
     const candidateIdFromRoute = () => String(location.hash || "").match(/^#\/Candidate\/([a-f0-9-]{36})\/show\/7/i)?.[1] || "";
@@ -3133,7 +3309,7 @@
       const generation = ++clickGeneration;
       showLoading(jobTitle);
       const dataPromise = fetchVacancy(uuid);
-      for (let index = 0; index < 40 && !document.querySelector(".MuiDialog-root"); index += 1) await sleep(75);
+      for (let index = 0; index < 40 && !document.querySelector(".MuiDialog-root"); index += 1) await sleep2(75);
       const data = await dataPromise;
       if (generation !== clickGeneration) return;
       removePanel();
@@ -3505,14 +3681,456 @@
     schedule();
   }
 
+  // ../../shared/js/route-commute/core.js
+  var SKULL_MINUTES = 50;
+  var COMMUTE_CLASSES = {
+    home: {
+      key: "home",
+      icon: "🏠",
+      label: "Start von Zuhause",
+      hint: "Startpunkt „von zu Hause“ oder ortsunabhängig: der Kandidat fährt von seinem Wohnort direkt zum Kunden."
+    },
+    wide: {
+      key: "wide",
+      icon: "🗺️",
+      label: "Landes-/bundesweit",
+      hint: "Einsatzgebiet ist ein ganzes Bundesland oder ganz Deutschland."
+    },
+    travel: {
+      key: "travel",
+      icon: "🧳",
+      label: "Montage",
+      hint: "Reisetätigkeit „uneingeschränkt“: klassische Montage mit Übernachtung."
+    },
+    local: {
+      key: "local",
+      icon: "🚗",
+      label: "Ortsgebunden",
+      hint: `Fester Arbeitsort, der Kandidat pendelt täglich. Ab ${SKULL_MINUTES} Min Fahrzeit 💀.`
+    }
+  };
+  var WIDE_SERVICE_AREA_TYPES = /* @__PURE__ */ new Set(["state_wide", "country_wide"]);
+  function classifyCommute(job) {
+    if (!job) return null;
+    if (String(job.startingPoint || "").toLowerCase() === "home" || job.locationIndependent === true) {
+      return COMMUTE_CLASSES.home;
+    }
+    const types = Array.isArray(job.serviceAreaTypes) ? job.serviceAreaTypes : [];
+    if (types.some((type) => WIDE_SERVICE_AREA_TYPES.has(String(type || "").toLowerCase()))) {
+      return COMMUTE_CLASSES.wide;
+    }
+    if (String(job.frequencyOfTravel || "").toLowerCase() === "unrestricted") {
+      return COMMUTE_CLASSES.travel;
+    }
+    return COMMUTE_CLASSES.local;
+  }
+  function routeMinutes(entry) {
+    if (!entry || entry.unavailable || entry.quality === "fallback") return null;
+    const seconds = Number(entry.fastestDurationSeconds ?? entry.durationSeconds);
+    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds / 60) : null;
+  }
+  function isSkull(commuteClass, minutes) {
+    return commuteClass?.key === "local" && Number.isFinite(minutes) && minutes >= SKULL_MINUTES;
+  }
+  function describeCommute(commuteClass, entry) {
+    const minutes = routeMinutes(entry);
+    const prefix = entry?.approx ? "ca. " : "";
+    const km = Number(entry?.fastestDistanceMeters ?? entry?.distanceMeters);
+    const kmText = Number.isFinite(km) && km > 0 ? `${prefix}${formatKm(km)}` : "";
+    let timeText = "";
+    if (minutes !== null) timeText = `${prefix}${formatRouteDuration(minutes * 60)}`;
+    else if (entry?.quality === "fallback" && Number.isFinite(entry.airDistanceMeters)) {
+      timeText = `ca. ${formatKm(entry.airDistanceMeters)} Luftlinie`;
+    } else if (entry?.unavailable) timeText = "keine Route";
+    const skull = isSkull(commuteClass, minutes);
+    let level = "pending";
+    if (entry?.unavailable || entry?.quality === "fallback") level = "unknown";
+    else if (skull) level = "skull";
+    else if (minutes !== null) level = commuteClass?.key === "local" ? "ok" : "info";
+    const icon = skull ? "💀" : commuteClass?.icon || "🚗";
+    const parts = [];
+    if (commuteClass && commuteClass.key !== "local") parts.push(commuteClass.label);
+    parts.push(timeText || "…");
+    const titleParts = [
+      commuteClass ? `${commuteClass.label}: ${commuteClass.hint}` : "Vakanzart unbekannt.",
+      kmText ? `Strecke: ${kmText}.` : "",
+      entry?.approx ? "Mindestens eine Adresse nur ungefähr gefunden." : ""
+    ].filter(Boolean);
+    return { icon, text: `${icon} ${parts.join(" · ")}`, title: titleParts.join(" "), level, minutes, skull, kmText };
+  }
+  function cleanRouteValue(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+  function getRouteDistanceCacheKey(candidateAddress, jobPositionAddress) {
+    return `${cleanRouteValue(candidateAddress)}__${cleanRouteValue(jobPositionAddress)}`;
+  }
+  function formatRouteDuration(seconds) {
+    const totalMinutes = Math.round(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours > 0) return `${hours} Std ${minutes} Min`;
+    return `${minutes} Min`;
+  }
+  function formatRouteDistanceKm(meters) {
+    return `${(meters / 1e3).toFixed(1)} km`;
+  }
+  function formatKm(meters) {
+    return formatRouteDistanceKm(meters).replace(".", ",");
+  }
+  function haversineDistanceMeters(from, to) {
+    const R = 6371e3;
+    const rad = (value) => value * Math.PI / 180;
+    const dLat = rad(to.lat - from.lat);
+    const dLon = rad(to.lon - from.lon);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(from.lat)) * Math.cos(rad(to.lat)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  function pickFastestAndShortestRoute(data) {
+    if (data?.code && data.code !== "Ok") return null;
+    const routes = (Array.isArray(data?.routes) ? data.routes : []).map((route) => ({
+      distance: Number(route?.distance),
+      duration: Number(route?.duration),
+      coordinates: Array.isArray(route?.geometry?.coordinates) ? route.geometry.coordinates : null
+    })).filter((route) => Number.isFinite(route.distance) && route.distance > 0 && Number.isFinite(route.duration) && route.duration > 0);
+    if (!routes.length) return null;
+    const fastest = [...routes].sort((a, b) => a.duration - b.duration)[0];
+    const shortest = [...routes].sort((a, b) => a.distance - b.distance)[0];
+    const bundle = {
+      fastestDistanceMeters: fastest.distance,
+      fastestDurationSeconds: fastest.duration,
+      shortestDistanceMeters: shortest.distance,
+      shortestDurationSeconds: shortest.duration,
+      routeAlternativeCount: routes.length
+    };
+    if (fastest.coordinates) bundle.previewCoordinates = samplePreviewCoordinates(fastest.coordinates);
+    return bundle;
+  }
+  function samplePreviewCoordinates(geometry, maxPoints = 180) {
+    if (!Array.isArray(geometry)) return [];
+    const step = Math.max(1, Math.ceil(geometry.length / maxPoints));
+    return geometry.filter((_, index) => index % step === 0 || index === geometry.length - 1).map((point) => [Number(point?.[0]), Number(point?.[1])]).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+  }
+  function buildRouteDistanceEntry(result) {
+    if (!result) return { displayText: "⚠️ keine Route gefunden", unavailable: true };
+    if (result.quality === "fallback") {
+      return {
+        displayText: `↔ ca. ${formatRouteDistanceKm(result.airDistanceMeters)} Luftlinie`,
+        unavailable: false,
+        quality: "fallback",
+        airDistanceMeters: result.airDistanceMeters,
+        source: result.source
+      };
+    }
+    const prefix = result.approx ? "ca. " : "";
+    const entry = {
+      displayText: `🚗 ${prefix}${formatRouteDuration(result.fastestDurationSeconds)} (${prefix}${formatRouteDistanceKm(result.fastestDistanceMeters)})`,
+      unavailable: false,
+      quality: "exact",
+      approx: Boolean(result.approx),
+      distanceMeters: result.fastestDistanceMeters,
+      durationSeconds: result.fastestDurationSeconds,
+      fastestDistanceMeters: result.fastestDistanceMeters,
+      fastestDurationSeconds: result.fastestDurationSeconds,
+      shortestDistanceMeters: result.shortestDistanceMeters,
+      shortestDurationSeconds: result.shortestDurationSeconds,
+      routeAlternativeCount: result.routeAlternativeCount,
+      source: result.source
+    };
+    if (Array.isArray(result.previewCoordinates) && result.previewCoordinates.length >= 2) {
+      entry.previewCoordinates = result.previewCoordinates;
+    }
+    return entry;
+  }
+  function hasDualRouteMetrics(entry) {
+    if (!entry || entry.quality !== "exact") return false;
+    return [
+      entry.fastestDistanceMeters,
+      entry.fastestDurationSeconds,
+      entry.shortestDistanceMeters,
+      entry.shortestDurationSeconds
+    ].every((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+  }
+  function extractGermanPostalCode(address) {
+    return String(address || "").match(/\b\d{5}\b/)?.[0] || "";
+  }
+  function extractGermanStreetName(address) {
+    const firstSegment = String(address || "").split(",")[0].trim();
+    if (/^\d{5}\b/.test(firstSegment)) return "";
+    const match = firstSegment.match(/^(.*\D)\s+\d+\s*[a-zA-Z]?(?:\s*-\s*\d+\s*[a-zA-Z]?)?$/);
+    if (!match) return "";
+    const street = match[1].trim();
+    return /[a-zäöüß]/i.test(street) ? street : "";
+  }
+  var GERMAN_STATE_NAMES = /* @__PURE__ */ new Set([
+    "baden-württemberg",
+    "bayern",
+    "berlin",
+    "brandenburg",
+    "bremen",
+    "hamburg",
+    "hessen",
+    "mecklenburg-vorpommern",
+    "niedersachsen",
+    "nordrhein-westfalen",
+    "rheinland-pfalz",
+    "saarland",
+    "sachsen",
+    "sachsen-anhalt",
+    "schleswig-holstein",
+    "thüringen"
+  ]);
+  function extractGermanCityName(address) {
+    const segments = String(address || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const withoutCountry = segments.filter((seg) => !/^(deutschland|germany)$/i.test(seg));
+    if (!withoutCountry.length) return "";
+    const citySegment = withoutCountry[withoutCountry.length - 1];
+    const withoutPlz = citySegment.replace(/^\s*\d{5}\s*/, "").trim();
+    if (GERMAN_STATE_NAMES.has(withoutPlz.toLowerCase())) return withoutPlz;
+    const firstToken = (withoutPlz.split(/[\s-]/)[0] || "").trim();
+    return /[a-zäöüß]/i.test(firstToken) ? firstToken : "";
+  }
+  function buildGeocodeQueries(address) {
+    const plz = extractGermanPostalCode(address);
+    const street = extractGermanStreetName(address);
+    const city = extractGermanCityName(address);
+    const queries = [];
+    if (street && city && plz) queries.push(`${street}, ${city}, ${plz}, Deutschland`);
+    if (street && plz) queries.push(`${street}, ${plz}, Deutschland`);
+    if (street && city) queries.push(`${street}, ${city}, Deutschland`);
+    if (plz) queries.push(`${plz}, Deutschland`);
+    if (city) queries.push(`${city}, Deutschland`);
+    return queries;
+  }
+
+  // ../../shared/js/werkia-toolbox/cache-storage.js
+  function pruneExpiredCacheEntries(cache, isExpired) {
+    let changed = false;
+    for (const key of Object.keys(cache)) {
+      if (isExpired(cache[key], key)) {
+        delete cache[key];
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  function setCacheItemWithQuotaRetry(storageKey, cache, isExpired) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(cache));
+    } catch (error) {
+      if (error?.name !== "QuotaExceededError") {
+        console.warn("[Werkia Cache] Konnte nicht gespeichert werden:", storageKey, error);
+        return;
+      }
+      const pruned2 = pruneExpiredCacheEntries(cache, isExpired);
+      if (pruned2) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(cache));
+          return;
+        } catch (retryError) {
+          console.warn("[Werkia Cache] localStorage weiterhin voll nach Bereinigung:", storageKey, retryError);
+        }
+      } else {
+        console.warn("[Werkia Cache] localStorage voll, keine abgelaufenen Eintraege zum Entfernen:", storageKey, error);
+      }
+      for (const key of Object.keys(cache)) delete cache[key];
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(cache));
+      } catch (wipeError) {
+        console.warn("[Werkia Cache] localStorage weiterhin voll trotz komplett geleertem Cache:", storageKey, wipeError);
+      }
+    }
+  }
+
+  // ../../shared/js/admin-dom/timing.js
+  function sleep(ms) {
+    return new Promise((resolve) => wSetTimeout(resolve, ms));
+  }
+
+  // ../../shared/js/route-commute/routing.js
+  var ROUTE_DISTANCE_CACHE_KEY = "werkia_route_distance_cache_v1";
+  var ROUTE_DISTANCE_CACHE_TTL = 7 * 24 * 60 * 60 * 1e3;
+  var ROUTE_DISTANCE_FALLBACK_TTL = 10 * 60 * 1e3;
+  var ROUTE_DISTANCE_UNAVAILABLE_TTL = 5 * 60 * 1e3;
+  var ROUTE_GEOCODE_CACHE_KEY = "werkia_route_geocode_cache_v1";
+  var ROUTE_GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
+  var OSRM_REQUEST_TIMEOUT_MS = 5e3;
+  var OSM_GAP_MS = 1100;
+  var ROUTING_SERVERS = [
+    "https://router.project-osrm.org",
+    "https://routing.openstreetmap.de/routed-car"
+  ];
+  function isRouteDistanceEntryExpired(entry) {
+    if (!entry?.time) return true;
+    let ttl = ROUTE_DISTANCE_CACHE_TTL;
+    if (entry.unavailable) ttl = ROUTE_DISTANCE_UNAVAILABLE_TTL;
+    else if (entry.quality === "fallback") ttl = ROUTE_DISTANCE_FALLBACK_TTL;
+    return Date.now() - entry.time >= ttl;
+  }
+  function isGeocodeEntryExpired(entry) {
+    return !entry?.time || Date.now() - entry.time >= ROUTE_GEOCODE_CACHE_TTL;
+  }
+  function loadJson(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  var pruned = false;
+  function pruneCachesOnce() {
+    if (pruned) return;
+    pruned = true;
+    const distance = loadJson(ROUTE_DISTANCE_CACHE_KEY);
+    if (pruneExpiredCacheEntries(distance, isRouteDistanceEntryExpired)) {
+      setCacheItemWithQuotaRetry(ROUTE_DISTANCE_CACHE_KEY, distance, isRouteDistanceEntryExpired);
+    }
+    const geocode = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+    if (pruneExpiredCacheEntries(geocode, isGeocodeEntryExpired)) {
+      setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, geocode, isGeocodeEntryExpired);
+    }
+  }
+  function getCachedRoute(candidateAddress, jobPositionAddress, { withPreview = false } = {}) {
+    pruneCachesOnce();
+    const cached = loadJson(ROUTE_DISTANCE_CACHE_KEY)[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)];
+    if (!cached?.displayText || isRouteDistanceEntryExpired(cached)) return null;
+    if (cached.unavailable || cached.quality === "fallback") return cached;
+    if (!hasDualRouteMetrics(cached)) return null;
+    if (withPreview && !(cached.previewCoordinates?.length >= 2)) return null;
+    return cached;
+  }
+  function saveRoute(candidateAddress, jobPositionAddress, entry) {
+    const cache = loadJson(ROUTE_DISTANCE_CACHE_KEY);
+    const key = getRouteDistanceCacheKey(candidateAddress, jobPositionAddress);
+    const previous = cache[key];
+    const keepPreview = !entry.previewCoordinates && previous?.previewCoordinates?.length >= 2 && !entry.unavailable;
+    cache[key] = { ...entry, ...keepPreview ? { previewCoordinates: previous.previewCoordinates } : {}, time: Date.now() };
+    setCacheItemWithQuotaRetry(ROUTE_DISTANCE_CACHE_KEY, cache, isRouteDistanceEntryExpired);
+  }
+  function rememberKnownCoords(address, coords) {
+    const key = cleanRouteValue(address);
+    if (!key || !Number.isFinite(coords?.lat) || !Number.isFinite(coords?.lon)) return;
+    const cache = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+    const existing = cache[key];
+    if (existing?.source === "werkia" && existing.coords?.lat === coords.lat && existing.coords?.lon === coords.lon && !isGeocodeEntryExpired(existing)) return;
+    cache[key] = { coords: { lat: coords.lat, lon: coords.lon }, time: Date.now(), source: "werkia" };
+    setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, cache, isGeocodeEntryExpired);
+  }
+  var osmGateReadyAt = 0;
+  var osmGateChain = Promise.resolve();
+  function runThroughOsmGate(fn) {
+    const scheduled = osmGateChain.then(async () => {
+      const waitMs = Math.max(0, osmGateReadyAt - Date.now());
+      if (waitMs > 0) await sleep(waitMs);
+      try {
+        return await fn();
+      } finally {
+        osmGateReadyAt = Date.now() + OSM_GAP_MS;
+      }
+    });
+    osmGateChain = scheduled.catch(() => {
+    });
+    return scheduled;
+  }
+  async function fetchJsonWithTimeout(url, timeoutMs) {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" }, ...controller ? { signal: controller.signal } : {} });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  async function geocodeQuery(query) {
+    const cache = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+    const key = cleanRouteValue(query);
+    const cached = cache[key];
+    if (cached && !isGeocodeEntryExpired(cached)) return cached.coords || null;
+    try {
+      const coords = await runThroughOsmGate(async () => {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de,at,ch&q=${encodeURIComponent(query)}`;
+        const results = await fetchJsonWithTimeout(url, 8e3);
+        const first = results?.[0];
+        return first ? { lat: parseFloat(first.lat), lon: parseFloat(first.lon) } : null;
+      });
+      const fresh = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+      fresh[key] = { coords, time: Date.now() };
+      setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, fresh, isGeocodeEntryExpired);
+      return coords;
+    } catch (error) {
+      console.warn("[Werkia Route] Geokodierung fehlgeschlagen:", query, error);
+      return null;
+    }
+  }
+  async function resolveCoords(location2) {
+    if (Number.isFinite(location2?.coords?.lat) && Number.isFinite(location2?.coords?.lon)) {
+      rememberKnownCoords(location2.address, location2.coords);
+      return { coords: location2.coords, approx: false };
+    }
+    for (const query of buildGeocodeQueries(location2?.address)) {
+      const coords = await geocodeQuery(query);
+      if (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lon)) return { coords, approx: true };
+    }
+    return { coords: null, approx: true };
+  }
+  var OSRM_QUERY_VARIANTS = ["alternatives=3", "alternatives=true", "alternatives=false"];
+  async function requestRouteBundle(server, from, to, withPreview) {
+    const baseUrl = `${server}/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}`;
+    const overview = withPreview ? "overview=full&geometries=geojson" : "overview=false";
+    let lastError = null;
+    for (const variant of OSRM_QUERY_VARIANTS) {
+      try {
+        const data = await runThroughOsmGate(() => fetchJsonWithTimeout(`${baseUrl}?${overview}&${variant}&steps=false`, OSRM_REQUEST_TIMEOUT_MS));
+        const bundle = pickFastestAndShortestRoute(data);
+        return bundle ? { ...bundle, source: `${server}/route` } : null;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    return null;
+  }
+  async function computeRoute(candidateLocation, jobLocation, withPreview) {
+    const from = await resolveCoords(candidateLocation);
+    const to = await resolveCoords(jobLocation);
+    if (!from.coords || !to.coords) return null;
+    const approx = from.approx || to.approx;
+    for (const server of ROUTING_SERVERS) {
+      try {
+        const bundle = await requestRouteBundle(server, from.coords, to.coords, withPreview);
+        if (bundle) return { ...bundle, quality: "exact", approx };
+      } catch (error) {
+        console.warn("[Werkia Route] OSRM-Server nicht erreichbar:", server, error?.message || error);
+      }
+    }
+    return {
+      quality: "fallback",
+      airDistanceMeters: haversineDistanceMeters(from.coords, to.coords),
+      approx: true,
+      source: "air-distance"
+    };
+  }
+  var inFlight = /* @__PURE__ */ new Map();
+  function getRoute(candidateLocation, jobLocation, { withPreview = false } = {}) {
+    const candidateAddress = candidateLocation?.address || "";
+    const jobAddress = jobLocation?.address || "";
+    if (!candidateAddress || !jobAddress) return Promise.resolve(null);
+    const cached = getCachedRoute(candidateAddress, jobAddress, { withPreview });
+    if (cached) return Promise.resolve(cached);
+    const key = `${getRouteDistanceCacheKey(candidateAddress, jobAddress)}|${withPreview ? "preview" : ""}`;
+    if (inFlight.has(key)) return inFlight.get(key);
+    const promise = computeRoute(candidateLocation, jobLocation, withPreview).then((result) => {
+      const entry = buildRouteDistanceEntry(result);
+      saveRoute(candidateAddress, jobAddress, entry);
+      return { ...entry, time: Date.now() };
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, promise);
+    return promise;
+  }
+
   // src/features/cem-ofm/route-calculation.js
   var ROUTE_BOX_ID2 = "werkia-cem-route-box";
-  var ROUTE_ADDRESS_CACHE_KEY = "werkia_cem_route_address_cache_v1";
-  var ROUTE_GEOCODE_CACHE_KEY = "werkia_route_geocode_cache_v1";
-  var ROUTE_DISTANCE_CACHE_KEY = "werkia_route_distance_cache_v1";
-  var ROUTE_ADDRESS_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
-  var ROUTE_GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
-  var ROUTE_DISTANCE_CACHE_TTL = 7 * 24 * 60 * 60 * 1e3;
   var POTENTIAL_MATCHES_ROUTE4 = /^#\/Candidate\/[a-f0-9-]{36}\/show\/7(?:[/?]|$)/i;
   var QUESTIONNAIRE_LABELS3 = [
     "Reisehäufigkeit",
@@ -3530,29 +4148,12 @@
     "Erforderliche Führerschein",
     "Führerschein"
   ];
-  var cleanRouteValue = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
-  var getRouteGeocodeCacheKey = (address) => cleanRouteValue(address);
-  var getRouteDistanceCacheKey = (candidateAddress, jobPositionAddress) => `${cleanRouteValue(candidateAddress)}__${cleanRouteValue(jobPositionAddress)}`;
-  var getRouteGeocodeQueries = (address) => {
-    const original = String(address || "").trim();
-    const withoutBerlinDistrict = original.replace(/\bBerlin-Bezirk\s+[^,]+/i, "Berlin").replace(/\s*,\s*,\s*/g, ", ");
-    return [...new Set([original, withoutBerlinDistrict].filter(Boolean))];
-  };
   var unavailableRoute = (reason) => ({ displayText: "Route nicht verfügbar", unavailable: true, reason });
-  function formatRouteResult(distanceMeters, durationSeconds) {
-    const totalMinutes = Math.max(1, Math.round(durationSeconds / 60));
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    const duration = hours ? `${hours} Std ${minutes} Min` : `${minutes} Min`;
-    const distance = `${(distanceMeters / 1e3).toFixed(1).replace(".", ",")} km`;
-    return `🚗 ${duration} (${distance})`;
-  }
   function executeRouteCalculation(runtime) {
     runtime.registerSource("cem/toolbox/src/features/cem-ofm/route-calculation.js");
     const context = getQuestionnaireContext();
     const calculations = /* @__PURE__ */ new Map();
     let renderTimer = null;
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     const isPotentialMatchesPage = () => POTENTIAL_MATCHES_ROUTE4.test(location.hash || "");
     const candidateIdFromRoute = () => String(location.hash || "").match(/^#\/Candidate\/([a-f0-9-]{36})\/show\/7/i)?.[1] || "";
     const jobIdFromRow = (row) => row?.querySelector('a[href*="#/JobPosition/"][href*="/show"]')?.getAttribute("href")?.match(/\/JobPosition\/([a-f0-9-]{36})\/show/i)?.[1] || "";
@@ -3569,107 +4170,6 @@
       return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS3.filter((label2) => labels.has(label2)).length >= 3;
     };
     const questionnaireDialog = () => [...document.querySelectorAll('.MuiDialog-paper, div[role="dialog"]')].find((dialog) => visible(dialog) && isQuestionnaireDialog(dialog)) || null;
-    function loadJson(key, fallback = {}) {
-      try {
-        return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-      } catch {
-        return fallback;
-      }
-    }
-    function saveJson(key, value) {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-      } catch {
-      }
-    }
-    function cachedAddress(url) {
-      const cached = loadJson(ROUTE_ADDRESS_CACHE_KEY)[url];
-      return cached?.address && Date.now() - cached.time < ROUTE_ADDRESS_CACHE_TTL ? cached.address : "";
-    }
-    function cacheAddress(url, address) {
-      const cache = loadJson(ROUTE_ADDRESS_CACHE_KEY);
-      cache[url] = { address, time: Date.now() };
-      saveJson(ROUTE_ADDRESS_CACHE_KEY, cache);
-    }
-    function requestJson(url) {
-      return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-          method: "GET",
-          url,
-          headers: { Accept: "application/json", "Accept-Language": "de" },
-          timeout: 12e3,
-          onload(response) {
-            try {
-              resolve(JSON.parse(response.responseText || "null"));
-            } catch (error) {
-              reject(error);
-            }
-          },
-          onerror: reject,
-          ontimeout: reject
-        });
-      });
-    }
-    function cachedCoordinates(address) {
-      const cached = loadJson(ROUTE_GEOCODE_CACHE_KEY)[getRouteGeocodeCacheKey(address)];
-      return cached?.coords && Date.now() - cached.time < ROUTE_GEOCODE_CACHE_TTL ? cached.coords : null;
-    }
-    function cacheCoordinates(address, coords) {
-      const cache = loadJson(ROUTE_GEOCODE_CACHE_KEY);
-      cache[getRouteGeocodeCacheKey(address)] = { coords, time: Date.now() };
-      saveJson(ROUTE_GEOCODE_CACHE_KEY, cache);
-    }
-    async function geocodeAddress(address) {
-      const cached = cachedCoordinates(address);
-      if (cached) {
-        return { coords: cached, fromCache: true };
-      }
-      const queries = getRouteGeocodeQueries(address);
-      let response = null;
-      let first = null;
-      let query = "";
-      for (let index = 0; index < queries.length; index += 1) {
-        if (index) await sleep(1100);
-        query = queries[index];
-        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=0&countrycodes=de,at,ch&q=${encodeURIComponent(query)}`;
-        response = await requestJson(url);
-        first = response?.[0] || null;
-        if (first?.lat && first?.lon) break;
-      }
-      if (!first?.lat || !first?.lon) return { coords: null, fromCache: false };
-      const coords = { lat: Number(first.lat), lon: Number(first.lon) };
-      if (!Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) return { coords: null, fromCache: false };
-      cacheCoordinates(address, coords);
-      return { coords, fromCache: false };
-    }
-    function cachedResult(candidateAddress, jobPositionAddress) {
-      const cached = loadJson(ROUTE_DISTANCE_CACHE_KEY)[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)];
-      if (!cached?.displayText) return null;
-      return Date.now() - cached.time < ROUTE_DISTANCE_CACHE_TTL ? cached : null;
-    }
-    function cacheResult(candidateAddress, jobPositionAddress, result) {
-      const cache = loadJson(ROUTE_DISTANCE_CACHE_KEY);
-      cache[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)] = { ...result, time: Date.now() };
-      saveJson(ROUTE_DISTANCE_CACHE_KEY, cache);
-    }
-    async function calculateRoute(candidateAddress, jobPositionAddress) {
-      const cached = cachedResult(candidateAddress, jobPositionAddress);
-      if (cached?.previewCoordinates?.length >= 2) return cached;
-      const candidate = await geocodeAddress(candidateAddress);
-      if (!candidate.coords) return unavailableRoute("Kandidatenadresse konnte nicht geokodiert werden.");
-      if (!candidate.fromCache && !cachedCoordinates(jobPositionAddress)) await sleep(1100);
-      const jobPosition = await geocodeAddress(jobPositionAddress);
-      if (!jobPosition.coords) return unavailableRoute("Vakanzadresse konnte nicht geokodiert werden.");
-      const url = `https://router.project-osrm.org/route/v1/driving/${candidate.coords.lon},${candidate.coords.lat};${jobPosition.coords.lon},${jobPosition.coords.lat}?overview=full&geometries=geojson&alternatives=false&steps=false`;
-      const route = (await requestJson(url))?.routes?.[0];
-      if (!route?.distance || !route?.duration) return unavailableRoute("Der Routenservice hat keine Fahrtroute geliefert.");
-      const geometry = Array.isArray(route.geometry?.coordinates) ? route.geometry.coordinates : [];
-      const sampleStep = Math.max(1, Math.ceil(geometry.length / 180));
-      const previewCoordinates = geometry.filter((_, index) => index % sampleStep === 0 || index === geometry.length - 1).map((point) => [Number(point[0]), Number(point[1])]).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
-      const result = { displayText: formatRouteResult(route.distance, route.duration), previewCoordinates, unavailable: false };
-      cacheResult(candidateAddress, jobPositionAddress, result);
-      return result;
-    }
     function previewSvg(coordinates, candidateAddress, jobPositionAddress) {
       if (!Array.isArray(coordinates) || coordinates.length < 2) return "";
       const width = 500, height = 270, padding = 42;
@@ -3729,42 +4229,33 @@
         box.style.borderColor = "rgba(201,42,42,.35)";
         return;
       }
-      box.style.background = "#e7f5ff";
-      box.style.borderColor = "rgba(25,113,194,.38)";
-      box.innerHTML = `<strong>🗺️ Distanz & Fahrzeit</strong><div style="margin-top:4px;font-size:15px;font-weight:800;">${escapeHtml3(data.displayText)}</div>${previewSvg(data.previewCoordinates, data.candidateAddress, data.jobPositionAddress)}`;
+      const commute = data.commute || {};
+      const skull = commute.level === "skull";
+      box.style.background = skull ? "#fff5f5" : "#e7f5ff";
+      box.style.borderColor = skull ? "rgba(224,49,49,.55)" : "rgba(25,113,194,.38)";
+      box.innerHTML = `<strong>🗺️ Distanz & Fahrzeit</strong><div style="margin-top:4px;font-size:15px;font-weight:800;${skull ? "color:#c92a2a;" : ""}">${escapeHtml3(commute.text || data.displayText)}</div>${commute.kmText ? `<div style="margin-top:2px;font-size:12px;opacity:.8;">${escapeHtml3(commute.kmText)}</div>` : ""}<div style="margin-top:4px;font-size:12px;line-height:1.35;">${escapeHtml3(commute.title || "")}</div>${previewSvg(data.previewCoordinates, data.candidateAddress, data.jobPositionAddress)}`;
       box.title = `${data.candidateAddress} → ${data.jobPositionAddress}`;
       box.disabled = false;
       box.onclick = () => window.open(`https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&from=${encodeURIComponent(data.candidateAddress)}&to=${encodeURIComponent(data.jobPositionAddress)}`, "_blank", "noopener,noreferrer");
     }
-    async function loadCandidateAddress(route) {
-      const cached = cachedAddress(route.candidateUrl);
-      if (cached) return cached;
-      const [candidateId] = route.key.split("|");
-      const address = await getCemGraphqlAdapter().addressProvider.loadCandidateAddress(candidateId);
-      cacheAddress(route.candidateUrl, address);
-      return address;
-    }
-    async function loadJobPositionAddress(route) {
-      const cached = cachedAddress(route.jobPositionUrl);
-      if (cached) return cached;
-      const [, jobPositionId] = route.key.split("|");
-      const address = await getCemGraphqlAdapter().addressProvider.loadJobPositionAddress(jobPositionId);
-      cacheAddress(route.jobPositionUrl, address);
-      return address;
-    }
     async function loadRoute(route) {
-      const [candidateAddress, jobPositionAddress] = await Promise.all([
-        loadCandidateAddress(route),
-        loadJobPositionAddress(route)
+      const [candidateId, jobPositionId] = route.key.split("|");
+      const provider = getCemGraphqlAdapter().commuteProvider;
+      const [candidateLocation, job] = await Promise.all([
+        provider.loadCandidateLocation(candidateId),
+        provider.loadJob(jobPositionId)
       ]);
-      if (!candidateAddress) return unavailableRoute("Kandidatenadresse konnte nicht gelesen werden.");
-      if (!jobPositionAddress) return unavailableRoute("Vakanzadresse konnte nicht gelesen werden.");
-      const result = await calculateRoute(candidateAddress, jobPositionAddress);
-      if (!result?.displayText || result.unavailable) {
-        const unavailable = result?.unavailable ? result : unavailableRoute("Der Routenservice hat keine Fahrtroute geliefert.");
-        return unavailable;
-      }
-      return { ...result, candidateAddress, jobPositionAddress };
+      if (!candidateLocation?.address) return unavailableRoute("Kandidatenadresse konnte nicht gelesen werden.");
+      if (!job) return unavailableRoute("Vakanz konnte nicht gelesen werden.");
+      if (!job.location?.address) return unavailableRoute("Vakanzadresse konnte nicht gelesen werden.");
+      const entry = await getRoute(candidateLocation, job.location, { withPreview: true });
+      if (!entry || entry.unavailable) return unavailableRoute("Adresse nicht gefunden oder der Routenservice hat keine Fahrtroute geliefert.");
+      return {
+        ...entry,
+        commute: describeCommute(classifyCommute(job), entry),
+        candidateAddress: candidateLocation.address,
+        jobPositionAddress: job.location.address
+      };
     }
     function updateRouteBox() {
       const route = context.route;
@@ -3841,6 +4332,183 @@
     runtime.addWindowListener("hashchange", scheduleUpdate);
     runtime.addDocumentListener("werkia-cem-questionnaire-route", scheduleUpdate);
     scheduleUpdate();
+  }
+
+  // ../../shared/js/route-commute/list-badges.js
+  var POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
+  var ROW_SELECTOR = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var LEVEL_STYLES = {
+    skull: "border-color:#e03131;background:#ffe3e3;color:#8f1d1d;font-weight:800;",
+    ok: "border-color:#8ce99a;background:#ebfbee;color:#2b6a35;",
+    info: "border-color:#ced4da;background:#f1f3f5;color:#495057;",
+    pending: "border-color:#dee2e6;background:#f8f9fa;color:#868e96;",
+    unknown: "border-color:#ced4da;border-style:dashed;background:#f8f9fa;color:#868e96;"
+  };
+  function getCandidateIdFromRoute2(hash = location.hash || "") {
+    return String(hash).match(POTENTIAL_MATCHES_ROUTE5)?.[1]?.toLowerCase() || "";
+  }
+  function getJobIdFromRow(row) {
+    const href = row?.querySelector('a[href*="#/JobPosition/"][href*="/show"]')?.getAttribute("href") || "";
+    return href.match(/#\/JobPosition\/([a-f0-9-]{36})\/show/i)?.[1]?.toLowerCase() || "";
+  }
+  function executeCommuteBadges(runtime, options = {}) {
+    const namespace = options.namespace || "werkia";
+    const getProvider = options.getProvider;
+    if (options.sourcePath) runtime.registerSource(options.sourcePath);
+    const BADGE_CLASS = `werkia-${namespace}-commute-badge`;
+    const STYLE_ID3 = `werkia-${namespace}-commute-style`;
+    const queued = /* @__PURE__ */ new Set();
+    const queue = [];
+    let working = false;
+    let scheduled = false;
+    let candidateError = "";
+    function ensureStyles2() {
+      if (document.getElementById(STYLE_ID3)) return;
+      const style = document.createElement("style");
+      style.id = STYLE_ID3;
+      style.textContent = `
+      .${BADGE_CLASS} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 10px;border:1px solid;border-radius:999px;font:600 12px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;vertical-align:middle;white-space:nowrap; }
+      ${Object.entries(LEVEL_STYLES).map(([level, css]) => `.${BADGE_CLASS}[data-level="${level}"] { ${css} }`).join("\n")}
+    `;
+      document.head.appendChild(style);
+    }
+    function clearAll() {
+      document.querySelectorAll(`.${BADGE_CLASS}`).forEach((badge) => badge.remove());
+      queue.length = 0;
+      queued.clear();
+    }
+    function renderBadge(row, view) {
+      let badge = row.querySelector(`.${BADGE_CLASS}`);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = BADGE_CLASS;
+        (row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row).appendChild(badge);
+      }
+      if (badge.textContent !== view.text) badge.textContent = view.text;
+      if (badge.dataset.level !== view.level) badge.dataset.level = view.level;
+      if (badge.title !== view.title) badge.title = view.title;
+    }
+    function isRowVisible(row) {
+      return row.isConnected && row.getClientRects().length > 0;
+    }
+    function enqueue(candidateId, jobId) {
+      const key = `${candidateId}|${jobId}`;
+      if (queued.has(key)) return;
+      queued.add(key);
+      queue.push({ key, candidateId, jobId });
+      work();
+    }
+    async function work() {
+      if (working) return;
+      working = true;
+      try {
+        while (queue.length) {
+          const item = queue.shift();
+          if (getCandidateIdFromRoute2() !== item.candidateId) {
+            queued.delete(item.key);
+            continue;
+          }
+          const row = findRow(item.jobId);
+          if (!row || !isRowVisible(row)) {
+            queued.delete(item.key);
+            continue;
+          }
+          try {
+            const provider = getProvider();
+            const [candidateLocation, job] = await Promise.all([
+              provider.loadCandidateLocation(item.candidateId),
+              provider.loadJob(item.jobId)
+            ]);
+            if (candidateLocation && job?.location) await getRoute(candidateLocation, job.location);
+          } catch (error) {
+            console.warn("[Werkia Fahrzeit] Route nicht berechenbar:", item.jobId, error);
+          }
+          queued.delete(item.key);
+          scheduleRender();
+        }
+      } finally {
+        working = false;
+      }
+    }
+    function findRow(jobId) {
+      return [...document.querySelectorAll(ROW_SELECTOR)].find((row) => getJobIdFromRow(row) === jobId) || null;
+    }
+    function render() {
+      const candidateId = getCandidateIdFromRoute2();
+      if (!candidateId) {
+        clearAll();
+        return;
+      }
+      let provider;
+      try {
+        provider = getProvider();
+      } catch {
+        return;
+      }
+      ensureStyles2();
+      const rows = [...document.querySelectorAll(ROW_SELECTOR)].map((row) => ({ row, jobId: getJobIdFromRow(row) })).filter((item) => item.jobId);
+      const missingJobs = rows.filter((item) => !provider.getCachedJob(item.jobId)).map((item) => item.jobId);
+      if (missingJobs.length) {
+        provider.loadJobs(missingJobs).then(scheduleRender, () => {
+        });
+      }
+      const candidateLocation = provider.peekCandidateLocation(candidateId);
+      const candidatePending = candidateLocation === void 0;
+      if (candidatePending) {
+        provider.loadCandidateLocation(candidateId).then(() => {
+          candidateError = "";
+        }, (error) => {
+          candidateError = "Kandidatenadresse nicht ladbar.";
+          console.warn("[Werkia Fahrzeit] Kandidatenadresse nicht ladbar:", error);
+        }).finally(scheduleRender);
+      }
+      for (const { row, jobId } of rows) {
+        const cachedJob = provider.getCachedJob(jobId);
+        const job = cachedJob?.job || null;
+        const commuteClass = classifyCommute(job);
+        if (cachedJob && !job) {
+          renderBadge(row, { text: "🚗 ?", level: "unknown", title: "Vakanzdaten nicht ladbar." });
+          continue;
+        }
+        if (!candidatePending && candidateLocation === null) {
+          renderBadge(row, { text: `${commuteClass?.icon || "🚗"} ?`, level: "unknown", title: candidateError || "Keine Kandidatenadresse hinterlegt." });
+          continue;
+        }
+        if (job && !job.location) {
+          renderBadge(row, { text: `${commuteClass.icon} ${commuteClass.key === "local" ? "" : `${commuteClass.label} · `}keine Adresse`, level: "unknown", title: "Bei der Vakanz ist keine Adresse hinterlegt." });
+          continue;
+        }
+        const entry = job && candidateLocation ? getCachedRoute(candidateLocation.address, job.location.address) : null;
+        renderBadge(row, describeCommute(commuteClass, entry));
+        if (job && candidateLocation && !entry && isRowVisible(row)) enqueue(candidateId, jobId);
+      }
+    }
+    function scheduleRender() {
+      if (scheduled) return;
+      scheduled = true;
+      runtime.setTimeout(() => {
+        scheduled = false;
+        render();
+      }, 250);
+    }
+    runtime.createMutationObserver((mutations) => {
+      const foreign = mutations.some((mutation) => {
+        if (mutation.target?.closest?.(`.${BADGE_CLASS}`)) return false;
+        return ![...mutation.addedNodes, ...mutation.removedNodes].every((node) => node.classList?.contains(BADGE_CLASS));
+      });
+      if (foreign) scheduleRender();
+    }).observe(document.body, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleRender);
+    scheduleRender();
+  }
+
+  // src/features/commute-badges.js
+  function executeCommuteBadges2(runtime) {
+    executeCommuteBadges(runtime, {
+      namespace: "cem",
+      sourcePath: "cem/toolbox/src/features/commute-badges.js",
+      getProvider: () => getCemGraphqlAdapter().commuteProvider
+    });
   }
 
   // src/features/vacancy-candidate-info/candidate-table.js
@@ -5239,7 +5907,7 @@
   }
 
   // ../../shared/js/bulk-match-actions/index.js
-  var ROW_SELECTOR = "tbody tr.RaDataTable-row";
+  var ROW_SELECTOR2 = "tbody tr.RaDataTable-row";
   var EMPLOYER_LINK_SELECTOR = 'a[href*="#/Employer/"]';
   var CANDIDATE_LINK_SELECTOR = 'a[href*="#/Candidate/"]';
   var JOB_POSITION_LINK_SELECTOR = 'a[href*="#/JobPosition/"]';
@@ -5266,13 +5934,13 @@
     const STATUS_MUTATION = buildStatusMutation(fields.status);
     const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
     const WVL_MUTATION = buildFollowUpMutation(fields.followUp);
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    const sleep2 = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     async function waitFor(find, timeoutMs = 3e3, intervalMs = 50) {
       const started = Date.now();
       while (Date.now() - started < timeoutMs) {
         const result = find();
         if (result) return result;
-        await sleep(intervalMs);
+        await sleep2(intervalMs);
       }
       return null;
     }
@@ -5295,7 +5963,7 @@
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     }
     function getRows() {
-      return [...document.querySelectorAll(ROW_SELECTOR)].filter((row) => row.querySelector(MATCH_LINK_SELECTOR2) && !row.querySelector("tr"));
+      return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(MATCH_LINK_SELECTOR2) && !row.querySelector("tr"));
     }
     function shownOnPage(element) {
       if (!element.isConnected || element.closest("[hidden]")) return false;
@@ -5880,7 +6548,7 @@
     style: "werkia-cem-candidate-bulk-style",
     status: "werkia-cem-candidate-bulk-status"
   };
-  var ROW_SELECTOR2 = "tbody tr.RaDataTable-row";
+  var ROW_SELECTOR3 = "tbody tr.RaDataTable-row";
   var CANDIDATE_LINK_SELECTOR2 = 'a[href*="#/Candidate/"]';
   var CANDIDATE_STATUS_OPTIONS = [
     { value: "onboarding", label: "Onboarding" },
@@ -5928,7 +6596,7 @@
     const normalize4 = (value) => String(value || "").replace(/\s+/g, " ").trim();
     function getCandidates() {
       const seen = /* @__PURE__ */ new Set();
-      return [...document.querySelectorAll(ROW_SELECTOR2)].filter((row) => row.querySelector(":scope > td.column-status") && row.querySelector(":scope > td.column-followUpDate")).map((row) => {
+      return [...document.querySelectorAll(ROW_SELECTOR3)].filter((row) => row.querySelector(":scope > td.column-status") && row.querySelector(":scope > td.column-followUpDate")).map((row) => {
         const link = row.querySelector(`:scope > td ${CANDIDATE_LINK_SELECTOR2}`);
         const id = candidateIdFromHref(link?.getAttribute("href") || link?.href);
         return id ? { id, name: normalize4(link.textContent) || id } : null;
@@ -6779,18 +7447,18 @@
   }
 
   // ../../shared/js/no-go-check/index.js
-  var POTENTIAL_MATCHES_ROUTE5 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
-  var ROW_SELECTOR3 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
-  var LEVEL_STYLES = {
+  var POTENTIAL_MATCHES_ROUTE6 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
+  var ROW_SELECTOR4 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var LEVEL_STYLES2 = {
     direct: { badge: "border:2px solid #450a0a;background:#7f1d1d;color:#fff;", accent: "#7f1d1d", tint: "#f7dcdc" },
     group: { badge: "border:2px solid #7f1d1d;background:#b91c1c;color:#fff;", accent: "#b91c1c", tint: "#fae3e3" },
     name: { badge: "border:2px solid #b45309;background:#f59e0b;color:#231400;", accent: "#b45309", tint: "#fdf0d5" }
   };
-  function getCandidateIdFromRoute2(hash = location.hash || "") {
-    return String(hash).match(POTENTIAL_MATCHES_ROUTE5)?.[1] || "";
+  function getCandidateIdFromRoute3(hash = location.hash || "") {
+    return String(hash).match(POTENTIAL_MATCHES_ROUTE6)?.[1] || "";
   }
   function isPotentialMatchesRoute(hash = location.hash || "") {
-    return POTENTIAL_MATCHES_ROUTE5.test(String(hash));
+    return POTENTIAL_MATCHES_ROUTE6.test(String(hash));
   }
   function getEmployerIdFromRow(row) {
     const link = row?.querySelector('a[href*="#/Employer/"][href*="/show"]') || row?.querySelector('a[href*="#/Employer/"]');
@@ -6818,10 +7486,10 @@
       const style = document.createElement("style");
       style.id = STYLE_ID3;
       style.textContent = `
-      .${ROW_CLASS2} > td, .${ROW_CLASS2} > th { background:${LEVEL_STYLES.direct.tint} !important; }
-      .${ROW_CLASS2} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.direct.accent} !important; }
-      .${CHECK_ROW_CLASS} > td, .${CHECK_ROW_CLASS} > th { background:${LEVEL_STYLES.name.tint} !important; }
-      .${CHECK_ROW_CLASS} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES.name.accent} !important; }
+      .${ROW_CLASS2} > td, .${ROW_CLASS2} > th { background:${LEVEL_STYLES2.direct.tint} !important; }
+      .${ROW_CLASS2} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES2.direct.accent} !important; }
+      .${CHECK_ROW_CLASS} > td, .${CHECK_ROW_CLASS} > th { background:${LEVEL_STYLES2.name.tint} !important; }
+      .${CHECK_ROW_CLASS} > :first-child { box-shadow:inset 9px 0 0 ${LEVEL_STYLES2.name.accent} !important; }
     `;
       document.head.appendChild(style);
     }
@@ -6837,7 +7505,7 @@
         return;
       }
       ensureStyles2();
-      const style = LEVEL_STYLES[collision.level];
+      const style = LEVEL_STYLES2[collision.level];
       row.classList.toggle(ROW_CLASS2, collision.level !== "name");
       row.classList.toggle(CHECK_ROW_CLASS, collision.level === "name");
       const existing = row.querySelector(`.${BADGE_CLASS}`);
@@ -6857,7 +7525,7 @@
       candidateLoadInFlight = candidateId;
       Promise.resolve().then(() => getProvider().loadCandidateNoGoEmployers(candidateId)).then((entries) => {
         noGosByCandidate.set(candidateId, entries);
-        if (getCandidateIdFromRoute2() === candidateId) scheduleRender();
+        if (getCandidateIdFromRoute3() === candidateId) scheduleRender();
       }).catch((error) => console.warn(`[${namespace.toUpperCase()} No-Go] No-Go-Arbeitgeber konnten nicht geladen werden:`, error)).finally(() => {
         if (candidateLoadInFlight === candidateId) candidateLoadInFlight = "";
       });
@@ -6876,14 +7544,14 @@
       });
     }
     function renderRows() {
-      const candidateId = getCandidateIdFromRoute2();
+      const candidateId = getCandidateIdFromRoute3();
       if (!candidateId) return;
       const noGos = noGosByCandidate.get(candidateId);
       if (noGos === void 0) {
         loadCandidateNoGos(candidateId);
         return;
       }
-      const rows = [...document.querySelectorAll(ROW_SELECTOR3)];
+      const rows = [...document.querySelectorAll(ROW_SELECTOR4)];
       if (!noGos.length) {
         rows.forEach(clearRow);
         return;
@@ -6951,6 +7619,7 @@
     { id: "cem-ofm-status-colors", execute: executeCemStatusColors },
     { id: "cem-ofm-questionnaire-evaluation", execute: executeQuestionnaireEvaluation },
     { id: "cem-ofm-route-calculation", execute: executeRouteCalculation },
+    { id: "commute-badges", execute: executeCommuteBadges2 },
     { id: "vacancy-candidate-info", execute: executeVacancyCandidateInfo },
     { id: "offline-match-bulk", execute: executeOfflineMatchBulk },
     { id: "filter-presets", execute: executeFilterPresets },
