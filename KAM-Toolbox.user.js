@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.116
+// @version      1.6.117
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2131,6 +2131,7 @@
         "Den Grund wählen und die Rückfrage bestätigen."
       ],
       notes: [
+        "Bei Mails von CBRE GWS IFM Industrie GmbH zeigt die Karte zusätzlich „An CBRE senden“: ein Formular mit den Kandidatendaten für CBREs softgarden-Import. Kälteschein (groß/klein) und ggf. Geschlecht wählst du selbst; die Stellen-ID merkt sich die Toolbox pro Vakanz.",
         "Gesetzt wird KAM Status „Out“ mit Grund. Außerdem wird die KAM WVL gelöscht und offene Terminvorschläge werden abgelehnt. Klappt einer dieser Schritte nicht, nennt der Dialog ihn einzeln, etwa „WVL nicht gelöscht“. Das holst du dann im Adminpanel nach.",
         "Hat ein Kandidat mehrere Matches beim selben Arbeitgeber, entscheidet der Vakanztitel aus dem Betreff („✓ Vakanz“). Ist kein Treffer eindeutig, ist nichts vorausgewählt und du wählst selbst.",
         "Lässt sich aus der Mail kein Arbeitgeber ablesen, trägst du ihn im Dialog selbst ein.",
@@ -7016,6 +7017,90 @@
     scheduleSync();
   }
 
+  // src/features/kam-suite/cbre-softgarden.js
+  var CBRE_RECIPIENT = "proposal@cbre-industries.softgarden.io";
+  var CBRE_DEFAULT_POSITION_ID = "2054604";
+  var CBRE_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+  var CBRE_EMPLOYER_RE = /\bcbre\s+gws\s+ifm\s+industrie\b/i;
+  function isCbreEmployerName(name) {
+    return CBRE_EMPLOYER_RE.test(String(name || ""));
+  }
+  function cbreSubject(positionId) {
+    return `[#${String(positionId || "").replace(/\D/g, "")}]`;
+  }
+  function normalisePositionId(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+  var GENDER_CODES = { male: "m", female: "f" };
+  function genderCode(gender) {
+    return GENDER_CODES[gender] || "";
+  }
+  var REFRIGERATION_OPTIONS = [
+    { value: "gross", label: "Großer Kälteschein", text: "Großer Kälteschein vorhanden" },
+    { value: "klein", label: "Kleiner Kälteschein", text: "Kleiner Kälteschein vorhanden (kein großer)" },
+    { value: "keiner", label: "Kein Kälteschein", text: "Kein Kälteschein vorhanden" }
+  ];
+  var CAN_START_LABELS = {
+    immediately: "sofort",
+    less_than_two_months: "in weniger als 2 Monaten",
+    less_than_six_months: "in weniger als 6 Monaten",
+    between_six_and_twelve_months: "in 6–12 Monaten"
+  };
+  function formatIsoDate(value) {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match ? `${match[3]}.${match[2]}.${match[1]}` : "";
+  }
+  function describeAvailability({ startDate, canStartOn } = {}) {
+    const date = formatIsoDate(startDate);
+    if (date) return `Verfügbar ab ${date}`;
+    const label = CAN_START_LABELS[canStartOn];
+    return label ? `Verfügbar ${label}` : "";
+  }
+  function describeSalary(salaryExpectation) {
+    const amount = Number(salaryExpectation);
+    if (!Number.isFinite(amount) || amount <= 0) return "";
+    return `Gehaltsvorstellung ${amount.toLocaleString("de-DE")} € brutto/Monat`;
+  }
+  function extractWerkiaEmail(bodyText) {
+    const matches = String(bodyText || "").match(/[\w.+-]+@werkia\.de\b/gi) || [];
+    return matches.length ? matches[matches.length - 1].toLowerCase() : "";
+  }
+  function hasRefrigerationCertificate(certificates) {
+    return Array.isArray(certificates) && certificates.includes("refrigeration_certificate");
+  }
+  function bewerbungstypText({ availability, salary, refrigeration, note }) {
+    const option = REFRIGERATION_OPTIONS.find((item) => item.value === refrigeration);
+    const parts = [availability, salary, option?.text, note].map((part) => String(part || "").trim()).filter(Boolean);
+    return parts.length ? `internal – ${parts.join(", ")}` : "internal";
+  }
+  function buildCbreBody(fields) {
+    return [
+      `Vorname: ${fields.firstName.trim()}`,
+      `Nachname: ${fields.lastName.trim()}`,
+      `E-Mail Adresse: ${fields.email.trim()}`,
+      `Geschlecht: ${fields.gender}`,
+      `Sprache: ${fields.language.trim() || "de"}`,
+      `Bewerbungstyp: ${bewerbungstypText(fields)}`
+    ].join("\n");
+  }
+  function validateCbreFields(fields) {
+    const problems = [];
+    if (!String(fields.firstName || "").trim()) problems.push("Vorname fehlt");
+    if (!String(fields.lastName || "").trim()) problems.push("Nachname fehlt");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(fields.email || "").trim())) problems.push("E-Mail Adresse fehlt oder ist ungültig");
+    if (!["m", "f"].includes(fields.gender)) problems.push("Geschlecht wählen (m oder f)");
+    if (!REFRIGERATION_OPTIONS.some((item) => item.value === fields.refrigeration)) problems.push("Kälteschein wählen");
+    if (!normalisePositionId(fields.positionId)) problems.push("Stellen-ID fehlt");
+    return problems;
+  }
+  function parseAttachmentSize(text) {
+    const match = String(text || "").match(/(\d+(?:[.,]\d+)?)\s*(KB|MB|GB|B)\b/i);
+    if (!match) return null;
+    const value = Number(match[1].replace(",", "."));
+    const factor = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 }[match[2].toUpperCase()];
+    return Math.round(value * factor);
+  }
+
   // src/features/kam-suite/outlook-match-outen.js
   var EMPLOYERS_BY_NAME_QUERY = `query OutenEmployersByName($filter: EmployerFilter) {
   items: allEmployers(filter: $filter) { id name __typename }
@@ -7037,6 +7122,18 @@
     id
     germanSpeakingLevel
     jobTitles { education jobTitle { id title } }
+  }
+}`;
+  var CBRE_CANDIDATE_QUERY = `query CbreCandidate($id: UUID!) {
+  data: Candidate(id: $id) {
+    id
+    firstName
+    lastName
+    gender
+    salaryExpectation
+    startDate
+    canStartOn
+    certificates
   }
 }`;
   var CANDIDATE_LOCATIONS_QUERY2 = `query OutenCandidateLocations($filter: CandidateLocationFilter!, $sortField: String, $sortOrder: String) {
@@ -7709,10 +7806,19 @@
         closePopover();
         openWizard(readMailContext());
       });
+      const actions = [outenBtn];
+      if (isCbreEmployerName(summary.employerName)) {
+        const cbreBtn = buildButton("An CBRE senden", { action: "cbre" });
+        cbreBtn.addEventListener("click", () => {
+          closePopover();
+          openWizard(readMailContext(), { mode: "cbre" });
+        });
+        actions.unshift(cbreBtn);
+      }
       const body = buildBody([
         line("Kandidat", summary.candidateName),
         line("Arbeitgeber", summary.employerName),
-        buildActions([outenBtn])
+        buildActions(actions)
       ]);
       styled2(body, { padding: "12px 14px", gap: "6px" });
       popover.replaceChildren(head, body);
@@ -7795,7 +7901,7 @@
       const { matches: byName, strong: strongName } = rankMatchesByName(matches, wantedName);
       if (byName.length === 1 && strongName) {
         state.matchId = byName[0].id;
-        renderReasonStep(dialog, state, byName[0]);
+        renderMatchStep(dialog, state, byName[0]);
         return;
       }
       let nameList = byName.length ? byName : matches;
@@ -7887,7 +7993,7 @@
         if (selectedIndex < 0) return;
         const selected = sortedMatches[selectedIndex];
         state.matchId = selected.id;
-        renderReasonStep(dialog, state, selected);
+        renderMatchStep(dialog, state, selected);
       });
       if (preselected < 0) {
         setButtonDisabled(continueBtn, true);
@@ -7917,6 +8023,10 @@
         ])
       );
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    }
+    function renderMatchStep(dialog, state, match) {
+      if (state.mode === "cbre") renderCbreStep(dialog, state, match);
+      else renderReasonStep(dialog, state, match);
     }
     function renderReasonStep(dialog, state, match) {
       if (isDialogClosed(dialog)) return;
@@ -8009,6 +8119,248 @@
       );
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
     }
+    const CBRE_POSITION_STORAGE_KEY = "werkia_kam_cbre_position_ids_v1";
+    function loadCbrePositionId(jobPositionId) {
+      try {
+        const stored = JSON.parse(GM_getValue(CBRE_POSITION_STORAGE_KEY, "{}") || "{}");
+        return stored[jobPositionId] || CBRE_DEFAULT_POSITION_ID;
+      } catch {
+        return CBRE_DEFAULT_POSITION_ID;
+      }
+    }
+    function saveCbrePositionId(jobPositionId, positionId) {
+      if (!jobPositionId) return;
+      try {
+        const stored = JSON.parse(GM_getValue(CBRE_POSITION_STORAGE_KEY, "{}") || "{}");
+        stored[jobPositionId] = positionId;
+        GM_setValue(CBRE_POSITION_STORAGE_KEY, JSON.stringify(stored));
+      } catch {
+      }
+    }
+    function oversizedAttachments() {
+      return [...document.querySelectorAll('[id$="_ATTACHMENTS"]')].map((element) => element.innerText || "").filter((text) => (parseAttachmentSize(text) || 0) > CBRE_MAX_ATTACHMENT_BYTES);
+    }
+    async function renderCbreStep(dialog, state, match) {
+      if (isDialogClosed(dialog)) return;
+      renderLoading(dialog, `Lade Kandidatendaten von ${candidateFullName(match) || state.parsed.candidateName} …`);
+      setBusy(dialog, true);
+      let candidate = {};
+      try {
+        const data = await graphqlRequestWithRetry(CBRE_CANDIDATE_QUERY, { id: match.candidateId });
+        candidate = data?.data || {};
+      } catch (error) {
+        setBusy(dialog, false);
+        renderCaughtError(dialog, error);
+        return;
+      }
+      if (isDialogClosed(dialog)) return;
+      setBusy(dialog, false);
+      const fieldStyle = { boxSizing: "border-box", width: "100%", padding: "8px", border: "1px solid #bbb", borderRadius: "5px", font: "inherit", background: "#fff" };
+      const labelled = (labelText, control) => {
+        const label = document.createElement("label");
+        styled2(label, { display: "grid", gap: "4px", fontWeight: "700" });
+        label.append(labelText, control);
+        return label;
+      };
+      const input = (value) => {
+        const element = document.createElement("input");
+        element.type = "text";
+        element.value = value || "";
+        return styled2(element, fieldStyle);
+      };
+      const select = (options, value) => {
+        const element = document.createElement("select");
+        options.forEach(([optionValue, text]) => {
+          const option = document.createElement("option");
+          option.value = optionValue;
+          option.textContent = text;
+          element.appendChild(option);
+        });
+        element.value = value;
+        return styled2(element, fieldStyle);
+      };
+      const fields = {
+        firstName: input(candidate.firstName || match.candidate?.firstName),
+        lastName: input(candidate.lastName || match.candidate?.lastName),
+        email: input(extractWerkiaEmail(state.mailBodyText)),
+        gender: select([["", "Bitte wählen"], ["m", "m (männlich)"], ["f", "f (weiblich)"]], genderCode(candidate.gender)),
+        language: input("de"),
+        positionId: input(loadCbrePositionId(match.jobPositionId)),
+        availability: input(describeAvailability(candidate)),
+        salary: input(describeSalary(candidate.salaryExpectation)),
+        refrigeration: select([["", "Bitte wählen"], ...REFRIGERATION_OPTIONS.map((option) => [option.value, option.label])], ""),
+        note: input("")
+      };
+      const grid = document.createElement("div");
+      styled2(grid, { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 10px" });
+      grid.append(
+        labelled("Vorname", fields.firstName),
+        labelled("Nachname", fields.lastName),
+        labelled("E-Mail Adresse (deine)", fields.email),
+        labelled("Geschlecht", fields.gender),
+        labelled("Sprache", fields.language),
+        labelled("Stellen-ID", fields.positionId),
+        labelled("Verfügbarkeit", fields.availability),
+        labelled("Gehaltsvorstellung", fields.salary),
+        labelled("Kälteschein", fields.refrigeration),
+        labelled("Weitere Angaben (optional)", fields.note)
+      );
+      const preview = document.createElement("pre");
+      styled2(preview, { margin: "0", padding: "8px 10px", background: "#f6f6f6", border: "1px solid #ddd", borderRadius: "5px", whiteSpace: "pre-wrap", font: "12px/1.45 Consolas,monospace" });
+      const values = () => Object.fromEntries(Object.entries(fields).map(([key, element]) => [key, element.value]));
+      const updatePreview = () => {
+        const current = values();
+        preview.textContent = `An: ${CBRE_RECIPIENT}
+Betreff: ${cbreSubject(current.positionId)}
+
+${buildCbreBody(current)}`;
+      };
+      Object.values(fields).forEach((element) => {
+        element.addEventListener("input", updatePreview);
+        element.addEventListener("change", updatePreview);
+      });
+      updatePreview();
+      const notes = [hasRefrigerationCertificate(candidate.certificates) ? "Laut Adminpanel hat der Kandidat einen Kälteschein. Ob groß oder klein, steht dort nicht – bitte auswählen." : "Laut Adminpanel ist kein Kälteschein hinterlegt. Für die Stelle ist der große Pflicht, der kleine geht unter Umständen."];
+      if (!candidate.gender) notes.push("Geschlecht ist im Adminpanel nicht hinterlegt – bitte auswählen.");
+      const oversized = oversizedAttachments();
+      if (oversized.length) notes.push(`Achtung: Anhang über 5 MB (${oversized.join(", ")}). softgarden nimmt ihn nicht an – bitte verkleinern.`);
+      const statusEl = document.createElement("div");
+      const setStatus = (text, tone = "") => {
+        statusEl.textContent = text;
+        styled2(statusEl, { color: tone === "ok" ? "#18752b" : tone === "error" ? "#b3261e" : tone === "busy" ? "#995000" : "#222" });
+      };
+      const closeBtn = buildButton("Abbrechen", { action: "close" });
+      const applyBtn = buildButton("Weiterleitung erstellen", { action: "apply", primary: true });
+      closeBtn.addEventListener("click", () => dialog.close());
+      applyBtn.addEventListener("click", async () => {
+        const current = values();
+        const problems = validateCbreFields(current);
+        if (problems.length) {
+          setStatus(`${problems.join(". ")}.`, "error");
+          return;
+        }
+        const positionId = normalisePositionId(current.positionId);
+        saveCbrePositionId(match.jobPositionId, positionId);
+        setButtonDisabled(applyBtn, true);
+        setStatus("Erstelle die Weiterleitung …", "busy");
+        const result = await composeCbreForward({ to: CBRE_RECIPIENT, subject: cbreSubject(positionId), body: buildCbreBody(current) });
+        setButtonDisabled(applyBtn, false);
+        if (result.ok) {
+          dialog.close();
+          window.alert("Weiterleitung an CBRE ist vorbereitet. Bitte Empfänger, Betreff, Text und Anhang prüfen und dann selbst senden.");
+          return;
+        }
+        setStatus(result.message, result.tone || "error");
+      });
+      dialog.replaceChildren(
+        buildHead("An CBRE senden (softgarden)"),
+        buildBody([
+          buildNote(`${candidateFullName(match) || state.parsed.candidateName} – ${match.jobPosition?.mainTitle || "Vakanz"} bei ${state.employer.name}. Nur dieser Text geht an CBRE, ohne Anrede und Signatur; der Lebenslauf bleibt als Anhang dran.`),
+          grid,
+          ...notes.map((text) => buildNote(text)),
+          preview,
+          statusEl,
+          buildActions([closeBtn, applyBtn])
+        ])
+      );
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+      fields[candidate.gender ? "refrigeration" : "gender"].focus();
+    }
+    const COMPOSE_SELECTORS = {
+      forwardButton: 'button[aria-label="Weiterleiten"], button[aria-label="Forward"]',
+      to: 'div[aria-label="An"][contenteditable="true"], div[aria-label="To"][contenteditable="true"], div[aria-label="An"], div[aria-label="To"]',
+      subject: 'input[aria-label="Thema"], input[aria-label="Subject"], input[placeholder="Betreff hinzufügen"], input[placeholder="Add a subject"]',
+      body: 'div[role="textbox"][aria-label="Nachrichtentext"], div[role="textbox"][aria-label="Message body"]'
+    };
+    function visibleElement(selector) {
+      return [...document.querySelectorAll(selector)].find(isVisible) || null;
+    }
+    async function waitForElement(selector, timeoutMs = 8e3) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const element = visibleElement(selector);
+        if (element) return element;
+        await sleep(150);
+      }
+      return null;
+    }
+    function setNativeInputValue(input, value) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (setter) setter.call(input, value);
+      else input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    function placeCaretAtEnd(element) {
+      element.focus();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    function replaceEditorText(editor, text) {
+      editor.focus();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand("delete");
+      text.split("\n").forEach((line, index) => {
+        if (index > 0) document.execCommand("insertParagraph");
+        if (line) document.execCommand("insertText", false, line);
+      });
+    }
+    function editorText(editor) {
+      return (editor.innerText || "").replace(/ /g, " ").replace(/\n{2,}/g, "\n").trim();
+    }
+    async function composeCbreForward({ to, subject, body }) {
+      const missing = [];
+      let subjectInput = visibleElement(COMPOSE_SELECTORS.subject);
+      if (!subjectInput) {
+        const forwardButtons = [...document.querySelectorAll(COMPOSE_SELECTORS.forwardButton)].filter(isVisible);
+        const forwardButton = forwardButtons[forwardButtons.length - 1];
+        if (!forwardButton) return composeFallback({ to, subject, body }, "Den Weiterleiten-Knopf der Mail habe ich nicht gefunden.");
+        forwardButton.click();
+        subjectInput = await waitForElement(COMPOSE_SELECTORS.subject);
+        if (!subjectInput) return composeFallback({ to, subject, body }, "Das Weiterleiten-Fenster ist nicht aufgegangen.");
+      }
+      const editor = await waitForElement(COMPOSE_SELECTORS.body, 4e3);
+      const toField = visibleElement(COMPOSE_SELECTORS.to);
+      if (toField) {
+        placeCaretAtEnd(toField);
+        document.execCommand("insertText", false, to);
+        if (!(toField.innerText || "").includes(to)) missing.push(`Empfänger ${to}`);
+      } else {
+        missing.push(`Empfänger ${to}`);
+      }
+      setNativeInputValue(subjectInput, subject);
+      if (subjectInput.value !== subject) missing.push(`Betreff ${subject}`);
+      if (editor) {
+        replaceEditorText(editor, body);
+        if (editorText(editor) !== body.replace(/\n{2,}/g, "\n").trim()) missing.push("Mailtext");
+      } else {
+        missing.push("Mailtext");
+      }
+      if (missing.length) return composeFallback({ to, subject, body }, `Nicht automatisch gesetzt: ${missing.join(", ")}.`);
+      subjectInput.focus();
+      return { ok: true };
+    }
+    async function composeFallback({ to, subject, body }, reason) {
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(body);
+        copied = true;
+      } catch {
+      }
+      return {
+        ok: false,
+        tone: "busy",
+        message: `${reason} ${copied ? "Der Text ist kopiert. " : ""}Bitte von Hand ergänzen – An: ${to}, Betreff: ${subject}, Mailtext komplett durch ${copied ? "den kopierten Text" : "den Text aus der Vorschau"} ersetzen.`
+      };
+    }
     function describeParsed(parsed) {
       if (parsed.source === "manual") return `Eingabe: Kandidat „${parsed.candidateName || "(leer)"}“, Arbeitgeber „${parsed.employerName}“`;
       return `Betreff: „${parsed.candidateName}: ${parsed.vacancyTitle} - ${parsed.employerName}“`;
@@ -8073,14 +8425,14 @@
         renderEmployerPicker(dialog, state, employers);
       }).catch((error) => renderCaughtError(dialog, error));
     }
-    function openWizard(context) {
+    function openWizard(context, { mode = "outen" } = {}) {
       document.getElementById(IDS2.dialog)?.remove();
       const dialog = document.createElement("dialog");
       dialog.id = IDS2.dialog;
       styleDialogFrame(dialog);
       document.body.appendChild(dialog);
       const resolved = resolveApplicationSubject(context);
-      const state = { parsed: resolved?.parsed || null, profile: parseProfileFromMailBody(context.bodyText), employer: null, matchId: null, matches: [] };
+      const state = { mode, mailBodyText: context.bodyText, parsed: resolved?.parsed || null, profile: parseProfileFromMailBody(context.bodyText), employer: null, matchId: null, matches: [] };
       dialog.addEventListener("cancel", (event) => {
         if (dialog.dataset.busy === "true") event.preventDefault();
       });
