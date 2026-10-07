@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.6.116
+// @version      1.6.121
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -7075,7 +7075,9 @@
 
   // ../../shared/js/route-commute/list-badges.js
   var POTENTIAL_MATCHES_ROUTE2 = /^#\/Candidate\/([a-f0-9-]{36})\/show\/7(?:[/?]|$)/i;
+  var REVERSE_MATCHES_ROUTE = /^#\/OnlineMatches\/ReverseMatches(?:\?|$)/i;
   var ROW_SELECTOR2 = "tbody tr.RaDataTable-row, tbody tr.MuiTableRow-root";
+  var EXPAND_ROW_SELECTOR = 'tr[id^="Candidate-"][id$="-expand"]';
   var LEVEL_STYLES2 = {
     skull: "border-color:#e03131;background:#ffe3e3;color:#8f1d1d;font-weight:800;",
     ok: "border-color:#8ce99a;background:#ebfbee;color:#2b6a35;",
@@ -7086,21 +7088,63 @@
   function getCandidateIdFromRoute4(hash = location.hash || "") {
     return String(hash).match(POTENTIAL_MATCHES_ROUTE2)?.[1]?.toLowerCase() || "";
   }
+  function getJobLinkFromRow(row) {
+    return row?.querySelector('a[href*="#/JobPosition/"][href*="/show"]') || row?.querySelector('a[href*="#/JobPosition/"]') || null;
+  }
   function getJobIdFromRow(row) {
-    const href = row?.querySelector('a[href*="#/JobPosition/"][href*="/show"]')?.getAttribute("href") || "";
-    return href.match(/#\/JobPosition\/([a-f0-9-]{36})\/show/i)?.[1]?.toLowerCase() || "";
+    const href = getJobLinkFromRow(row)?.getAttribute("href") || "";
+    return href.match(/#\/JobPosition\/([a-f0-9-]{36})(?:[/?]|$)/i)?.[1]?.toLowerCase() || "";
+  }
+  function getCandidateIdFromExpandRow(expandRow) {
+    return String(expandRow?.id || "").match(/^Candidate-([a-f0-9-]{36})-expand$/i)?.[1]?.toLowerCase() || "";
+  }
+  var PAGES2 = [
+    {
+      key: "potentialMatches",
+      matches: (hash) => POTENTIAL_MATCHES_ROUTE2.test(hash),
+      collect() {
+        const candidateId = getCandidateIdFromRoute4();
+        return [...document.querySelectorAll(ROW_SELECTOR2)].map((row) => ({
+          row,
+          candidateId,
+          jobId: getJobIdFromRow(row),
+          host: () => row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row
+        }));
+      }
+    },
+    {
+      key: "reverseMatches",
+      matches: (hash) => REVERSE_MATCHES_ROUTE.test(hash),
+      collect() {
+        const items = [];
+        for (const expandRow of document.querySelectorAll(EXPAND_ROW_SELECTOR)) {
+          const candidateId = getCandidateIdFromExpandRow(expandRow);
+          for (const row of expandRow.querySelectorAll("tr")) {
+            if (row.closest(EXPAND_ROW_SELECTOR) !== expandRow) continue;
+            const link = getJobLinkFromRow(row);
+            if (!link || link.closest("tr") !== row) continue;
+            items.push({ row, candidateId, jobId: getJobIdFromRow(row), host: () => link.closest("td") || row });
+          }
+        }
+        return items;
+      }
+    }
+  ];
+  function findPage(hash = location.hash || "", keys = PAGES2.map((page) => page.key)) {
+    return PAGES2.find((page) => keys.includes(page.key) && page.matches(String(hash))) || null;
   }
   function executeCommuteBadges(runtime, options = {}) {
     const namespace = options.namespace || "werkia";
     const getProvider = options.getProvider;
+    const pageKeys = options.pages || ["potentialMatches"];
     if (options.sourcePath) runtime.registerSource(options.sourcePath);
     const BADGE_CLASS2 = `werkia-${namespace}-commute-badge`;
     const STYLE_ID3 = `werkia-${namespace}-commute-style`;
     const queued = /* @__PURE__ */ new Set();
     const queue = [];
+    const candidateErrors = /* @__PURE__ */ new Map();
     let working = false;
     let scheduled = false;
-    let candidateError = "";
     function ensureStyles2() {
       if (document.getElementById(STYLE_ID3)) return;
       const style = document.createElement("style");
@@ -7116,12 +7160,12 @@
       queue.length = 0;
       queued.clear();
     }
-    function renderBadge(row, view) {
-      let badge = row.querySelector(`.${BADGE_CLASS2}`);
+    function renderBadge(item, view) {
+      let badge = item.row.querySelector(`.${BADGE_CLASS2}`);
       if (!badge) {
         badge = document.createElement("span");
         badge.className = BADGE_CLASS2;
-        (row.querySelector("td.column-jobPositionId") || row.querySelector("td") || row).appendChild(badge);
+        item.host().appendChild(badge);
       }
       if (badge.textContent !== view.text) badge.textContent = view.text;
       if (badge.dataset.level !== view.level) badge.dataset.level = view.level;
@@ -7129,6 +7173,10 @@
     }
     function isRowVisible(row) {
       return row.isConnected && row.getClientRects().length > 0;
+    }
+    function currentItems() {
+      const page = findPage(location.hash || "", pageKeys);
+      return page ? page.collect().filter((item) => item.jobId && item.candidateId) : [];
     }
     function enqueue(candidateId, jobId) {
       const key = `${candidateId}|${jobId}`;
@@ -7143,12 +7191,8 @@
       try {
         while (queue.length) {
           const item = queue.shift();
-          if (getCandidateIdFromRoute4() !== item.candidateId) {
-            queued.delete(item.key);
-            continue;
-          }
-          const row = findRow(item.jobId);
-          if (!row || !isRowVisible(row)) {
+          const current = currentItems().find((entry) => entry.candidateId === item.candidateId && entry.jobId === item.jobId);
+          if (!current || !isRowVisible(current.row)) {
             queued.delete(item.key);
             continue;
           }
@@ -7169,12 +7213,19 @@
         working = false;
       }
     }
-    function findRow(jobId) {
-      return [...document.querySelectorAll(ROW_SELECTOR2)].find((row) => getJobIdFromRow(row) === jobId) || null;
+    function candidateLocationFor(provider, candidateId) {
+      const location2 = provider.peekCandidateLocation(candidateId);
+      if (location2 !== void 0) return location2;
+      provider.loadCandidateLocation(candidateId).then(() => {
+        candidateErrors.delete(candidateId);
+      }, (error) => {
+        candidateErrors.set(candidateId, "Kandidatenadresse nicht ladbar.");
+        console.warn("[Werkia Fahrzeit] Kandidatenadresse nicht ladbar:", error);
+      }).finally(scheduleRender);
+      return void 0;
     }
     function render() {
-      const candidateId = getCandidateIdFromRoute4();
-      if (!candidateId) {
+      if (!findPage(location.hash || "", pageKeys)) {
         clearAll();
         return;
       }
@@ -7185,41 +7236,36 @@
         return;
       }
       ensureStyles2();
-      const rows = [...document.querySelectorAll(ROW_SELECTOR2)].map((row) => ({ row, jobId: getJobIdFromRow(row) })).filter((item) => item.jobId);
-      const missingJobs = rows.filter((item) => !provider.getCachedJob(item.jobId)).map((item) => item.jobId);
+      const items = currentItems();
+      const missingJobs = items.filter((item) => !provider.getCachedJob(item.jobId)).map((item) => item.jobId);
       if (missingJobs.length) {
         provider.loadJobs(missingJobs).then(scheduleRender, () => {
         });
       }
-      const candidateLocation = provider.peekCandidateLocation(candidateId);
-      const candidatePending = candidateLocation === void 0;
-      if (candidatePending) {
-        provider.loadCandidateLocation(candidateId).then(() => {
-          candidateError = "";
-        }, (error) => {
-          candidateError = "Kandidatenadresse nicht ladbar.";
-          console.warn("[Werkia Fahrzeit] Kandidatenadresse nicht ladbar:", error);
-        }).finally(scheduleRender);
-      }
-      for (const { row, jobId } of rows) {
-        const cachedJob = provider.getCachedJob(jobId);
+      const candidateLocations = /* @__PURE__ */ new Map();
+      for (const item of items) {
+        if (!candidateLocations.has(item.candidateId)) {
+          candidateLocations.set(item.candidateId, candidateLocationFor(provider, item.candidateId));
+        }
+        const candidateLocation = candidateLocations.get(item.candidateId);
+        const cachedJob = provider.getCachedJob(item.jobId);
         const job = cachedJob?.job || null;
         const commuteClass = classifyCommute(job);
         if (cachedJob && !job) {
-          renderBadge(row, { text: "🚗 ?", level: "unknown", title: "Vakanzdaten nicht ladbar." });
+          renderBadge(item, { text: "🚗 ?", level: "unknown", title: "Vakanzdaten nicht ladbar." });
           continue;
         }
-        if (!candidatePending && candidateLocation === null) {
-          renderBadge(row, { text: `${commuteClass?.icon || "🚗"} ?`, level: "unknown", title: candidateError || "Keine Kandidatenadresse hinterlegt." });
+        if (candidateLocation === null) {
+          renderBadge(item, { text: `${commuteClass?.icon || "🚗"} ?`, level: "unknown", title: candidateErrors.get(item.candidateId) || "Keine Kandidatenadresse hinterlegt." });
           continue;
         }
         if (job && !job.location) {
-          renderBadge(row, { text: `${commuteClass.icon} ${commuteClass.key === "local" ? "" : `${commuteClass.label} · `}keine Adresse`, level: "unknown", title: "Bei der Vakanz ist keine Adresse hinterlegt." });
+          renderBadge(item, { text: `${commuteClass.icon} ${commuteClass.key === "local" ? "" : `${commuteClass.label} · `}keine Adresse`, level: "unknown", title: "Bei der Vakanz ist keine Adresse hinterlegt." });
           continue;
         }
         const entry = job && candidateLocation ? getCachedRoute(candidateLocation.address, job.location.address) : null;
-        renderBadge(row, describeCommute(commuteClass, entry));
-        if (job && candidateLocation && !entry && isRowVisible(row)) enqueue(candidateId, jobId);
+        renderBadge(item, describeCommute(commuteClass, entry));
+        if (job && candidateLocation && !entry && isRowVisible(item.row)) enqueue(item.candidateId, item.jobId);
       }
     }
     function scheduleRender() {
@@ -7244,6 +7290,7 @@
   // src/features/commute-badges.js
   function executeCommuteBadges2(runtime) {
     executeCommuteBadges(runtime, {
+      pages: ["potentialMatches"],
       namespace: "obc",
       sourcePath: "obc/toolbox/src/features/commute-badges.js",
       getProvider: () => getObcGraphqlAdapter().commuteProvider
