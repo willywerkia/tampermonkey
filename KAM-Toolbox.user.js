@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.120
+// @version      1.7.123
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1053,6 +1053,24 @@
     if (name) return name;
     return [location2.city, location2.postalCode, location2.state, location2.country].map((part) => String(part || "").trim()).filter(Boolean).join(", ");
   }
+  function parseGeoPoint(geo) {
+    let value = geo;
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return null;
+      }
+    }
+    const coordinates = value?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+    const lon = Number(coordinates[0]);
+    const lat = Number(coordinates[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (lat === 0 && lon === 0) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat, lon };
+  }
   function createAddressProvider({ request }) {
     return {
       async loadCandidateAddress(candidateId) {
@@ -1121,6 +1139,136 @@
     };
   }
 
+  // ../../shared/js/route-commute/provider.js
+  var JOB_COMMUTE_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    startingPoint
+    locationIndependent
+    frequencyOfTravel
+    location { id name city postalCode state country geo __typename }
+    __typename
+  }
+}`;
+  var JOB_SERVICE_AREA_QUERY = `query allJobPositions($filter: JobPositionFilter) {
+  items: allJobPositions(filter: $filter) {
+    id
+    serviceAreas { id type __typename }
+    __typename
+  }
+}`;
+  var CACHE_MS = 5 * 60 * 1e3;
+  var ERROR_CACHE_MS = 15 * 1e3;
+  var BATCH_SIZE = 50;
+  function toCommuteLocation(location2) {
+    const address = formatLocation(location2);
+    return address ? { address, coords: parseGeoPoint(location2?.geo) } : null;
+  }
+  function toCommuteJob(item, serviceAreaTypes) {
+    if (!item?.id) return null;
+    return {
+      id: String(item.id).toLowerCase(),
+      startingPoint: item.startingPoint ?? null,
+      locationIndependent: item.locationIndependent === true,
+      frequencyOfTravel: item.frequencyOfTravel ?? null,
+      serviceAreaTypes: serviceAreaTypes ?? null,
+      location: toCommuteLocation(item.location)
+    };
+  }
+  function createCommuteProvider({ request }) {
+    const jobs = /* @__PURE__ */ new Map();
+    const candidates = /* @__PURE__ */ new Map();
+    const inFlight2 = /* @__PURE__ */ new Map();
+    let serviceAreasBroken = false;
+    const fresh = (entry) => entry && entry.expiresAt > Date.now();
+    async function loadServiceAreaTypes(ids) {
+      if (serviceAreasBroken) return /* @__PURE__ */ new Map();
+      try {
+        const result = await request(JOB_SERVICE_AREA_QUERY, { filter: { ids } });
+        return new Map((result?.items || []).filter((item) => item?.id).map((item) => [
+          String(item.id).toLowerCase(),
+          (item.serviceAreas || []).map((area) => area?.type).filter(Boolean)
+        ]));
+      } catch (error) {
+        serviceAreasBroken = true;
+        console.warn('[Werkia Fahrzeit] Servicegebiete nicht ladbar, "Landes-/bundesweit" wird nicht erkannt:', error);
+        return /* @__PURE__ */ new Map();
+      }
+    }
+    async function loadBatch(ids) {
+      const [result, areaTypes] = await Promise.all([
+        request(JOB_COMMUTE_QUERY, { filter: { ids } }),
+        loadServiceAreaTypes(ids)
+      ]);
+      const found = /* @__PURE__ */ new Set();
+      for (const item of result?.items || []) {
+        const id = String(item?.id || "").toLowerCase();
+        const job = toCommuteJob(item, serviceAreasBroken ? null : areaTypes.get(id) || []);
+        if (!job) continue;
+        found.add(job.id);
+        jobs.set(job.id, { job, expiresAt: Date.now() + CACHE_MS });
+      }
+      for (const id of ids) {
+        if (!found.has(id)) jobs.set(id, { job: null, expiresAt: Date.now() + CACHE_MS });
+      }
+    }
+    return {
+      // Liefert nur, was schon geladen ist - fuer synchrones Rendern.
+      getCachedJob(id) {
+        const entry = jobs.get(String(id || "").toLowerCase());
+        return fresh(entry) ? entry : null;
+      },
+      // Laedt fehlende Vakanzen in Paketen; laeuft fuer eine Vakanz schon eine
+      // Anfrage, wird auf diese gewartet statt neu gefragt.
+      async loadJobs(rawIds) {
+        const all = [...new Set(rawIds.map((id) => String(id || "").toLowerCase()).filter(Boolean))];
+        const missing = all.filter((id) => !fresh(jobs.get(id)) && !inFlight2.has(id));
+        for (let index = 0; index < missing.length; index += BATCH_SIZE) {
+          const batch = missing.slice(index, index + BATCH_SIZE);
+          const promise = loadBatch(batch).catch((error) => {
+            console.warn("[Werkia Fahrzeit] Vakanzdaten nicht ladbar:", error);
+            batch.forEach((id) => jobs.set(id, { job: null, expiresAt: Date.now() + ERROR_CACHE_MS }));
+          }).finally(() => batch.forEach((id) => inFlight2.delete(id)));
+          batch.forEach((id) => inFlight2.set(id, promise));
+        }
+        await Promise.all([...new Set(all.map((id) => inFlight2.get(id)).filter(Boolean))]);
+        return new Map(all.map((id) => [id, jobs.get(id)?.job || null]));
+      },
+      async loadJob(id) {
+        return (await this.loadJobs([id])).get(String(id || "").toLowerCase()) || null;
+      },
+      // undefined = noch nicht geladen, null = keine Adresse.
+      peekCandidateLocation(candidateId) {
+        const cached = candidates.get(String(candidateId || "").toLowerCase());
+        return fresh(cached) ? cached.location : void 0;
+      },
+      // Neueste Adresse des Kandidaten (id DESC) - dieselbe Auswahl wie der
+      // bisherige OBC/CEM-Distanzrechner.
+      async loadCandidateLocation(candidateId) {
+        const id = String(candidateId || "").toLowerCase();
+        const cached = candidates.get(id);
+        if (fresh(cached)) return cached.location;
+        if (cached?.promise) return cached.promise;
+        const promise = request(CANDIDATE_LOCATIONS_QUERY, {
+          filter: { candidateId: id },
+          page: 0,
+          perPage: 1,
+          sortField: "id",
+          sortOrder: "DESC"
+        }).then((result) => {
+          const location2 = toCommuteLocation(result?.items?.[0]);
+          candidates.set(id, { location: location2, expiresAt: Date.now() + CACHE_MS });
+          return location2;
+        }).catch((error) => {
+          candidates.set(id, { location: null, expiresAt: Date.now() + ERROR_CACHE_MS });
+          throw error;
+        });
+        candidates.set(id, { promise, expiresAt: 0 });
+        return promise;
+      }
+    };
+  }
+
   // src/graphql.js
   var BEARER_STORAGE_KEY = "werkia_kam_graphql_bearer_v1";
   var FINGERPRINT_STORAGE_KEY = "werkia_kam_graphql_fingerprint_v1";
@@ -1128,11 +1276,12 @@
   var adapter = null;
   function initKamGraphqlAdapter() {
     if (adapter) return adapter;
-    adapter = createGraphqlAdapter({
+    const base = createGraphqlAdapter({
       bearerStorageKey: BEARER_STORAGE_KEY,
       fingerprintStorageKey: FINGERPRINT_STORAGE_KEY,
       installedFlag: INSTALLED_FLAG
     });
+    adapter = { ...base, commuteProvider: createCommuteProvider({ request: base.request }) };
     return adapter;
   }
   function getKamGraphqlAdapter() {
@@ -2703,13 +2852,13 @@
     const STATUS_MUTATION = buildStatusMutation(fields.status);
     const STATUS_WITH_FEEDBACK_MUTATION = buildStatusWithFeedbackMutation(fields.status, fields.feedback);
     const WVL_MUTATION = buildFollowUpMutation(fields.followUp);
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    const sleep2 = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     async function waitFor(find, timeoutMs = 3e3, intervalMs = 50) {
       const started = Date.now();
       while (Date.now() - started < timeoutMs) {
         const result = find();
         if (result) return result;
-        await sleep(intervalMs);
+        await sleep2(intervalMs);
       }
       return null;
     }
@@ -3650,7 +3799,7 @@
   }
 
   // ../../shared/js/werkia-graphql/match-cem-provider.js
-  var BATCH_SIZE = 25;
+  var BATCH_SIZE2 = 25;
   var SINGLE_MATCH_CONCURRENCY = 5;
   var MATCHES_BY_IDS_QUERY = `query allMatches($page: Int, $perPage: Int, $filter: MatchFilter) {
   items: allMatches(page: $page, perPage: $perPage, filter: $filter) {
@@ -3673,7 +3822,7 @@
   }
   async function loadMatches(request, matchIds) {
     const matches = /* @__PURE__ */ new Map();
-    for (const ids of chunks(matchIds, BATCH_SIZE)) {
+    for (const ids of chunks(matchIds, BATCH_SIZE2)) {
       try {
         const result = await request(MATCHES_BY_IDS_QUERY, { filter: { ids }, page: 0, perPage: ids.length });
         for (const item of result?.items || []) {
@@ -3698,7 +3847,7 @@
   }
   async function loadById(request, query, ids) {
     const byId = /* @__PURE__ */ new Map();
-    for (const batch of chunks(ids, BATCH_SIZE)) {
+    for (const batch of chunks(ids, BATCH_SIZE2)) {
       const result = await request(query, { filter: { ids: batch } });
       for (const item of result?.items || []) if (item?.id) byId.set(item.id, item);
     }
@@ -4017,13 +4166,13 @@
     const context = getQuestionnaireContext();
     const vacancyCache = /* @__PURE__ */ new Map();
     let clickCounter = 0;
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    const sleep2 = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     async function waitFor(find, timeoutMs = 3e3, intervalMs = 50) {
       const started = Date.now();
       while (Date.now() - started < timeoutMs) {
         const result = find();
         if (result) return result;
-        await sleep(intervalMs);
+        await sleep2(intervalMs);
       }
       return null;
     }
@@ -5067,6 +5216,178 @@
     attachQuestionnaireObserver(runtime, runQuestionnaireFeatures);
   }
 
+  // ../../shared/js/route-commute/core.js
+  var SKULL_MINUTES = 50;
+  var COMMUTE_CLASSES = {
+    home: {
+      key: "home",
+      icon: "🏠",
+      label: "Start von Zuhause",
+      hint: "Startpunkt „von zu Hause“ oder ortsunabhängig: der Kandidat fährt von seinem Wohnort direkt zum Kunden."
+    },
+    wide: {
+      key: "wide",
+      icon: "🗺️",
+      label: "Landes-/bundesweit",
+      hint: "Einsatzgebiet ist ein ganzes Bundesland oder ganz Deutschland."
+    },
+    travel: {
+      key: "travel",
+      icon: "🧳",
+      label: "Montage",
+      hint: "Reisetätigkeit „uneingeschränkt“: klassische Montage mit Übernachtung."
+    },
+    local: {
+      key: "local",
+      icon: "🚗",
+      label: "Ortsgebunden",
+      hint: `Fester Arbeitsort, der Kandidat pendelt täglich. Ab ${SKULL_MINUTES} Min Fahrzeit 💀.`
+    }
+  };
+  function cleanRouteValue(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+  function getRouteDistanceCacheKey(candidateAddress, jobPositionAddress) {
+    return `${cleanRouteValue(candidateAddress)}__${cleanRouteValue(jobPositionAddress)}`;
+  }
+  function formatRouteDuration(seconds) {
+    const totalMinutes = Math.round(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours > 0) return `${hours} Std ${minutes} Min`;
+    return `${minutes} Min`;
+  }
+  function formatRouteDistanceKm(meters) {
+    return `${(meters / 1e3).toFixed(1)} km`;
+  }
+  function formatKm(meters) {
+    return formatRouteDistanceKm(meters).replace(".", ",");
+  }
+  function haversineDistanceMeters(from, to) {
+    const R = 6371e3;
+    const rad = (value) => value * Math.PI / 180;
+    const dLat = rad(to.lat - from.lat);
+    const dLon = rad(to.lon - from.lon);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(from.lat)) * Math.cos(rad(to.lat)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  function pickFastestAndShortestRoute(data) {
+    if (data?.code && data.code !== "Ok") return null;
+    const routes = (Array.isArray(data?.routes) ? data.routes : []).map((route) => ({
+      distance: Number(route?.distance),
+      duration: Number(route?.duration),
+      coordinates: Array.isArray(route?.geometry?.coordinates) ? route.geometry.coordinates : null
+    })).filter((route) => Number.isFinite(route.distance) && route.distance > 0 && Number.isFinite(route.duration) && route.duration > 0);
+    if (!routes.length) return null;
+    const fastest = [...routes].sort((a, b) => a.duration - b.duration)[0];
+    const shortest = [...routes].sort((a, b) => a.distance - b.distance)[0];
+    const bundle = {
+      fastestDistanceMeters: fastest.distance,
+      fastestDurationSeconds: fastest.duration,
+      shortestDistanceMeters: shortest.distance,
+      shortestDurationSeconds: shortest.duration,
+      routeAlternativeCount: routes.length
+    };
+    if (fastest.coordinates) bundle.previewCoordinates = samplePreviewCoordinates(fastest.coordinates);
+    return bundle;
+  }
+  function samplePreviewCoordinates(geometry, maxPoints = 180) {
+    if (!Array.isArray(geometry)) return [];
+    const step = Math.max(1, Math.ceil(geometry.length / maxPoints));
+    return geometry.filter((_, index) => index % step === 0 || index === geometry.length - 1).map((point) => [Number(point?.[0]), Number(point?.[1])]).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+  }
+  function buildRouteDistanceEntry(result) {
+    if (!result) return { displayText: "⚠️ keine Route gefunden", unavailable: true };
+    if (result.quality === "fallback") {
+      return {
+        displayText: `↔ ca. ${formatRouteDistanceKm(result.airDistanceMeters)} Luftlinie`,
+        unavailable: false,
+        quality: "fallback",
+        airDistanceMeters: result.airDistanceMeters,
+        source: result.source
+      };
+    }
+    const prefix = result.approx ? "ca. " : "";
+    const entry = {
+      displayText: `🚗 ${prefix}${formatRouteDuration(result.fastestDurationSeconds)} (${prefix}${formatRouteDistanceKm(result.fastestDistanceMeters)})`,
+      unavailable: false,
+      quality: "exact",
+      approx: Boolean(result.approx),
+      distanceMeters: result.fastestDistanceMeters,
+      durationSeconds: result.fastestDurationSeconds,
+      fastestDistanceMeters: result.fastestDistanceMeters,
+      fastestDurationSeconds: result.fastestDurationSeconds,
+      shortestDistanceMeters: result.shortestDistanceMeters,
+      shortestDurationSeconds: result.shortestDurationSeconds,
+      routeAlternativeCount: result.routeAlternativeCount,
+      source: result.source
+    };
+    if (Array.isArray(result.previewCoordinates) && result.previewCoordinates.length >= 2) {
+      entry.previewCoordinates = result.previewCoordinates;
+    }
+    return entry;
+  }
+  function hasDualRouteMetrics(entry) {
+    if (!entry || entry.quality !== "exact") return false;
+    return [
+      entry.fastestDistanceMeters,
+      entry.fastestDurationSeconds,
+      entry.shortestDistanceMeters,
+      entry.shortestDurationSeconds
+    ].every((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+  }
+  function extractGermanPostalCode(address) {
+    return String(address || "").match(/\b\d{5}\b/)?.[0] || "";
+  }
+  function extractGermanStreetName(address) {
+    const firstSegment = String(address || "").split(",")[0].trim();
+    if (/^\d{5}\b/.test(firstSegment)) return "";
+    const match = firstSegment.match(/^(.*\D)\s+\d+\s*[a-zA-Z]?(?:\s*-\s*\d+\s*[a-zA-Z]?)?$/);
+    if (!match) return "";
+    const street = match[1].trim();
+    return /[a-zäöüß]/i.test(street) ? street : "";
+  }
+  var GERMAN_STATE_NAMES = /* @__PURE__ */ new Set([
+    "baden-württemberg",
+    "bayern",
+    "berlin",
+    "brandenburg",
+    "bremen",
+    "hamburg",
+    "hessen",
+    "mecklenburg-vorpommern",
+    "niedersachsen",
+    "nordrhein-westfalen",
+    "rheinland-pfalz",
+    "saarland",
+    "sachsen",
+    "sachsen-anhalt",
+    "schleswig-holstein",
+    "thüringen"
+  ]);
+  function extractGermanCityName(address) {
+    const segments = String(address || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const withoutCountry = segments.filter((seg) => !/^(deutschland|germany)$/i.test(seg));
+    if (!withoutCountry.length) return "";
+    const citySegment = withoutCountry[withoutCountry.length - 1];
+    const withoutPlz = citySegment.replace(/^\s*\d{5}\s*/, "").trim();
+    if (GERMAN_STATE_NAMES.has(withoutPlz.toLowerCase())) return withoutPlz;
+    const firstToken = (withoutPlz.split(/[\s-]/)[0] || "").trim();
+    return /[a-zäöüß]/i.test(firstToken) ? firstToken : "";
+  }
+  function buildGeocodeQueries(address) {
+    const plz = extractGermanPostalCode(address);
+    const street = extractGermanStreetName(address);
+    const city = extractGermanCityName(address);
+    const queries = [];
+    if (street && city && plz) queries.push(`${street}, ${city}, ${plz}, Deutschland`);
+    if (street && plz) queries.push(`${street}, ${plz}, Deutschland`);
+    if (street && city) queries.push(`${street}, ${city}, Deutschland`);
+    if (plz) queries.push(`${plz}, Deutschland`);
+    if (city) queries.push(`${city}, Deutschland`);
+    return queries;
+  }
+
   // ../../shared/js/werkia-toolbox/cache-storage.js
   function pruneExpiredCacheEntries(cache, isExpired) {
     let changed = false;
@@ -5086,8 +5407,8 @@
         console.warn("[Werkia Cache] Konnte nicht gespeichert werden:", storageKey, error);
         return;
       }
-      const pruned = pruneExpiredCacheEntries(cache, isExpired);
-      if (pruned) {
+      const pruned2 = pruneExpiredCacheEntries(cache, isExpired);
+      if (pruned2) {
         try {
           localStorage.setItem(storageKey, JSON.stringify(cache));
           return;
@@ -5119,20 +5440,221 @@
     setCacheItemWithQuotaRetry(storageKey, cache, isExpired || (() => false));
   }
 
+  // ../../shared/js/admin-dom/timing.js
+  function sleep(ms) {
+    return new Promise((resolve) => wSetTimeout(resolve, ms));
+  }
+
+  // ../../shared/js/route-commute/routing.js
+  var ROUTE_DISTANCE_CACHE_KEY = "werkia_route_distance_cache_v1";
+  var ROUTE_DISTANCE_CACHE_TTL = 7 * 24 * 60 * 60 * 1e3;
+  var ROUTE_DISTANCE_FALLBACK_TTL = 10 * 60 * 1e3;
+  var ROUTE_DISTANCE_UNAVAILABLE_TTL = 5 * 60 * 1e3;
+  var ROUTE_GEOCODE_CACHE_KEY = "werkia_route_geocode_cache_v1";
+  var ROUTE_GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
+  var OSRM_REQUEST_TIMEOUT_MS = 5e3;
+  var OSM_GAP_MS = 1100;
+  var ROUTING_SERVERS = [
+    "https://router.project-osrm.org",
+    "https://routing.openstreetmap.de/routed-car"
+  ];
+  function isRouteDistanceEntryExpired(entry) {
+    if (!entry?.time) return true;
+    let ttl = ROUTE_DISTANCE_CACHE_TTL;
+    if (entry.unavailable) ttl = ROUTE_DISTANCE_UNAVAILABLE_TTL;
+    else if (entry.quality === "fallback") ttl = ROUTE_DISTANCE_FALLBACK_TTL;
+    return Date.now() - entry.time >= ttl;
+  }
+  function isGeocodeEntryExpired(entry) {
+    return !entry?.time || Date.now() - entry.time >= ROUTE_GEOCODE_CACHE_TTL;
+  }
+  function loadJson(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  function loadRouteDistanceCacheSnapshot() {
+    return loadJson(ROUTE_DISTANCE_CACHE_KEY);
+  }
+  function loadGeocodeCache() {
+    return loadJson(ROUTE_GEOCODE_CACHE_KEY);
+  }
+  function saveGeocodeCache(cache) {
+    setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, cache, isGeocodeEntryExpired);
+  }
+  var pruned = false;
+  function pruneCachesOnce() {
+    if (pruned) return;
+    pruned = true;
+    const distance = loadRouteDistanceCacheSnapshot();
+    if (pruneExpiredCacheEntries(distance, isRouteDistanceEntryExpired)) {
+      setCacheItemWithQuotaRetry(ROUTE_DISTANCE_CACHE_KEY, distance, isRouteDistanceEntryExpired);
+    }
+    const geocode = loadGeocodeCache();
+    if (pruneExpiredCacheEntries(geocode, isGeocodeEntryExpired)) saveGeocodeCache(geocode);
+  }
+  function getCachedRoute(candidateAddress, jobPositionAddress, { withPreview = false, acceptTable = false } = {}) {
+    pruneCachesOnce();
+    const cached = loadRouteDistanceCacheSnapshot()[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)];
+    if (!cached?.displayText || isRouteDistanceEntryExpired(cached)) return null;
+    if (cached.unavailable || cached.quality === "fallback") return cached;
+    if (acceptTable && cached.quality === "table" && !withPreview) return cached;
+    if (!hasDualRouteMetrics(cached)) return null;
+    if (withPreview && !(cached.previewCoordinates?.length >= 2)) return null;
+    return cached;
+  }
+  function saveRouteEntry(key, entry) {
+    const cache = loadRouteDistanceCacheSnapshot();
+    const previous = cache[key];
+    const previousIsFull = previous && !isRouteDistanceEntryExpired(previous) && hasDualRouteMetrics(previous);
+    if (entry.quality === "table" && previousIsFull) return previous;
+    const keepPreview = !entry.previewCoordinates && previous?.previewCoordinates?.length >= 2 && !entry.unavailable;
+    const stored = { ...entry, unavailable: Boolean(entry.unavailable), ...keepPreview ? { previewCoordinates: previous.previewCoordinates } : {}, time: Date.now() };
+    cache[key] = stored;
+    setCacheItemWithQuotaRetry(ROUTE_DISTANCE_CACHE_KEY, cache, isRouteDistanceEntryExpired);
+    return stored;
+  }
+  function rememberKnownCoords(address, coords) {
+    const key = cleanRouteValue(address);
+    if (!key || !Number.isFinite(coords?.lat) || !Number.isFinite(coords?.lon)) return;
+    const cache = loadGeocodeCache();
+    const existing = cache[key];
+    if (existing?.source === "werkia" && existing.coords?.lat === coords.lat && existing.coords?.lon === coords.lon && !isGeocodeEntryExpired(existing)) return;
+    cache[key] = { coords: { lat: coords.lat, lon: coords.lon }, time: Date.now(), source: "werkia" };
+    saveGeocodeCache(cache);
+  }
+  function getKnownCoords(address) {
+    const cached = loadGeocodeCache()[cleanRouteValue(address)];
+    if (cached?.source !== "werkia" || isGeocodeEntryExpired(cached)) return null;
+    const lat = Number(cached.coords?.lat);
+    const lon = Number(cached.coords?.lon);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+  }
+  var osmGateReadyAt = 0;
+  var osmGateChain = Promise.resolve();
+  function runThroughOsmGate(fn) {
+    const scheduled = osmGateChain.then(async () => {
+      const waitMs = Math.max(0, osmGateReadyAt - Date.now());
+      if (waitMs > 0) await sleep(waitMs);
+      try {
+        return await fn();
+      } finally {
+        osmGateReadyAt = Date.now() + OSM_GAP_MS;
+      }
+    });
+    osmGateChain = scheduled.catch(() => {
+    });
+    return scheduled;
+  }
+  async function fetchJsonWithTimeout(url, timeoutMs) {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" }, ...controller ? { signal: controller.signal } : {} });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  async function geocodeAddress(query) {
+    const cache = loadGeocodeCache();
+    const key = cleanRouteValue(query);
+    const cached = cache[key];
+    if (cached && !isGeocodeEntryExpired(cached)) return { coords: cached.coords || null, fromCache: true };
+    try {
+      const coords = await runThroughOsmGate(async () => {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de,at,ch&q=${encodeURIComponent(query)}`;
+        const results = await fetchJsonWithTimeout(url, 8e3);
+        const first = results?.[0];
+        return first ? { lat: parseFloat(first.lat), lon: parseFloat(first.lon) } : null;
+      });
+      const fresh = loadGeocodeCache();
+      fresh[key] = { coords, time: Date.now() };
+      saveGeocodeCache(fresh);
+      return { coords, fromCache: false };
+    } catch (error) {
+      console.warn("[Werkia Route] Geokodierung fehlgeschlagen:", query, error);
+      return { coords: null, fromCache: false };
+    }
+  }
+  async function geocodeByPostalCode(address) {
+    for (const query of buildGeocodeQueries(address)) {
+      const result = await geocodeAddress(query);
+      if (result.coords) return result;
+    }
+    return { coords: null, fromCache: false };
+  }
+  async function resolveRouteCoords(location2) {
+    const address = typeof location2 === "string" ? location2 : location2?.address;
+    const coords = typeof location2 === "string" ? null : location2?.coords;
+    if (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lon)) {
+      rememberKnownCoords(address, coords);
+      return { coords, approx: false };
+    }
+    const known = getKnownCoords(address);
+    if (known) return { coords: known, approx: false };
+    const geocoded = await geocodeByPostalCode(address);
+    return { coords: geocoded.coords || null, approx: true };
+  }
+  var OSRM_QUERY_VARIANTS = ["alternatives=3", "alternatives=true", "alternatives=false"];
+  async function requestRouteBundle(server, from, to, { withPreview = false } = {}) {
+    const baseUrl = `${server}/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}`;
+    const overview = withPreview ? "overview=full&geometries=geojson" : "overview=false";
+    let lastError = null;
+    for (const variant of OSRM_QUERY_VARIANTS) {
+      try {
+        const data = await runThroughOsmGate(() => fetchJsonWithTimeout(`${baseUrl}?${overview}&${variant}&steps=false`, OSRM_REQUEST_TIMEOUT_MS));
+        const bundle = pickFastestAndShortestRoute(data);
+        return bundle ? { ...bundle, source: `${server}/route` } : null;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    return null;
+  }
+  async function routeBetween(from, to, approx, withPreview) {
+    for (const server of ROUTING_SERVERS) {
+      try {
+        const bundle = await requestRouteBundle(server, from, to, { withPreview });
+        if (bundle) return { ...bundle, quality: "exact", approx };
+      } catch (error) {
+        console.warn("[Werkia Route] OSRM-Server nicht erreichbar:", server, error?.message || error);
+      }
+    }
+    return {
+      quality: "fallback",
+      airDistanceMeters: haversineDistanceMeters(from, to),
+      approx: true,
+      source: "air-distance"
+    };
+  }
+  async function computeRoute(candidateLocation, jobLocation, { withPreview = false } = {}) {
+    const from = await resolveRouteCoords(candidateLocation);
+    const to = await resolveRouteCoords(jobLocation);
+    if (!from.coords || !to.coords) return null;
+    return routeBetween(from.coords, to.coords, from.approx || to.approx, withPreview);
+  }
+  var inFlight = /* @__PURE__ */ new Map();
+  function getRoute(candidateLocation, jobLocation, { withPreview = false } = {}) {
+    const candidateAddress = candidateLocation?.address || "";
+    const jobAddress = jobLocation?.address || "";
+    if (!candidateAddress || !jobAddress) return Promise.resolve(null);
+    const cached = getCachedRoute(candidateAddress, jobAddress, { withPreview });
+    if (cached) return Promise.resolve(cached);
+    const cacheKey = getRouteDistanceCacheKey(candidateAddress, jobAddress);
+    const key = `${cacheKey}|${withPreview ? "preview" : ""}`;
+    if (inFlight.has(key)) return inFlight.get(key);
+    const promise = computeRoute(candidateLocation, jobLocation, { withPreview }).then((result) => saveRouteEntry(cacheKey, buildRouteDistanceEntry(result))).finally(() => inFlight.delete(key));
+    inFlight.set(key, promise);
+    return promise;
+  }
+
   // src/features/kam-suite/route-calculation.js
   var ROUTE_BOX_ID = "werkia-obc-route-box";
-  var ROUTE_ADDRESS_CACHE_KEY = "werkia_obc_route_address_cache_v1";
-  var ROUTE_GEOCODE_CACHE_KEY = "werkia_route_geocode_cache_v1";
-  var ROUTE_DISTANCE_CACHE_KEY = "werkia_route_distance_cache_v1";
-  var ROUTE_ADDRESS_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
-  var ROUTE_GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
-  var ROUTE_DISTANCE_CACHE_TTL = 7 * 24 * 60 * 60 * 1e3;
-  var ROUTE_CACHE_LIMITS = {
-    [ROUTE_ADDRESS_CACHE_KEY]: { ttl: ROUTE_ADDRESS_CACHE_TTL, maxEntries: 500 },
-    [ROUTE_GEOCODE_CACHE_KEY]: { ttl: ROUTE_GEOCODE_CACHE_TTL, maxEntries: 500 },
-    [ROUTE_DISTANCE_CACHE_KEY]: { ttl: ROUTE_DISTANCE_CACHE_TTL, maxEntries: 100 }
-  };
-  var isRouteCacheEntryExpired = (entry, ttl, now = Date.now()) => !entry || typeof entry !== "object" || !(now - Number(entry.time) < ttl);
   var QUESTIONNAIRE_LABELS3 = [
     "Reisehäufigkeit",
     "Montagebereitschaft",
@@ -5149,35 +5671,22 @@
     "Erforderliche Führerschein",
     "Führerschein"
   ];
-  var cleanRouteValue = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
-  var getRouteGeocodeCacheKey = (address) => cleanRouteValue(address);
-  var getRouteDistanceCacheKey = (candidateAddress, jobPositionAddress) => `${cleanRouteValue(candidateAddress)}__${cleanRouteValue(jobPositionAddress)}`;
-  var getRouteGeocodeQueries = (address) => {
-    const original = String(address || "").trim();
-    const withoutBerlinDistrict = original.replace(/\bBerlin-Bezirk\s+[^,]+/i, "Berlin").replace(/\s*,\s*,\s*/g, ", ");
-    return [...new Set([original, withoutBerlinDistrict].filter(Boolean))];
-  };
-  function samplePreviewCoordinates(geometry, maxPoints = 180) {
-    const points = Array.isArray(geometry) ? geometry : [];
-    const sampleStep = Math.max(1, Math.ceil(points.length / maxPoints));
-    const round = (value) => Math.round(Number(value) * 1e5) / 1e5;
-    return points.filter((_, index) => index % sampleStep === 0 || index === points.length - 1).map((point) => [round(point?.[0]), round(point?.[1])]).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
-  }
   var unavailableRoute = (reason) => ({ displayText: "Route nicht verfügbar", unavailable: true, reason });
-  function formatRouteResult(distanceMeters, durationSeconds) {
-    const totalMinutes = Math.max(1, Math.round(durationSeconds / 60));
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    const duration = hours ? `${hours} Std ${minutes} Min` : `${minutes} Min`;
-    const distance = `${(distanceMeters / 1e3).toFixed(1).replace(".", ",")} km`;
-    return `🚗 ${duration} (${distance})`;
+  function formatRouteEntry(entry) {
+    if (entry?.quality === "fallback" && Number.isFinite(Number(entry.airDistanceMeters))) {
+      return `↔ ca. ${formatKm(Number(entry.airDistanceMeters))} Luftlinie`;
+    }
+    const seconds = Number(entry?.fastestDurationSeconds ?? entry?.durationSeconds);
+    const meters = Number(entry?.fastestDistanceMeters ?? entry?.distanceMeters);
+    if (!(seconds > 0) || !(meters > 0)) return "";
+    const prefix = entry.approx ? "ca. " : "";
+    return `🚗 ${prefix}${formatRouteDuration(Math.max(60, seconds))} (${prefix}${formatKm(meters)})`;
   }
   function executeRouteCalculation(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/route-calculation.js");
     const context = getQuestionnaireContext();
     const calculations = /* @__PURE__ */ new Map();
     let renderTimer = null;
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     const escapeHtml2 = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const visible = (dialog) => {
       const rect = dialog.getBoundingClientRect();
@@ -5191,111 +5700,6 @@
       return labels.has("Kandidat") && labels.has("Job") && QUESTIONNAIRE_LABELS3.filter((label) => labels.has(label)).length >= 3;
     };
     const questionnaireDialog = () => [...document.querySelectorAll('.MuiDialog-paper, div[role="dialog"]')].find((dialog) => visible(dialog) && isQuestionnaireDialog2(dialog)) || null;
-    function loadJson(key, fallback = {}) {
-      try {
-        return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-      } catch {
-        return fallback;
-      }
-    }
-    function saveJson(key, value) {
-      const limits = ROUTE_CACHE_LIMITS[key];
-      try {
-        if (!limits) {
-          localStorage.setItem(key, JSON.stringify(value));
-          return;
-        }
-        saveBoundedCache(key, value, {
-          isExpired: (entry) => isRouteCacheEntryExpired(entry, limits.ttl),
-          maxEntries: limits.maxEntries
-        });
-      } catch {
-      }
-    }
-    function cachedAddress(url) {
-      const cached = loadJson(ROUTE_ADDRESS_CACHE_KEY)[url];
-      return cached?.address && Date.now() - cached.time < ROUTE_ADDRESS_CACHE_TTL ? cached.address : "";
-    }
-    function cacheAddress(url, address) {
-      const cache = loadJson(ROUTE_ADDRESS_CACHE_KEY);
-      cache[url] = { address, time: Date.now() };
-      saveJson(ROUTE_ADDRESS_CACHE_KEY, cache);
-    }
-    function requestJson(url) {
-      return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-          method: "GET",
-          url,
-          headers: { Accept: "application/json", "Accept-Language": "de" },
-          timeout: 12e3,
-          onload(response) {
-            try {
-              resolve(JSON.parse(response.responseText || "null"));
-            } catch (error) {
-              reject(error);
-            }
-          },
-          onerror: reject,
-          ontimeout: reject
-        });
-      });
-    }
-    function cachedCoordinates(address) {
-      const cached = loadJson(ROUTE_GEOCODE_CACHE_KEY)[getRouteGeocodeCacheKey(address)];
-      return cached?.coords && Date.now() - cached.time < ROUTE_GEOCODE_CACHE_TTL ? cached.coords : null;
-    }
-    function cacheCoordinates(address, coords) {
-      const cache = loadJson(ROUTE_GEOCODE_CACHE_KEY);
-      cache[getRouteGeocodeCacheKey(address)] = { coords, time: Date.now() };
-      saveJson(ROUTE_GEOCODE_CACHE_KEY, cache);
-    }
-    async function geocodeAddress(address) {
-      const cached = cachedCoordinates(address);
-      if (cached) {
-        return { coords: cached, fromCache: true };
-      }
-      const queries = getRouteGeocodeQueries(address);
-      let first = null;
-      for (let index = 0; index < queries.length; index += 1) {
-        if (index) await sleep(1100);
-        const query = queries[index];
-        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=0&countrycodes=de,at,ch&q=${encodeURIComponent(query)}`;
-        const response = await requestJson(url);
-        first = response?.[0] || null;
-        if (first?.lat && first?.lon) break;
-      }
-      if (!first?.lat || !first?.lon) return { coords: null, fromCache: false };
-      const coords = { lat: Number(first.lat), lon: Number(first.lon) };
-      if (!Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) return { coords: null, fromCache: false };
-      cacheCoordinates(address, coords);
-      return { coords, fromCache: false };
-    }
-    function cachedResult(candidateAddress, jobPositionAddress) {
-      const cached = loadJson(ROUTE_DISTANCE_CACHE_KEY)[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)];
-      if (!cached?.displayText) return null;
-      return Date.now() - cached.time < ROUTE_DISTANCE_CACHE_TTL ? cached : null;
-    }
-    function cacheResult(candidateAddress, jobPositionAddress, result) {
-      const cache = loadJson(ROUTE_DISTANCE_CACHE_KEY);
-      cache[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)] = { ...result, time: Date.now() };
-      saveJson(ROUTE_DISTANCE_CACHE_KEY, cache);
-    }
-    async function calculateRoute(candidateAddress, jobPositionAddress) {
-      const cached = cachedResult(candidateAddress, jobPositionAddress);
-      if (cached?.previewCoordinates?.length >= 2) return cached;
-      const candidate = await geocodeAddress(candidateAddress);
-      if (!candidate.coords) return unavailableRoute("Kandidatenadresse konnte nicht geokodiert werden.");
-      if (!candidate.fromCache && !cachedCoordinates(jobPositionAddress)) await sleep(1100);
-      const jobPosition = await geocodeAddress(jobPositionAddress);
-      if (!jobPosition.coords) return unavailableRoute("Vakanzadresse konnte nicht geokodiert werden.");
-      const url = `https://router.project-osrm.org/route/v1/driving/${candidate.coords.lon},${candidate.coords.lat};${jobPosition.coords.lon},${jobPosition.coords.lat}?overview=full&geometries=geojson&alternatives=false&steps=false`;
-      const route = (await requestJson(url))?.routes?.[0];
-      if (!route?.distance || !route?.duration) return unavailableRoute("Der Routenservice hat keine Fahrtroute geliefert.");
-      const previewCoordinates = samplePreviewCoordinates(route.geometry?.coordinates);
-      const result = { displayText: formatRouteResult(route.distance, route.duration), previewCoordinates, unavailable: false };
-      cacheResult(candidateAddress, jobPositionAddress, result);
-      return result;
-    }
     function previewSvg(coordinates, candidateAddress, jobPositionAddress) {
       if (!Array.isArray(coordinates) || coordinates.length < 2) return "";
       const width = 500, height = 270, padding = 42;
@@ -5362,32 +5766,24 @@
       box.disabled = false;
       box.onclick = () => window.open(`https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&from=${encodeURIComponent(data.candidateAddress)}&to=${encodeURIComponent(data.jobPositionAddress)}`, "_blank", "noopener,noreferrer");
     }
-    async function loadCandidateAddress(route) {
-      const cached = cachedAddress(route.candidateUrl);
-      if (cached) return cached;
-      const address = await getKamGraphqlAdapter().addressProvider.loadCandidateAddress(route.candidateId);
-      cacheAddress(route.candidateUrl, address);
-      return address;
-    }
-    async function loadJobPositionAddress(route) {
-      const cached = cachedAddress(route.jobPositionUrl);
-      if (cached) return cached;
-      const address = await getKamGraphqlAdapter().addressProvider.loadJobPositionAddress(route.jobId);
-      cacheAddress(route.jobPositionUrl, address);
-      return address;
-    }
     async function loadRoute(route) {
-      const [candidateAddress, jobPositionAddress] = await Promise.all([
-        loadCandidateAddress(route),
-        loadJobPositionAddress(route)
+      const provider = getKamGraphqlAdapter().commuteProvider;
+      const [candidateLocation, job] = await Promise.all([
+        provider.loadCandidateLocation(route.candidateId),
+        provider.loadJob(route.jobId)
       ]);
-      if (!candidateAddress) return unavailableRoute("Kandidatenadresse konnte nicht gelesen werden.");
-      if (!jobPositionAddress) return unavailableRoute("Vakanzadresse konnte nicht gelesen werden.");
-      const result = await calculateRoute(candidateAddress, jobPositionAddress);
-      if (!result?.displayText || result.unavailable) {
-        return result?.unavailable ? result : unavailableRoute("Der Routenservice hat keine Fahrtroute geliefert.");
-      }
-      return { ...result, candidateAddress, jobPositionAddress };
+      if (!candidateLocation?.address) return unavailableRoute("Kandidatenadresse konnte nicht gelesen werden.");
+      if (!job?.location?.address) return unavailableRoute("Vakanzadresse konnte nicht gelesen werden.");
+      const entry = await getRoute(candidateLocation, job.location, { withPreview: true });
+      if (!entry) return unavailableRoute("Kandidaten- oder Vakanzadresse konnte nicht gefunden werden.");
+      const displayText = entry.unavailable ? "" : formatRouteEntry(entry);
+      if (!displayText) return unavailableRoute("Der Routenservice hat keine Fahrtroute geliefert.");
+      return {
+        displayText,
+        previewCoordinates: entry.previewCoordinates,
+        candidateAddress: candidateLocation.address,
+        jobPositionAddress: job.location.address
+      };
     }
     function updateRouteBox() {
       const dialog = questionnaireDialog();
@@ -5842,7 +6238,7 @@
   function executeChatStatusBanner(runtime, deps = {}) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/chat-status-banner.js");
     let currentUrl = null;
-    const inFlight = /* @__PURE__ */ new Set();
+    const inFlight2 = /* @__PURE__ */ new Set();
     const lastFetched = /* @__PURE__ */ new Map();
     let cache = loadCache();
     let updateTimer = null;
@@ -5938,8 +6334,8 @@
       return { cem: match.cemStatus?.label || "-", kam: match.kamStatus?.label || "-" };
     }
     async function loadFromMatch(url) {
-      if (inFlight.has(url)) return;
-      inFlight.add(url);
+      if (inFlight2.has(url)) return;
+      inFlight2.add(url);
       lastFetched.set(url, Date.now());
       const matchId = getMatchIdFromUrl(url);
       let result = null;
@@ -5952,7 +6348,7 @@
           }
         }
       } finally {
-        inFlight.delete(url);
+        inFlight2.delete(url);
       }
       if (!result) {
         lastFetched.delete(url);
@@ -5974,7 +6370,7 @@
       currentUrl = url;
       const cached = cachedEntry(url);
       if (cached) show(cached.cem, cached.kam);
-      else if (!inFlight.has(url)) show("lädt...", "lädt...");
+      else if (!inFlight2.has(url)) show("lädt...", "lädt...");
       const fetchedAt = lastFetched.get(url);
       if (!force && fetchedAt && Date.now() - fetchedAt < BANNER_REFRESH_INTERVAL) return;
       loadFromMatch(url);
@@ -7532,7 +7928,7 @@
   function executeOutlookMatchOuten(runtime) {
     runtime.registerSource("kam/toolbox/src/features/kam-suite/outlook-match-outen.js");
     if (!SUPPORTED_OUTLOOK_HOSTNAMES.includes(location.hostname)) return;
-    const sleep = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
+    const sleep2 = (ms) => new Promise((resolve) => runtime.setTimeout(resolve, ms));
     async function ensureAuthViaPopup() {
       const before = getKamBearerSnapshot();
       let popup;
@@ -7544,7 +7940,7 @@
       if (!popup) return false;
       const deadline = Date.now() + 2e4;
       while (Date.now() < deadline) {
-        await sleep(500);
+        await sleep2(500);
         const current2 = getKamBearerSnapshot();
         if (current2 && current2 !== before) {
           try {
@@ -8399,7 +8795,7 @@ ${buildCbreBody(current)}`;
       while (Date.now() < deadline) {
         const element = visibleElement(selector);
         if (element) return element;
-        await sleep(150);
+        await sleep2(150);
       }
       return null;
     }
