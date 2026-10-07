@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.117
+// @version      1.6.118
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1871,6 +1871,24 @@
       ]
     };
   }
+  function appointmentPrioTopic({ team, page, routes }) {
+    return {
+      id: "appointment-prio",
+      title: "Termin als Prio markieren",
+      page,
+      routes,
+      kind: "form",
+      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann alles zu diesem Match in #termine (VTA, VTV, VTS) mit :alert11: vorne.`,
+      steps: [
+        "Im Terminvorschlag-Dialog „Prio“ ankreuzen.",
+        "Wie gewohnt speichern."
+      ],
+      notes: [
+        "Gespeichert wird erst mit dem Speichern-Knopf des Dialogs. Haken entfernen und speichern nimmt die Markierung zurück.",
+        "Wird der Haken nach dem Post gesetzt, ändert der Bot schon gepostete Nachrichten von heute mit."
+      ]
+    };
+  }
   function urgentVacancyTopic() {
     return {
       id: "urgent-vacancy-highlight",
@@ -1983,6 +2001,7 @@
         "Gespeichert wird erst mit dem Speichern-Knopf des Dialogs."
       ]
     },
+    appointmentPrioTopic({ team: "KAM", page: "Terminvorschlag-Dialog", routes: onMyMatches }),
     {
       id: "slack-exports",
       title: "VTA, VTV, Dringend und Push an Slack",
@@ -6026,6 +6045,89 @@
     }, true);
   }
 
+  // ../../shared/js/appointment-prio/index.js
+  var PRIO_MARKER = "#prio";
+  var PRIO_ID = "werkia-appointment-prio";
+  var PRIO_RE = /(^|\s)#prio(?![\p{L}\p{N}_])/iu;
+  function hasPrioMarker(notes) {
+    return PRIO_RE.test(String(notes || ""));
+  }
+  function withPrioMarker(notes, on) {
+    const text = String(notes || "");
+    if (on) return hasPrioMarker(text) ? text : text.trim() ? `${PRIO_MARKER} ${text}` : PRIO_MARKER;
+    let out = text;
+    while (hasPrioMarker(out)) out = out.replace(PRIO_RE, "$1");
+    return out.replace(/^[ \t]+/, "");
+  }
+  function executeAppointmentPrio(runtime, { sourcePath, helpTip = () => null } = {}) {
+    runtime.registerSource(sourcePath);
+    function notesField(dialog) {
+      return dialog.querySelector('textarea[name="notes"]');
+    }
+    function appointmentDialog() {
+      return [...document.querySelectorAll('.MuiDialog-paper, [role="dialog"]')].filter((dialog) => dialog.querySelector(".RaArrayInput-root input.MuiPickersInputBase-input") && notesField(dialog)).at(-1) || null;
+    }
+    function setNotes(textarea, value) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    function anchor(dialog) {
+      const teamSwitch = [...dialog.querySelectorAll(".MuiFormControlLabel-root")].find((label) => label.querySelector(".MuiSwitch-root") && ["KAM", "CEM"].includes(label.textContent.trim()));
+      if (teamSwitch) return { node: teamSwitch, where: "afterend" };
+      const notes = notesField(dialog).closest(".MuiFormControl-root, .MuiTextField-root") || notesField(dialog);
+      return { node: notes, where: "beforebegin" };
+    }
+    function addPrio(dialog) {
+      const label = document.createElement("label");
+      label.id = PRIO_ID;
+      label.title = "Markiert den Termin als Prio. Die VT Automatik postet VTA/VTV dieses Matches in #termine mit :alert11:.";
+      label.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin:0 12px; cursor:pointer; font:700 14px/1 Arial, sans-serif; color:#b42318; vertical-align:middle;";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.style.cssText = "width:18px; height:18px; margin:0; accent-color:#b42318; cursor:pointer;";
+      box.checked = hasPrioMarker(notesField(dialog)?.value);
+      box.onchange = () => {
+        const textarea = notesField(dialog);
+        if (textarea) setNotes(textarea, withPrioMarker(textarea.value, box.checked));
+      };
+      label.append(box, document.createTextNode("Prio"));
+      const tip = helpTip();
+      if (tip) label.append(tip);
+      const { node, where } = anchor(dialog);
+      node.insertAdjacentElement(where, label);
+    }
+    function sync() {
+      const dialog = appointmentDialog();
+      const existing = document.getElementById(PRIO_ID);
+      if (!dialog) {
+        existing?.remove();
+        return;
+      }
+      if (existing && dialog.contains(existing)) {
+        const box = existing.querySelector("input");
+        const marked = hasPrioMarker(notesField(dialog)?.value);
+        if (box && box.checked !== marked) box.checked = marked;
+        return;
+      }
+      existing?.remove();
+      addPrio(dialog);
+    }
+    let timer = null;
+    function scheduleSync() {
+      if (timer !== null) return;
+      timer = runtime.setTimeout(() => {
+        timer = null;
+        sync();
+      }, 100);
+    }
+    runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("input", scheduleSync);
+    runtime.addWindowListener("hashchange", scheduleSync);
+    scheduleSync();
+  }
+
   // src/features/kam-suite/appointment-copy-paste.js
   var TERM_KEY = "werkia_termine_copy_v4";
   var TERM_BAR_ID = "werkia-termine-buttons";
@@ -6172,7 +6274,8 @@
         type: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.type),
         location: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.location),
         instructions: dialog.querySelector('input[name="instructions"]')?.value || "",
-        notes: dialog.querySelector('textarea[name="notes"]')?.value || "",
+        // Prio gilt für diesen Termin, nicht für die Vorlage.
+        notes: withPrioMarker(dialog.querySelector('textarea[name="notes"]')?.value || "", false),
         appointments: getAppointments(dialog)
       };
       localStorage.setItem(TERM_KEY, JSON.stringify(data));
@@ -6380,6 +6483,14 @@
     runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleSync);
     scheduleSync();
+  }
+
+  // src/features/kam-suite/appointment-prio.js
+  function executeAppointmentPrio2(runtime) {
+    executeAppointmentPrio(runtime, {
+      sourcePath: "kam/toolbox/src/features/kam-suite/appointment-prio.js",
+      helpTip: () => kamHelp.tip("appointment-prio")
+    });
   }
 
   // ../../shared/js/slack-exports/index.js
@@ -9933,6 +10044,7 @@ ${next}`;
     { id: "kam-suite-chat-status-banner", execute: executeChatStatusBanner },
     { id: "kam-suite-chat-icon-redirect", execute: executeChatIconRedirect },
     { id: "kam-suite-appointment-copy-paste", execute: executeAppointmentCopyPaste },
+    { id: "kam-suite-appointment-prio", execute: executeAppointmentPrio2 },
     { id: "kam-suite-slack-exports", execute: executeSlackExports2 },
     { id: "kam-suite-match-slack-actions", execute: executeMatchSlackActions },
     { id: "kam-suite-outlook-match-outen", execute: executeOutlookMatchOuten },

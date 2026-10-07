@@ -24,6 +24,7 @@ Enthaltene Funktionen:
 - Zeigt im Chat ein farbiges Banner mit dem aktuellen CEM/KAM-Status des zugehoerigen Matches.
 - Korrigiert den Chat-Button in "Meine Matches", damit er direkt die richtige Unterhaltung oeffnet.
 - Kopiert Terminvorschlaege (Ort, Hinweise, Datum/Uhrzeit) per Knopfdruck von einem Dialog in einen anderen.
+- Haken "Prio" im Terminvorschlag-Dialog: schreibt #prio in die Notizen des Termins, die VT Automatik postet VTA/VTV/VTS des Matches dann mit :alert11:.
 - Sendet VTA und VTV direkt aus dem Match über Zapier nach Slack. VTV enthält Kandidat, Arbeitgeber, Termin und CEM-Erwähnung.
 - Zwei Knoepfe im VTA/VTV-Block der Terminspalte in Meine Matches (ohne Termin dort allein): "Dringend" markiert die Vakanz ueber den Slack-Bot der dringenden Vakanzen und zeigt den aktuellen Zustand, "Push" postet eine Push Request in #push-requests.
 - Liest den Betreff einer geoeffneten Outlook-Bewerbungsmail, findet den passenden Match per GraphQL und setzt KAM Status auf "Out" inkl. Pflichtgrund - offene Terminvorschlaege werden ebenfalls abgelehnt.
@@ -56,6 +57,7 @@ Enthaltene Funktionen:
 - Markiert dringend zu besetzende Vakanzen bei potenziellen Kandidaten-Matches farblich in der Liste.
 - Dropdown ueber der Liste mit gespeicherten Filterkombinationen. "Aktuellen Filter speichern" uebernimmt Filter, Sortierung und Seitengroesse der Ansicht; Vorlagen liegen lokal im Browser und ueberstehen Toolbox-Updates.
 - Warnt auf Potenzielle Matches, wenn ein vorgeschlagener Arbeitgeber bei diesem Kandidaten als No-Go hinterlegt ist - rot bei demselben Arbeitgeberprofil oder derselben Firmengruppe (gleicher Webauftritt), gelb bei einem blossen Namenstreffer, der noch geprueft werden muss.
+- Haken "Prio" im Terminvorschlag-Dialog: schreibt #prio in die Notizen des Termins, die VT Automatik postet VTA/VTV/VTS des Matches dann mit :alert11:.
 
 ## OBC Toolbox
 
