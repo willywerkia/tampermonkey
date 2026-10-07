@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.8.118
+// @version      1.8.119
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -7654,14 +7654,22 @@
     function anchor(dialog) {
       const teamSwitch = [...dialog.querySelectorAll(".MuiFormControlLabel-root")].find((label2) => label2.querySelector(".MuiSwitch-root") && ["KAM", "CEM"].includes(label2.textContent.trim()));
       if (teamSwitch) return { node: teamSwitch, where: "afterend" };
+      const fromLabel = [...dialog.querySelectorAll("label")].find((label2) => label2.textContent.replace(/\*/g, "").trim() === "Von");
+      const fromField = fromLabel?.closest(".MuiFormControl-root");
+      if (fromField) return { node: fromField, where: "afterend" };
       const notes = notesField(dialog).closest(".MuiFormControl-root, .MuiTextField-root") || notesField(dialog);
       return { node: notes, where: "beforebegin" };
+    }
+    function place(dialog, label2) {
+      const { node, where } = anchor(dialog);
+      const placed = where === "afterend" ? node.nextElementSibling === label2 : node.previousElementSibling === label2;
+      if (!placed) node.insertAdjacentElement(where, label2);
     }
     function addPrio(dialog) {
       const label2 = document.createElement("label");
       label2.id = PRIO_ID;
       label2.title = "Markiert den Termin als Prio. Die VT Automatik postet VTA/VTV dieses Matches in #termine mit :alert11:.";
-      label2.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin:0 12px; cursor:pointer; font:700 14px/1 Arial, sans-serif; color:#b42318; vertical-align:middle;";
+      label2.style.cssText = "display:inline-flex; align-items:center; align-self:center; gap:6px; margin:0 16px; cursor:pointer; font:700 14px/1 Arial, sans-serif; color:#b42318; vertical-align:middle;";
       const box = document.createElement("input");
       box.type = "checkbox";
       box.style.cssText = "width:18px; height:18px; margin:0; accent-color:#b42318; cursor:pointer;";
@@ -7673,8 +7681,7 @@
       label2.append(box, document.createTextNode("Prio"));
       const tip = helpTip();
       if (tip) label2.append(tip);
-      const { node, where } = anchor(dialog);
-      node.insertAdjacentElement(where, label2);
+      place(dialog, label2);
     }
     function sync() {
       const dialog = appointmentDialog();
@@ -7687,6 +7694,7 @@
         const box = existing.querySelector("input");
         const marked = hasPrioMarker(notesField(dialog)?.value);
         if (box && box.checked !== marked) box.checked = marked;
+        place(dialog, existing);
         return;
       }
       existing?.remove();
