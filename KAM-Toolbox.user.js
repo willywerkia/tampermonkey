@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.6.119
+// @version      1.6.120
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -1878,7 +1878,7 @@
       page,
       routes,
       kind: "form",
-      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann alles zu diesem Match in #termine (VTA, VTV, VTS) mit :alert11: vorne.`,
+      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann KAM-VTA, VTV und VTS zu diesem Match in #termine mit :alert11: vorne (CEM-VTA nicht).`,
       steps: [
         "Im Terminvorschlag-Dialog „Prio“ ankreuzen.",
         "Wie gewohnt speichern."

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.8.119
+// @version      1.8.120
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2139,7 +2139,7 @@
       page,
       routes,
       kind: "form",
-      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann alles zu diesem Match in #termine (VTA, VTV, VTS) mit :alert11: vorne.`,
+      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann KAM-VTA, VTV und VTS zu diesem Match in #termine mit :alert11: vorne (CEM-VTA nicht).`,
       steps: [
         "Im Terminvorschlag-Dialog „Prio“ ankreuzen.",
         "Wie gewohnt speichern."
