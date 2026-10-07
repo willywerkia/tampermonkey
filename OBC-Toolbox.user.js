@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OBC Toolbox
 // @namespace    https://werkia.de/obc-toolbox
-// @version      1.6.121
+// @version      1.7.122
 // @description  Vereint OBC-OFM-Script und dringende Vakanzen fuer OBC.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/OBC.svg
 // @match        https://admin.werkia.de/*
@@ -2140,14 +2140,14 @@
       kind: "view",
       summary: "Zeigt in jeder Zeile, wie lange der Kandidat mit dem Auto zur Vakanz fährt. Bei ortsgebundenen Stellen bitte vor allem kurze Fahrzeiten bevorzugen: Matches mit langer Fahrzeit führen deutlich seltener zum Erfolg.",
       notes: [
-        "💀 50 Min oder mehr bei einer ortsgebundenen Vakanz: fester Arbeitsort, der Kandidat pendelt täglich. Nur in Ausnahmefällen senden.",
+        "💀 50 Min oder mehr bei einer ortsgebundenen Vakanz: fester Arbeitsort, der Kandidat pendelt täglich. Die Zeile wird ausgegraut, mit der Maus darüber ist sie wieder normal lesbar. Nur in Ausnahmefällen senden.",
         "🚗 Fahrzeit unter 50 Min bei einer ortsgebundenen Vakanz.",
         "🏠 Start von Zuhause: Startpunkt „von zu Hause“ oder ortsunabhängig. Die Fahrzeit ist hier nur zur Info.",
         "🗺️ Landes-/bundesweit: Einsatzgebiet ist ein ganzes Bundesland oder Deutschland. Die Fahrzeit ist nur zur Info.",
         "🧳 Montage: Reisetätigkeit „uneingeschränkt“, mit Übernachtung. Die Fahrzeit ist nur zur Info.",
-        "Die Zeiten laden nacheinander im Hintergrund, etwa eine Zeile pro Sekunde. Danach bleiben sie eine Woche im Browser gespeichert. „…“ heißt: noch nicht berechnet.",
+        "Die Zeiten aller sichtbaren Zeilen eines Kandidaten kommen mit einer Anfrage, meist nach ein bis zwei Sekunden. Danach bleiben sie eine Woche im Browser gespeichert. „…“ heißt: noch nicht berechnet.",
         "„ca.“ heißt: Eine Adresse wurde nur ungefähr gefunden. „Luftlinie“ heißt: Der Routenservice hat nicht geantwortet. Dann gibt es keinen 💀.",
-        "Die Anzeige blendet nichts aus. Die Entscheidung liegt bei dir."
+        "Die Anzeige blendet nichts aus und sortiert nichts um. Die Entscheidung liegt bei dir."
       ]
     };
   }
@@ -4248,6 +4248,27 @@
     }
     return entry;
   }
+  function buildTableRouteEntry({ duration, distance, approx = false, source = "" } = {}) {
+    const seconds = Number(duration);
+    if (duration === null || !Number.isFinite(seconds) || seconds <= 0) return null;
+    const meters = Number(distance);
+    const hasMeters = distance !== null && distance !== void 0 && Number.isFinite(meters) && meters > 0;
+    const prefix = approx ? "ca. " : "";
+    const entry = {
+      displayText: `🚗 ${prefix}${formatRouteDuration(seconds)}${hasMeters ? ` (${prefix}${formatRouteDistanceKm(meters)})` : ""}`,
+      unavailable: false,
+      quality: "table",
+      approx: Boolean(approx),
+      durationSeconds: seconds,
+      fastestDurationSeconds: seconds,
+      source
+    };
+    if (hasMeters) {
+      entry.distanceMeters = meters;
+      entry.fastestDistanceMeters = meters;
+    }
+    return entry;
+  }
   function hasDualRouteMetrics(entry) {
     if (!entry || entry.quality !== "exact") return false;
     return [
@@ -4361,7 +4382,9 @@
   var ROUTE_GEOCODE_CACHE_KEY = "werkia_route_geocode_cache_v1";
   var ROUTE_GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60 * 1e3;
   var OSRM_REQUEST_TIMEOUT_MS = 5e3;
+  var OSRM_TABLE_TIMEOUT_MS = 1e4;
   var OSM_GAP_MS = 1100;
+  var TABLE_CHUNK_SIZE = 50;
   var ROUTING_SERVERS = [
     "https://router.project-osrm.org",
     "https://routing.openstreetmap.de/routed-car"
@@ -4383,44 +4406,62 @@
       return {};
     }
   }
+  function loadRouteDistanceCacheSnapshot() {
+    return loadJson(ROUTE_DISTANCE_CACHE_KEY);
+  }
+  function loadGeocodeCache() {
+    return loadJson(ROUTE_GEOCODE_CACHE_KEY);
+  }
+  function saveGeocodeCache(cache) {
+    setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, cache, isGeocodeEntryExpired);
+  }
   var pruned = false;
   function pruneCachesOnce() {
     if (pruned) return;
     pruned = true;
-    const distance = loadJson(ROUTE_DISTANCE_CACHE_KEY);
+    const distance = loadRouteDistanceCacheSnapshot();
     if (pruneExpiredCacheEntries(distance, isRouteDistanceEntryExpired)) {
       setCacheItemWithQuotaRetry(ROUTE_DISTANCE_CACHE_KEY, distance, isRouteDistanceEntryExpired);
     }
-    const geocode = loadJson(ROUTE_GEOCODE_CACHE_KEY);
-    if (pruneExpiredCacheEntries(geocode, isGeocodeEntryExpired)) {
-      setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, geocode, isGeocodeEntryExpired);
-    }
+    const geocode = loadGeocodeCache();
+    if (pruneExpiredCacheEntries(geocode, isGeocodeEntryExpired)) saveGeocodeCache(geocode);
   }
-  function getCachedRoute(candidateAddress, jobPositionAddress, { withPreview = false } = {}) {
+  function getCachedRoute(candidateAddress, jobPositionAddress, { withPreview = false, acceptTable = false } = {}) {
     pruneCachesOnce();
-    const cached = loadJson(ROUTE_DISTANCE_CACHE_KEY)[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)];
+    const cached = loadRouteDistanceCacheSnapshot()[getRouteDistanceCacheKey(candidateAddress, jobPositionAddress)];
     if (!cached?.displayText || isRouteDistanceEntryExpired(cached)) return null;
     if (cached.unavailable || cached.quality === "fallback") return cached;
+    if (acceptTable && cached.quality === "table" && !withPreview) return cached;
     if (!hasDualRouteMetrics(cached)) return null;
     if (withPreview && !(cached.previewCoordinates?.length >= 2)) return null;
     return cached;
   }
-  function saveRoute(candidateAddress, jobPositionAddress, entry) {
-    const cache = loadJson(ROUTE_DISTANCE_CACHE_KEY);
-    const key = getRouteDistanceCacheKey(candidateAddress, jobPositionAddress);
+  function saveRouteEntry(key, entry) {
+    const cache = loadRouteDistanceCacheSnapshot();
     const previous = cache[key];
+    const previousIsFull = previous && !isRouteDistanceEntryExpired(previous) && hasDualRouteMetrics(previous);
+    if (entry.quality === "table" && previousIsFull) return previous;
     const keepPreview = !entry.previewCoordinates && previous?.previewCoordinates?.length >= 2 && !entry.unavailable;
-    cache[key] = { ...entry, ...keepPreview ? { previewCoordinates: previous.previewCoordinates } : {}, time: Date.now() };
+    const stored = { ...entry, unavailable: Boolean(entry.unavailable), ...keepPreview ? { previewCoordinates: previous.previewCoordinates } : {}, time: Date.now() };
+    cache[key] = stored;
     setCacheItemWithQuotaRetry(ROUTE_DISTANCE_CACHE_KEY, cache, isRouteDistanceEntryExpired);
+    return stored;
   }
   function rememberKnownCoords(address, coords) {
     const key = cleanRouteValue(address);
     if (!key || !Number.isFinite(coords?.lat) || !Number.isFinite(coords?.lon)) return;
-    const cache = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+    const cache = loadGeocodeCache();
     const existing = cache[key];
     if (existing?.source === "werkia" && existing.coords?.lat === coords.lat && existing.coords?.lon === coords.lon && !isGeocodeEntryExpired(existing)) return;
     cache[key] = { coords: { lat: coords.lat, lon: coords.lon }, time: Date.now(), source: "werkia" };
-    setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, cache, isGeocodeEntryExpired);
+    saveGeocodeCache(cache);
+  }
+  function getKnownCoords(address) {
+    const cached = loadGeocodeCache()[cleanRouteValue(address)];
+    if (cached?.source !== "werkia" || isGeocodeEntryExpired(cached)) return null;
+    const lat = Number(cached.coords?.lat);
+    const lon = Number(cached.coords?.lon);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
   }
   var osmGateReadyAt = 0;
   var osmGateChain = Promise.resolve();
@@ -4449,11 +4490,11 @@
       if (timer) clearTimeout(timer);
     }
   }
-  async function geocodeQuery(query) {
-    const cache = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+  async function geocodeAddress(query) {
+    const cache = loadGeocodeCache();
     const key = cleanRouteValue(query);
     const cached = cache[key];
-    if (cached && !isGeocodeEntryExpired(cached)) return cached.coords || null;
+    if (cached && !isGeocodeEntryExpired(cached)) return { coords: cached.coords || null, fromCache: true };
     try {
       const coords = await runThroughOsmGate(async () => {
         const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de,at,ch&q=${encodeURIComponent(query)}`;
@@ -4461,28 +4502,36 @@
         const first = results?.[0];
         return first ? { lat: parseFloat(first.lat), lon: parseFloat(first.lon) } : null;
       });
-      const fresh = loadJson(ROUTE_GEOCODE_CACHE_KEY);
+      const fresh = loadGeocodeCache();
       fresh[key] = { coords, time: Date.now() };
-      setCacheItemWithQuotaRetry(ROUTE_GEOCODE_CACHE_KEY, fresh, isGeocodeEntryExpired);
-      return coords;
+      saveGeocodeCache(fresh);
+      return { coords, fromCache: false };
     } catch (error) {
       console.warn("[Werkia Route] Geokodierung fehlgeschlagen:", query, error);
-      return null;
+      return { coords: null, fromCache: false };
     }
   }
-  async function resolveCoords(location2) {
-    if (Number.isFinite(location2?.coords?.lat) && Number.isFinite(location2?.coords?.lon)) {
-      rememberKnownCoords(location2.address, location2.coords);
-      return { coords: location2.coords, approx: false };
+  async function geocodeByPostalCode(address) {
+    for (const query of buildGeocodeQueries(address)) {
+      const result = await geocodeAddress(query);
+      if (result.coords) return result;
     }
-    for (const query of buildGeocodeQueries(location2?.address)) {
-      const coords = await geocodeQuery(query);
-      if (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lon)) return { coords, approx: true };
+    return { coords: null, fromCache: false };
+  }
+  async function resolveRouteCoords(location2) {
+    const address = typeof location2 === "string" ? location2 : location2?.address;
+    const coords = typeof location2 === "string" ? null : location2?.coords;
+    if (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lon)) {
+      rememberKnownCoords(address, coords);
+      return { coords, approx: false };
     }
-    return { coords: null, approx: true };
+    const known = getKnownCoords(address);
+    if (known) return { coords: known, approx: false };
+    const geocoded = await geocodeByPostalCode(address);
+    return { coords: geocoded.coords || null, approx: true };
   }
   var OSRM_QUERY_VARIANTS = ["alternatives=3", "alternatives=true", "alternatives=false"];
-  async function requestRouteBundle(server, from, to, withPreview) {
+  async function requestRouteBundle(server, from, to, { withPreview = false } = {}) {
     const baseUrl = `${server}/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}`;
     const overview = withPreview ? "overview=full&geometries=geojson" : "overview=false";
     let lastError = null;
@@ -4498,14 +4547,10 @@
     if (lastError) throw lastError;
     return null;
   }
-  async function computeRoute(candidateLocation, jobLocation, withPreview) {
-    const from = await resolveCoords(candidateLocation);
-    const to = await resolveCoords(jobLocation);
-    if (!from.coords || !to.coords) return null;
-    const approx = from.approx || to.approx;
+  async function routeBetween(from, to, approx, withPreview) {
     for (const server of ROUTING_SERVERS) {
       try {
-        const bundle = await requestRouteBundle(server, from.coords, to.coords, withPreview);
+        const bundle = await requestRouteBundle(server, from, to, { withPreview });
         if (bundle) return { ...bundle, quality: "exact", approx };
       } catch (error) {
         console.warn("[Werkia Route] OSRM-Server nicht erreichbar:", server, error?.message || error);
@@ -4513,10 +4558,16 @@
     }
     return {
       quality: "fallback",
-      airDistanceMeters: haversineDistanceMeters(from.coords, to.coords),
+      airDistanceMeters: haversineDistanceMeters(from, to),
       approx: true,
       source: "air-distance"
     };
+  }
+  async function computeRoute(candidateLocation, jobLocation, { withPreview = false } = {}) {
+    const from = await resolveRouteCoords(candidateLocation);
+    const to = await resolveRouteCoords(jobLocation);
+    if (!from.coords || !to.coords) return null;
+    return routeBetween(from.coords, to.coords, from.approx || to.approx, withPreview);
   }
   var inFlight = /* @__PURE__ */ new Map();
   function getRoute(candidateLocation, jobLocation, { withPreview = false } = {}) {
@@ -4525,15 +4576,85 @@
     if (!candidateAddress || !jobAddress) return Promise.resolve(null);
     const cached = getCachedRoute(candidateAddress, jobAddress, { withPreview });
     if (cached) return Promise.resolve(cached);
-    const key = `${getRouteDistanceCacheKey(candidateAddress, jobAddress)}|${withPreview ? "preview" : ""}`;
+    const cacheKey = getRouteDistanceCacheKey(candidateAddress, jobAddress);
+    const key = `${cacheKey}|${withPreview ? "preview" : ""}`;
     if (inFlight.has(key)) return inFlight.get(key);
-    const promise = computeRoute(candidateLocation, jobLocation, withPreview).then((result) => {
-      const entry = buildRouteDistanceEntry(result);
-      saveRoute(candidateAddress, jobAddress, entry);
-      return { ...entry, time: Date.now() };
-    }).finally(() => inFlight.delete(key));
+    const promise = computeRoute(candidateLocation, jobLocation, { withPreview }).then((result) => saveRouteEntry(cacheKey, buildRouteDistanceEntry(result))).finally(() => inFlight.delete(key));
     inFlight.set(key, promise);
     return promise;
+  }
+  async function requestTableRow(server, from, targets) {
+    const coords = [from, ...targets].map((point) => `${point.lon},${point.lat}`).join(";");
+    const destinations = targets.map((_, index) => index + 1).join(";");
+    const url = `${server}/table/v1/driving/${coords}?sources=0&destinations=${destinations}&annotations=duration,distance`;
+    const data = await runThroughOsmGate(() => fetchJsonWithTimeout(url, OSRM_TABLE_TIMEOUT_MS));
+    if (data?.code && data.code !== "Ok") throw new Error(`OSRM ${data.code}`);
+    const durations = data?.durations?.[0];
+    if (!Array.isArray(durations) || durations.length !== targets.length) throw new Error("OSRM-Tabelle unvollstaendig");
+    const distances = Array.isArray(data?.distances?.[0]) ? data.distances[0] : [];
+    return targets.map((_, index) => ({ duration: durations[index], distance: distances[index] }));
+  }
+  async function fetchTableRow(from, targets) {
+    for (const server of ROUTING_SERVERS) {
+      try {
+        return { cells: await requestTableRow(server, from, targets), source: `${server}/table` };
+      } catch (error) {
+        console.warn("[Werkia Route] OSRM-Tabelle nicht erreichbar:", server, error?.message || error);
+      }
+    }
+    return null;
+  }
+  async function getRoutesFromCandidate(candidateLocation, jobLocations) {
+    const candidateAddress = candidateLocation?.address || "";
+    const results = /* @__PURE__ */ new Map();
+    if (!candidateAddress) return results;
+    const pending = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const location2 of jobLocations || []) {
+      const address = location2?.address || "";
+      if (!address || seen.has(cleanRouteValue(address))) continue;
+      seen.add(cleanRouteValue(address));
+      const cached = getCachedRoute(candidateAddress, address, { acceptTable: true });
+      if (cached) results.set(address, cached);
+      else pending.push(location2);
+    }
+    if (!pending.length) return results;
+    const from = await resolveRouteCoords(candidateLocation);
+    const saveFor = (location2, entry) => {
+      results.set(location2.address, saveRouteEntry(getRouteDistanceCacheKey(candidateAddress, location2.address), entry));
+    };
+    if (!from.coords) {
+      pending.forEach((location2) => saveFor(location2, buildRouteDistanceEntry(null)));
+      return results;
+    }
+    const targets = [];
+    for (const location2 of pending) {
+      const to = await resolveRouteCoords(location2);
+      if (to.coords) targets.push({ location: location2, coords: to.coords, approx: from.approx || to.approx });
+      else saveFor(location2, buildRouteDistanceEntry(null));
+    }
+    const retryOneByOne = [];
+    for (let index = 0; index < targets.length; index += TABLE_CHUNK_SIZE) {
+      const chunk = targets.slice(index, index + TABLE_CHUNK_SIZE);
+      const table = await fetchTableRow(from.coords, chunk.map((target) => target.coords));
+      if (!table) {
+        retryOneByOne.push(...chunk);
+        continue;
+      }
+      chunk.forEach((target, cellIndex) => {
+        const entry = buildTableRouteEntry({ ...table.cells[cellIndex], approx: target.approx, source: table.source });
+        if (entry) saveFor(target.location, entry);
+        else retryOneByOne.push(target);
+      });
+    }
+    for (const target of retryOneByOne) {
+      try {
+        results.set(target.location.address, await getRoute(candidateLocation, target.location));
+      } catch (error) {
+        console.warn("[Werkia Route] Route nicht berechenbar:", target.location.address, error);
+      }
+    }
+    return results;
   }
 
   // src/features/obc-fragebogen/route-calculation.js
@@ -7140,9 +7261,12 @@
     if (options.sourcePath) runtime.registerSource(options.sourcePath);
     const BADGE_CLASS2 = `werkia-${namespace}-commute-badge`;
     const STYLE_ID3 = `werkia-${namespace}-commute-style`;
+    const SKULL_ATTR = `data-werkia-${namespace}-commute-skull`;
     const queued = /* @__PURE__ */ new Set();
     const queue = [];
     const candidateErrors = /* @__PURE__ */ new Map();
+    const attempts = /* @__PURE__ */ new Map();
+    const RETRY_MS = 60 * 1e3;
     let working = false;
     let scheduled = false;
     function ensureStyles2() {
@@ -7152,11 +7276,14 @@
       style.textContent = `
       .${BADGE_CLASS2} { display:inline-flex;align-items:center;margin:6px 0 2px 8px;padding:5px 10px;border:1px solid;border-radius:999px;font:600 12px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;vertical-align:middle;white-space:nowrap; }
       ${Object.entries(LEVEL_STYLES2).map(([level, css]) => `.${BADGE_CLASS2}[data-level="${level}"] { ${css} }`).join("\n")}
+      tr[${SKULL_ATTR}] { opacity:.45;filter:grayscale(.6);transition:opacity .15s ease,filter .15s ease; }
+      tr[${SKULL_ATTR}]:hover, tr[${SKULL_ATTR}]:focus-within { opacity:1;filter:none; }
     `;
       document.head.appendChild(style);
     }
     function clearAll() {
       document.querySelectorAll(`.${BADGE_CLASS2}`).forEach((badge) => badge.remove());
+      document.querySelectorAll(`tr[${SKULL_ATTR}]`).forEach((row) => row.removeAttribute(SKULL_ATTR));
       queue.length = 0;
       queued.clear();
     }
@@ -7170,6 +7297,8 @@
       if (badge.textContent !== view.text) badge.textContent = view.text;
       if (badge.dataset.level !== view.level) badge.dataset.level = view.level;
       if (badge.title !== view.title) badge.title = view.title;
+      if (view.skull) item.row.setAttribute(SKULL_ATTR, "");
+      else item.row.removeAttribute(SKULL_ATTR);
     }
     function isRowVisible(row) {
       return row.isConnected && row.getClientRects().length > 0;
@@ -7178,11 +7307,10 @@
       const page = findPage(location.hash || "", pageKeys);
       return page ? page.collect().filter((item) => item.jobId && item.candidateId) : [];
     }
-    function enqueue(candidateId, jobId) {
-      const key = `${candidateId}|${jobId}`;
-      if (queued.has(key)) return;
-      queued.add(key);
-      queue.push({ key, candidateId, jobId });
+    function enqueue(candidateId) {
+      if (queued.has(candidateId)) return;
+      queued.add(candidateId);
+      queue.push(candidateId);
       work();
     }
     async function work() {
@@ -7190,23 +7318,23 @@
       working = true;
       try {
         while (queue.length) {
-          const item = queue.shift();
-          const current = currentItems().find((entry) => entry.candidateId === item.candidateId && entry.jobId === item.jobId);
-          if (!current || !isRowVisible(current.row)) {
-            queued.delete(item.key);
-            continue;
-          }
+          const candidateId = queue.shift();
           try {
-            const provider = getProvider();
-            const [candidateLocation, job] = await Promise.all([
-              provider.loadCandidateLocation(item.candidateId),
-              provider.loadJob(item.jobId)
-            ]);
-            if (candidateLocation && job?.location) await getRoute(candidateLocation, job.location);
+            const jobIds = currentItems().filter((item) => item.candidateId === candidateId && isRowVisible(item.row)).map((item) => item.jobId);
+            jobIds.forEach((jobId) => attempts.set(`${candidateId}|${jobId}`, Date.now()));
+            if (jobIds.length) {
+              const provider = getProvider();
+              const [candidateLocation, jobs] = await Promise.all([
+                provider.loadCandidateLocation(candidateId),
+                provider.loadJobs(jobIds)
+              ]);
+              const locations = [...jobs.values()].map((job) => job?.location).filter(Boolean);
+              if (candidateLocation && locations.length) await getRoutesFromCandidate(candidateLocation, locations);
+            }
           } catch (error) {
-            console.warn("[Werkia Fahrzeit] Route nicht berechenbar:", item.jobId, error);
+            console.warn("[Werkia Fahrzeit] Routen nicht berechenbar:", candidateId, error);
           }
-          queued.delete(item.key);
+          queued.delete(candidateId);
           scheduleRender();
         }
       } finally {
@@ -7263,9 +7391,12 @@
           renderBadge(item, { text: `${commuteClass.icon} ${commuteClass.key === "local" ? "" : `${commuteClass.label} · `}keine Adresse`, level: "unknown", title: "Bei der Vakanz ist keine Adresse hinterlegt." });
           continue;
         }
-        const entry = job && candidateLocation ? getCachedRoute(candidateLocation.address, job.location.address) : null;
+        const entry = job && candidateLocation ? getCachedRoute(candidateLocation.address, job.location.address, { acceptTable: true }) : null;
         renderBadge(item, describeCommute(commuteClass, entry));
-        if (job && candidateLocation && !entry && isRowVisible(item.row)) enqueue(item.candidateId, item.jobId);
+        const lastAttempt = attempts.get(`${item.candidateId}|${item.jobId}`) || 0;
+        if (job && candidateLocation && !entry && isRowVisible(item.row) && Date.now() - lastAttempt >= RETRY_MS) {
+          enqueue(item.candidateId);
+        }
       }
     }
     function scheduleRender() {
