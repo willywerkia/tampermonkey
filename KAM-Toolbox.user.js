@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.128
+// @version      1.7.130
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -7567,6 +7567,7 @@
 
   // src/features/kam-suite/cbre-softgarden.js
   var CBRE_RECIPIENT = "proposal@cbre-industries.softgarden.io";
+  var CBRE_BCC = "matchmail-backup@werkia.de";
   var CBRE_DEFAULT_POSITION_ID = "2054604";
   var CBRE_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
   var CBRE_EMPLOYER_RE = /\bcbre\s+gws\s+ifm\s+industrie\b/i;
@@ -8790,7 +8791,7 @@ ${buildCbreBody(current)}`;
         }
         const positionId = normalisePositionId(current.positionId);
         saveCbrePositionId(match.jobPositionId, positionId);
-        const proposal = { to: CBRE_RECIPIENT, subject: cbreSubject(positionId), body: buildCbreBody(current) };
+        const proposal = { to: CBRE_RECIPIENT, bcc: CBRE_BCC, subject: cbreSubject(positionId), body: buildCbreBody(current) };
         const copied = await copyText(proposal.body);
         dialog.close();
         const result = await composeCbreForward(proposal);
@@ -8814,8 +8815,20 @@ ${buildCbreBody(current)}`;
       forwardButton: 'button[aria-label="Weiterleiten"], button[aria-label="Forward"]',
       to: 'div[aria-label="An"][contenteditable="true"], div[aria-label="To"][contenteditable="true"], div[aria-label="An"], div[aria-label="To"]',
       subject: 'input[aria-label="Thema"], input[aria-label="Subject"], input[placeholder="Betreff hinzufügen"], input[placeholder="Add a subject"]',
-      body: 'div[role="textbox"][aria-label="Nachrichtentext"], div[role="textbox"][aria-label="Message body"]'
+      body: 'div[role="textbox"][aria-label="Nachrichtentext"], div[role="textbox"][aria-label="Message body"]',
+      bcc: 'div[aria-label="Bcc"][contenteditable="true"], div[aria-label="Bcc"]'
     };
+    async function openBccField() {
+      const existing = visibleElement(COMPOSE_SELECTORS.bcc);
+      if (existing) return existing;
+      const button2 = [...document.querySelectorAll('button, [role="button"]')].filter(isVisible).find((element) => {
+        const label = `${element.getAttribute("aria-label") || ""} ${element.getAttribute("title") || ""}`;
+        return (element.textContent || "").trim() === "Bcc" || /\bBcc\b/.test(label);
+      });
+      if (!button2) return null;
+      button2.click();
+      return waitForElement(COMPOSE_SELECTORS.bcc, 3e3);
+    }
     function visibleElement(selector) {
       return [...document.querySelectorAll(selector)].find(isVisible) || null;
     }
@@ -8913,7 +8926,17 @@ ${buildCbreBody(current)}`;
     function normalisedLines(text) {
       return String(text || "").replace(/ /g, " ").split("\n").map((line) => line.trim()).filter(Boolean);
     }
-    async function composeCbreForward({ to, subject, body }) {
+    async function addRecipient(field, address) {
+      if (recipientPresent(field, address)) return true;
+      const editable = editableIn(field);
+      placeCaretAtEnd(editable);
+      document.execCommand("insertText", false, address);
+      await sleep2(900);
+      pressKey(editable, "Enter");
+      await sleep2(600);
+      return recipientPresent(field, address);
+    }
+    async function composeCbreForward({ to, bcc, subject, body }) {
       const missing = [];
       let subjectInput = visibleElement(COMPOSE_SELECTORS.subject);
       if (!subjectInput) {
@@ -8933,16 +8956,10 @@ ${buildCbreBody(current)}`;
       }
       setNativeInputValue(subjectInput, subject);
       if (subjectInput.value !== subject) missing.push("Betreff");
-      if (toField) {
-        const editable = editableIn(toField);
-        placeCaretAtEnd(editable);
-        document.execCommand("insertText", false, to);
-        await sleep2(900);
-        pressKey(editable, "Enter");
-        await sleep2(600);
-        if (!recipientPresent(toField, to)) missing.push("Empfänger");
-      } else {
-        missing.push("Empfänger");
+      if (!toField || !await addRecipient(toField, to)) missing.push("Empfänger");
+      if (bcc) {
+        const bccField = await openBccField();
+        if (!bccField || !await addRecipient(bccField, bcc)) missing.push(`Bcc ${bcc}`);
       }
       subjectInput.focus();
       if (missing.length) return { ok: false, message: `Nicht automatisch gesetzt: ${missing.join(", ")}.` };
