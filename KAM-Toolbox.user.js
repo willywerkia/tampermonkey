@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.130
+// @version      1.7.131
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -7642,6 +7642,14 @@
     if (!normalisePositionId(fields.positionId)) problems.push("Stellen-ID fehlt");
     return problems;
   }
+  function recipientLabelMatches(label, address) {
+    const text = String(label || "").toLowerCase();
+    const wanted = String(address || "").toLowerCase();
+    if (!wanted) return false;
+    if (text.includes(wanted)) return true;
+    const parts = wanted.split("@")[0].split(/[^a-z0-9äöüß]+/).filter((part) => part.length >= 3);
+    return parts.length >= 2 && parts.every((part) => text.includes(part));
+  }
   function parseAttachmentSize(text) {
     const match = String(text || "").match(/(\d+(?:[.,]\d+)?)\s*(KB|MB|GB|B)\b/i);
     if (!match) return null;
@@ -8879,11 +8887,10 @@ ${buildCbreBody(current)}`;
       return element.querySelector('[contenteditable="true"]') || element;
     }
     function recipientPresent(toField, address) {
-      const wanted = address.toLowerCase();
       let node = toField;
       for (let depth = 0; node && depth < 4; depth += 1, node = node.parentElement) {
-        if ((node.innerText || "").toLowerCase().includes(wanted)) return true;
-        const labelled = [...node.querySelectorAll("[title], [aria-label]")].some((element) => `${element.getAttribute("title") || ""} ${element.getAttribute("aria-label") || ""}`.toLowerCase().includes(wanted));
+        if (recipientLabelMatches(node.innerText, address)) return true;
+        const labelled = [...node.querySelectorAll("[title], [aria-label]")].some((element) => recipientLabelMatches(`${element.getAttribute("title") || ""} ${element.getAttribute("aria-label") || ""}`, address));
         if (labelled) return true;
       }
       return false;
@@ -8978,6 +8985,7 @@ ${buildCbreBody(current)}`;
       const toast = document.createElement("div");
       toast.id = IDS2.toast;
       toast.setAttribute("role", "status");
+      toast.title = "Klicken zum Schließen";
       toast.textContent = text;
       styled2(toast, {
         position: "fixed",
@@ -8996,6 +9004,15 @@ ${buildCbreBody(current)}`;
       toast.addEventListener("click", () => toast.remove());
       document.body.appendChild(toast);
       if (tone === "ok") runtime.setTimeout(() => toast.remove(), 8e3);
+      const followDraft = () => {
+        if (!toast.isConnected) return;
+        if (!visibleElement(COMPOSE_SELECTORS.subject)) {
+          toast.remove();
+          return;
+        }
+        runtime.setTimeout(followDraft, 1e3);
+      };
+      runtime.setTimeout(followDraft, 1e3);
     }
     function describeParsed(parsed) {
       if (parsed.source === "manual") return `Eingabe: Kandidat „${parsed.candidateName || "(leer)"}“, Arbeitgeber „${parsed.employerName}“`;
