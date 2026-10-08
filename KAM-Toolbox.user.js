@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.123
+// @version      1.7.125
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -8057,7 +8057,7 @@
           filter,
           page,
           perPage: MATCHES_PER_PAGE,
-          sortField: "createdAt",
+          sortField: "id",
           sortOrder: "DESC"
         });
         const items = data?.items || [];
