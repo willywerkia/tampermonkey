@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.126
+// @version      1.7.127
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -7955,7 +7955,8 @@
   var IDS2 = {
     launcher: "werkia-outen-launcher",
     popover: "werkia-outen-popover",
-    dialog: "werkia-outen-dialog"
+    dialog: "werkia-outen-dialog",
+    toast: "werkia-outen-cbre-toast"
   };
   var SUPPORTED_OUTLOOK_HOSTNAMES = ["outlook.office.com", "outlook.cloud.microsoft"];
   function executeOutlookMatchOuten(runtime) {
@@ -8789,16 +8790,11 @@ ${buildCbreBody(current)}`;
         }
         const positionId = normalisePositionId(current.positionId);
         saveCbrePositionId(match.jobPositionId, positionId);
-        setButtonDisabled(applyBtn, true);
-        setStatus("Erstelle die Weiterleitung …", "busy");
-        const result = await composeCbreForward({ to: CBRE_RECIPIENT, subject: cbreSubject(positionId), body: buildCbreBody(current) });
-        setButtonDisabled(applyBtn, false);
-        if (result.ok) {
-          dialog.close();
-          window.alert("Weiterleitung an CBRE ist vorbereitet. Bitte Empfänger, Betreff, Text und Anhang prüfen und dann selbst senden.");
-          return;
-        }
-        setStatus(result.message, result.tone || "error");
+        const proposal = { to: CBRE_RECIPIENT, subject: cbreSubject(positionId), body: buildCbreBody(current) };
+        const copied = await copyText(proposal.body);
+        dialog.close();
+        const result = await composeCbreForward(proposal);
+        showCbreToast(result.ok ? { text: "Weiterleitung an CBRE ist vorbereitet. Bitte kurz prüfen und senden.", tone: "ok" } : { text: `${result.message} ${copied ? "Der Text ist in der Zwischenablage. " : ""}Bitte von Hand ergänzen – An: ${proposal.to}, Betreff: ${proposal.subject}.`, tone: "error" });
       });
       dialog.replaceChildren(
         buildHead("An CBRE senden (softgarden)"),
@@ -8864,50 +8860,90 @@ ${buildCbreBody(current)}`;
     function editorText(editor) {
       return (editor.innerText || "").replace(/ /g, " ").replace(/\n{2,}/g, "\n").trim();
     }
+    function editableIn(element) {
+      if (!element) return null;
+      if (element.isContentEditable) return element;
+      return element.querySelector('[contenteditable="true"]') || element;
+    }
+    function recipientPresent(toField, address) {
+      const wanted = address.toLowerCase();
+      let node = toField;
+      for (let depth = 0; node && depth < 4; depth += 1, node = node.parentElement) {
+        if ((node.innerText || "").toLowerCase().includes(wanted)) return true;
+        const labelled = [...node.querySelectorAll("[title], [aria-label]")].some((element) => `${element.getAttribute("title") || ""} ${element.getAttribute("aria-label") || ""}`.toLowerCase().includes(wanted));
+        if (labelled) return true;
+      }
+      return false;
+    }
+    function normalisedLines(text) {
+      return String(text || "").replace(/ /g, " ").split("\n").map((line) => line.trim()).filter(Boolean);
+    }
     async function composeCbreForward({ to, subject, body }) {
       const missing = [];
       let subjectInput = visibleElement(COMPOSE_SELECTORS.subject);
       if (!subjectInput) {
         const forwardButtons = [...document.querySelectorAll(COMPOSE_SELECTORS.forwardButton)].filter(isVisible);
         const forwardButton = forwardButtons[forwardButtons.length - 1];
-        if (!forwardButton) return composeFallback({ to, subject, body }, "Den Weiterleiten-Knopf der Mail habe ich nicht gefunden.");
+        if (!forwardButton) return { ok: false, message: "Den Weiterleiten-Knopf der Mail habe ich nicht gefunden." };
         forwardButton.click();
         subjectInput = await waitForElement(COMPOSE_SELECTORS.subject);
-        if (!subjectInput) return composeFallback({ to, subject, body }, "Das Weiterleiten-Fenster ist nicht aufgegangen.");
+        if (!subjectInput) return { ok: false, message: "Das Weiterleiten-Fenster ist nicht aufgegangen." };
       }
       const editor = await waitForElement(COMPOSE_SELECTORS.body, 4e3);
       const toField = visibleElement(COMPOSE_SELECTORS.to);
-      if (toField) {
-        placeCaretAtEnd(toField);
-        document.execCommand("insertText", false, to);
-        if (!(toField.innerText || "").includes(to)) missing.push(`Empfänger ${to}`);
-      } else {
-        missing.push(`Empfänger ${to}`);
-      }
-      setNativeInputValue(subjectInput, subject);
-      if (subjectInput.value !== subject) missing.push(`Betreff ${subject}`);
       if (editor) {
         replaceEditorText(editor, body);
-        if (editorText(editor) !== body.replace(/\n{2,}/g, "\n").trim()) missing.push("Mailtext");
+        const present = normalisedLines(editor.innerText);
+        if (!normalisedLines(body).every((line) => present.includes(line))) missing.push("Mailtext");
       } else {
         missing.push("Mailtext");
       }
-      if (missing.length) return composeFallback({ to, subject, body }, `Nicht automatisch gesetzt: ${missing.join(", ")}.`);
+      setNativeInputValue(subjectInput, subject);
+      if (subjectInput.value !== subject) missing.push("Betreff");
+      if (toField) {
+        const editable = editableIn(toField);
+        placeCaretAtEnd(editable);
+        document.execCommand("insertText", false, `${to};`);
+        await sleep2(600);
+        if (!recipientPresent(toField, to)) missing.push("Empfänger");
+      } else {
+        missing.push("Empfänger");
+      }
       subjectInput.focus();
+      if (missing.length) return { ok: false, message: `Nicht automatisch gesetzt: ${missing.join(", ")}.` };
       return { ok: true };
     }
-    async function composeFallback({ to, subject, body }, reason) {
-      let copied = false;
+    async function copyText(text) {
       try {
-        await navigator.clipboard.writeText(body);
-        copied = true;
+        await navigator.clipboard.writeText(text);
+        return true;
       } catch {
+        return false;
       }
-      return {
-        ok: false,
-        tone: "busy",
-        message: `${reason} ${copied ? "Der Text ist kopiert. " : ""}Bitte von Hand ergänzen – An: ${to}, Betreff: ${subject}, Mailtext komplett durch ${copied ? "den kopierten Text" : "den Text aus der Vorschau"} ersetzen.`
-      };
+    }
+    function showCbreToast({ text, tone }) {
+      document.getElementById(IDS2.toast)?.remove();
+      const toast = document.createElement("div");
+      toast.id = IDS2.toast;
+      toast.setAttribute("role", "status");
+      toast.textContent = text;
+      styled2(toast, {
+        position: "fixed",
+        right: "20px",
+        bottom: "84px",
+        zIndex: "2147483000",
+        maxWidth: "360px",
+        padding: "12px 14px",
+        borderRadius: "8px",
+        boxShadow: "0 8px 30px rgba(0,0,0,.25)",
+        font: "14px/1.4 Arial,sans-serif",
+        color: "#fff",
+        cursor: "pointer",
+        background: tone === "ok" ? "#18752b" : "#b3261e"
+      });
+      toast.addEventListener("click", () => toast.remove());
+      document.body.appendChild(toast);
+      if (tone === "ok") runtime.setTimeout(() => toast.remove(), 8e3);
     }
     function describeParsed(parsed) {
       if (parsed.source === "manual") return `Eingabe: Kandidat „${parsed.candidateName || "(leer)"}“, Arbeitgeber „${parsed.employerName}“`;
