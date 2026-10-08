@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.127
+// @version      1.7.128
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -8875,6 +8875,41 @@ ${buildCbreBody(current)}`;
       }
       return false;
     }
+    function pressKey(target, key) {
+      const init = { key, code: key, keyCode: key === "Enter" ? 13 : 0, which: key === "Enter" ? 13 : 0, bubbles: true, cancelable: true };
+      target.dispatchEvent(new KeyboardEvent("keydown", init));
+      target.dispatchEvent(new KeyboardEvent("keypress", init));
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
+    }
+    async function waitForStableText(element, { quietMs = 700, timeoutMs = 5e3 } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      let last = element.innerText;
+      let stableSince = Date.now();
+      while (Date.now() < deadline) {
+        await sleep2(150);
+        const current = element.innerText;
+        if (current !== last) {
+          last = current;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince >= quietMs) {
+          return;
+        }
+      }
+    }
+    function editorHasOnly(editor, body) {
+      const present = normalisedLines(editor.innerText);
+      const wanted = normalisedLines(body);
+      return present.length === wanted.length && wanted.every((line, index) => present[index] === line);
+    }
+    async function fillEditor(editor, body) {
+      await waitForStableText(editor);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        replaceEditorText(editor, body);
+        await sleep2(1200);
+        if (editorHasOnly(editor, body)) return true;
+      }
+      return false;
+    }
     function normalisedLines(text) {
       return String(text || "").replace(/ /g, " ").split("\n").map((line) => line.trim()).filter(Boolean);
     }
@@ -8892,9 +8927,7 @@ ${buildCbreBody(current)}`;
       const editor = await waitForElement(COMPOSE_SELECTORS.body, 4e3);
       const toField = visibleElement(COMPOSE_SELECTORS.to);
       if (editor) {
-        replaceEditorText(editor, body);
-        const present = normalisedLines(editor.innerText);
-        if (!normalisedLines(body).every((line) => present.includes(line))) missing.push("Mailtext");
+        if (!await fillEditor(editor, body)) missing.push("Mailtext");
       } else {
         missing.push("Mailtext");
       }
@@ -8903,7 +8936,9 @@ ${buildCbreBody(current)}`;
       if (toField) {
         const editable = editableIn(toField);
         placeCaretAtEnd(editable);
-        document.execCommand("insertText", false, `${to};`);
+        document.execCommand("insertText", false, to);
+        await sleep2(900);
+        pressKey(editable, "Enter");
         await sleep2(600);
         if (!recipientPresent(toField, to)) missing.push("Empfänger");
       } else {
