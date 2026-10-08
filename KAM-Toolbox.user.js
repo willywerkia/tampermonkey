@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.125
+// @version      1.7.126
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2023,18 +2023,19 @@
   function appointmentPrioTopic({ team, page, routes }) {
     return {
       id: "appointment-prio",
-      title: "Termin als Prio markieren",
+      title: "Termin als Prio markieren, Notes mitposten",
       page,
       routes,
       kind: "form",
-      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann KAM-VTA, VTV und VTS zu diesem Match in #termine mit :alert11: vorne (CEM-VTA nicht).`,
+      summary: `Der Haken „Prio“ im Terminvorschlag-Dialog neben dem ${team}-Schalter schreibt #prio in die Notizen des Termins. Die VT Automatik postet dann KAM-VTA, VTV und VTS zu diesem Match in #termine mit :alert11: vorne (CEM-VTA nicht). Der Haken „Notes posten“ daneben schreibt #notes in die Notizen. Die VT Automatik hängt die Notizen dieses Termins dann an seine Posts (VTA, VTV, VTS), etwa „BEW soll AP anrufen“.`,
       steps: [
-        "Im Terminvorschlag-Dialog „Prio“ ankreuzen.",
+        "Im Terminvorschlag-Dialog „Prio“ und/oder „Notes posten“ ankreuzen.",
         "Wie gewohnt speichern."
       ],
       notes: [
         "Gespeichert wird erst mit dem Speichern-Knopf des Dialogs. Haken entfernen und speichern nimmt die Markierung zurück.",
-        "Wird der Haken nach dem Post gesetzt, ändert der Bot schon gepostete Nachrichten von heute mit."
+        "Wird ein Haken nach dem Post gesetzt oder ändern sich die Notizen danach, ändert der Bot schon gepostete Nachrichten von heute mit.",
+        "Prio gilt für alle Termine des Matches, „Notes posten“ nur für die Notizen genau dieses Termins. Die Marker selbst erscheinen nicht im Post."
       ]
     };
   }
@@ -6443,18 +6444,46 @@
 
   // ../../shared/js/appointment-prio/index.js
   var PRIO_MARKER = "#prio";
+  var NOTES_MARKER = "#notes";
   var PRIO_ID = "werkia-appointment-prio";
-  var PRIO_RE = /(^|\s)#prio(?![\p{L}\p{N}_])/iu;
-  function hasPrioMarker(notes) {
-    return PRIO_RE.test(String(notes || ""));
+  var NOTES_ID = "werkia-appointment-notes";
+  function markerRe(marker) {
+    return new RegExp(`(^|\\s)${marker}(?![\\p{L}\\p{N}_])`, "iu");
   }
-  function withPrioMarker(notes, on) {
+  function hasMarker(notes, marker) {
+    return markerRe(marker).test(String(notes || ""));
+  }
+  function withMarker(notes, marker, on) {
     const text = String(notes || "");
-    if (on) return hasPrioMarker(text) ? text : text.trim() ? `${PRIO_MARKER} ${text}` : PRIO_MARKER;
+    if (on) return hasMarker(text, marker) ? text : text.trim() ? `${marker} ${text}` : marker;
+    const re = markerRe(marker);
     let out = text;
-    while (hasPrioMarker(out)) out = out.replace(PRIO_RE, "$1");
+    while (re.test(out)) out = out.replace(re, "$1");
     return out.replace(/^[ \t]+/, "");
   }
+  var hasPrioMarker = (notes) => hasMarker(notes, PRIO_MARKER);
+  var withPrioMarker = (notes, on) => withMarker(notes, PRIO_MARKER, on);
+  var hasNotesMarker = (notes) => hasMarker(notes, NOTES_MARKER);
+  var withNotesMarker = (notes, on) => withMarker(notes, NOTES_MARKER, on);
+  var withoutMarkers = (notes) => withNotesMarker(withPrioMarker(notes, false), false);
+  var CHECKBOXES = [
+    {
+      id: PRIO_ID,
+      text: "Prio",
+      color: "#b42318",
+      has: hasPrioMarker,
+      set: withPrioMarker,
+      title: "Markiert den Termin als Prio. Die VT Automatik postet VTA/VTV dieses Matches in #termine mit :alert11:."
+    },
+    {
+      id: NOTES_ID,
+      text: "Notes posten",
+      color: "#155eef",
+      has: hasNotesMarker,
+      set: withNotesMarker,
+      title: "Die VT Automatik hängt die Notes dieses Termins an seine Posts in #termine (VTA, VTV, VTS)."
+    }
+  ];
   function executeAppointmentPrio(runtime, { sourcePath, helpTip = () => null } = {}) {
     runtime.registerSource(sourcePath);
     function notesField(dialog) {
@@ -6478,45 +6507,49 @@
       const notes = notesField(dialog).closest(".MuiFormControl-root, .MuiTextField-root") || notesField(dialog);
       return { node: notes, where: "beforebegin" };
     }
-    function place(dialog, label) {
-      const { node, where } = anchor(dialog);
+    function place(dialog, label, index) {
+      const { node, where } = index ? { node: document.getElementById(CHECKBOXES[index - 1].id), where: "afterend" } : anchor(dialog);
       const placed = where === "afterend" ? node.nextElementSibling === label : node.previousElementSibling === label;
       if (!placed) node.insertAdjacentElement(where, label);
     }
-    function addPrio(dialog) {
+    function addCheckbox(dialog, spec, index) {
       const label = document.createElement("label");
-      label.id = PRIO_ID;
-      label.title = "Markiert den Termin als Prio. Die VT Automatik postet VTA/VTV dieses Matches in #termine mit :alert11:.";
-      label.style.cssText = "display:inline-flex; align-items:center; align-self:center; gap:6px; margin:0 16px; cursor:pointer; font:700 14px/1 Arial, sans-serif; color:#b42318; vertical-align:middle;";
+      label.id = spec.id;
+      label.title = spec.title;
+      label.style.cssText = `display:inline-flex; align-items:center; align-self:center; gap:6px; margin:0 16px 0 ${index ? 0 : 16}px; cursor:pointer; font:700 14px/1 Arial, sans-serif; color:${spec.color}; vertical-align:middle; white-space:nowrap;`;
       const box = document.createElement("input");
       box.type = "checkbox";
-      box.style.cssText = "width:18px; height:18px; margin:0; accent-color:#b42318; cursor:pointer;";
-      box.checked = hasPrioMarker(notesField(dialog)?.value);
+      box.style.cssText = `width:18px; height:18px; margin:0; accent-color:${spec.color}; cursor:pointer;`;
+      box.checked = spec.has(notesField(dialog)?.value);
       box.onchange = () => {
         const textarea = notesField(dialog);
-        if (textarea) setNotes(textarea, withPrioMarker(textarea.value, box.checked));
+        if (textarea) setNotes(textarea, spec.set(textarea.value, box.checked));
       };
-      label.append(box, document.createTextNode("Prio"));
-      const tip = helpTip();
-      if (tip) label.append(tip);
-      place(dialog, label);
+      label.append(box, document.createTextNode(spec.text));
+      if (index === CHECKBOXES.length - 1) {
+        const tip = helpTip();
+        if (tip) label.append(tip);
+      }
+      place(dialog, label, index);
     }
     function sync() {
       const dialog = appointmentDialog();
-      const existing = document.getElementById(PRIO_ID);
-      if (!dialog) {
+      CHECKBOXES.forEach((spec, index) => {
+        const existing = document.getElementById(spec.id);
+        if (!dialog) {
+          existing?.remove();
+          return;
+        }
+        if (existing && dialog.contains(existing)) {
+          const box = existing.querySelector("input");
+          const marked = spec.has(notesField(dialog)?.value);
+          if (box && box.checked !== marked) box.checked = marked;
+          place(dialog, existing, index);
+          return;
+        }
         existing?.remove();
-        return;
-      }
-      if (existing && dialog.contains(existing)) {
-        const box = existing.querySelector("input");
-        const marked = hasPrioMarker(notesField(dialog)?.value);
-        if (box && box.checked !== marked) box.checked = marked;
-        place(dialog, existing);
-        return;
-      }
-      existing?.remove();
-      addPrio(dialog);
+        addCheckbox(dialog, spec, index);
+      });
     }
     let timer = null;
     function scheduleSync() {
@@ -6678,8 +6711,8 @@
         type: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.type),
         location: selectedMuiOptionText(dialog, TERM_SELECT_FIELDS.location),
         instructions: dialog.querySelector('input[name="instructions"]')?.value || "",
-        // Prio gilt für diesen Termin, nicht für die Vorlage.
-        notes: withPrioMarker(dialog.querySelector('textarea[name="notes"]')?.value || "", false),
+        // Prio und "Notes posten" gelten für diesen Termin, nicht für die Vorlage.
+        notes: withoutMarkers(dialog.querySelector('textarea[name="notes"]')?.value || ""),
         appointments: getAppointments(dialog)
       };
       localStorage.setItem(TERM_KEY, JSON.stringify(data));
