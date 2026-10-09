@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.126
+// @version      1.9.134
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -3455,6 +3455,131 @@
     colorSelects();
   }
 
+  // ../../shared/js/werkia-questionnaire/job-title-catalog.js
+  var JOB_TITLE_CATALOG = [
+    { slug: "auto_mechatronics_tech", name: "KFZ-Mechatroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "azubi_electronic", name: "Azubi Elektrotechnik", workArea: ["electrical"], education: ["none"] },
+    { slug: "azubi_shk", name: "Azubi SHK", workArea: ["shc"], education: ["none"] },
+    { slug: "bachelor_computer_science", name: "Bachelor Informatik", workArea: ["electrical"], education: ["master"] },
+    { slug: "bachelor_electrical_engineering", name: "Bachelor Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "bachelor_electrical_info_tech", name: "Bachelor Elektro- und Informationstechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "central_hvac_engineer", name: "Zentralheizungs- und Lüftungsbauer", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "electrician", name: "Elektroinstallateur", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_automation", name: "Elektroniker für Automatisierungstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_devices_systems", name: "Elektroniker für Geräte und Systeme", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_energy_building", name: "Elektroniker für Energie- und Gebäudetechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_industrial", name: "Elektroniker für Betriebstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_info_telecom", name: "Elektroniker für Informations- und Telekommunikationstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "electronic_tech_machine_drive", name: "Elektroniker für Maschinen- und Antriebstechnik", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "energy_system_electronic_tech", name: "Energieanlagenelektroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "gas_water_installer", name: "Gas- und Wasserinstallateur", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "industrial_electronic_tech", name: "Industrieelektroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "industrial_mechanic", name: "Industriemechaniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "master_computer_science", name: "Master Informatik", workArea: ["electrical"], education: ["master"] },
+    { slug: "master_electrical_engineering", name: "Master Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "master_electrical_info_tech", name: "Master Elektro- und Informationstechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "mechatronics_tech", name: "Mechatroniker", workArea: ["electrical"], education: ["in_progress", "finished"] },
+    { slug: "mechatronics_tech_refrigeration", name: "Mechatroniker für Kältetechnik", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "meister_communication", name: "Meister Kommunikations & Sicherheitstechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "meister_electrical_engineering", name: "Meister Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "meister_energy", name: "Meister Energie- & Gebäudetechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "meister_refrigeration_tech", name: "Meister Kältetechnik", workArea: ["shc"], education: ["master"] },
+    { slug: "meister_shk", name: "Meister SHK", workArea: ["shc"], education: ["master"] },
+    { slug: "meister_system_electronics", name: "Meister Systemelektronik", workArea: ["electrical"], education: ["master"] },
+    { slug: "miscellaneous_electronic", name: "Sonstiges Elektrotechnik", workArea: ["electrical"], education: ["none", "in_progress", "finished", "master"] },
+    { slug: "miscellaneous_shk", name: "Sonstiges SHK", workArea: ["shc"], education: ["none", "in_progress", "finished", "master"] },
+    { slug: "plant_mechanic_shk", name: "Anlagenmechaniker SHK", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "refrigeration_system_builder", name: "Kälteanlagenbauer", workArea: ["shc"], education: ["in_progress", "finished"] },
+    { slug: "state_certified_tech_electronic", name: "Staatlich Geprüfter Techniker Elektrotechnik", workArea: ["electrical"], education: ["master"] },
+    { slug: "state_certified_tech_shk", name: "Staatlich Geprüfter Techniker SHK", workArea: ["shc"], education: ["master"] },
+    { slug: "tool_mechanic", name: "Werkzeugmechaniker", workArea: ["electrical"], education: ["in_progress", "finished"] }
+  ];
+  var JOB_TITLE_SLUGS = new Set(JOB_TITLE_CATALOG.map((entry) => entry.slug));
+
+  // ../../shared/js/werkia-questionnaire/scoring.js
+  function clean(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+  function asciiFold(value) {
+    return String(value || "").replace(/[äÄ]/g, "ae").replace(/[öÖ]/g, "oe").replace(/[üÜ]/g, "ue").replace(/[ßẞ]/g, "ss");
+  }
+  function normalizePosition(value, { fold = false } = {}) {
+    let v = clean(value).replace(/&/g, "und").replace(/anlagemechaniker/g, "anlagenmechaniker").replace(/\s+/g, " ").trim();
+    if (fold) v = asciiFold(v);
+    return v;
+  }
+  var POSITION_EQUIVALENT_GROUPS = [
+    ["plant_mechanic_shk", "central_hvac_engineer", "gas_water_installer"],
+    ["mechatronics_tech_refrigeration", "refrigeration_system_builder"],
+    ["electronic_tech_energy_building", "electrician"],
+    ["electronic_tech_industrial", "energy_system_electronic_tech"],
+    ["electronic_tech_devices_systems", "industrial_electronic_tech", "electronic_tech_machine_drive"],
+    ["electronic_tech_info_telecom", "electronic_tech_automation"],
+    ["industrial_mechanic", "tool_mechanic"],
+    ["auto_mechatronics_tech"],
+    ["meister_shk", "state_certified_tech_shk"],
+    ["meister_refrigeration_tech"],
+    ["meister_electrical_engineering", "meister_energy", "state_certified_tech_electronic"],
+    ["meister_system_electronics", "meister_communication"],
+    ["bachelor_computer_science", "bachelor_electrical_info_tech", "bachelor_electrical_engineering", "master_electrical_info_tech", "master_electrical_engineering", "master_computer_science"],
+    ["miscellaneous_shk"],
+    ["miscellaneous_electronic"],
+    ["central_hvac_engineer", "gas_water_installer", "mechatronics_tech_refrigeration", "refrigeration_system_builder"]
+  ];
+  var SLUG_BY_NAME = new Map(JOB_TITLE_CATALOG.map((entry) => [normalizePosition(entry.name), entry.slug]));
+  var SLUG_BY_FOLDED_NAME = new Map(JOB_TITLE_CATALOG.map((entry) => [normalizePosition(entry.name, { fold: true }), entry.slug]));
+  function toPositionSlug(normalized, fold) {
+    if (!normalized) return "";
+    if (JOB_TITLE_SLUGS.has(normalized)) return normalized;
+    return (fold ? SLUG_BY_FOLDED_NAME : SLUG_BY_NAME).get(normalized) || "";
+  }
+  function positionMatches(employerPosition, candidatePosition, { fold = false } = {}) {
+    const employerName = normalizePosition(employerPosition, { fold });
+    const candidateName = normalizePosition(candidatePosition, { fold });
+    if (!employerName || !candidateName || employerName === "-" || candidateName === "-") return false;
+    if (employerName === candidateName) return true;
+    const employer = toPositionSlug(employerName, fold);
+    const candidate = toPositionSlug(candidateName, fold);
+    if (!employer || !candidate) return false;
+    if (employer === "mechatronics_tech" || candidate === "mechatronics_tech") return false;
+    return POSITION_EQUIVALENT_GROUPS.some((group) => group.includes(employer) && group.includes(candidate));
+  }
+  var POSITION_REVIEW_GROUPS = [
+    {
+      employer: ["electronic_tech_energy_building", "electrician"],
+      candidate: ["electronic_tech_industrial"]
+    },
+    {
+      employer: ["electronic_tech_info_telecom", "electronic_tech_automation"],
+      candidate: ["electronic_tech_devices_systems", "electronic_tech_machine_drive"]
+    },
+    {
+      employer: ["mechatronics_tech_refrigeration", "refrigeration_system_builder"],
+      candidate: ["plant_mechanic_shk", "central_hvac_engineer"]
+    },
+    {
+      employer: ["electronic_tech_industrial", "electronic_tech_energy_building"],
+      candidate: ["electronic_tech_industrial", "electronic_tech_energy_building"]
+    },
+    {
+      employer: ["electronic_tech_industrial", "electrician"],
+      candidate: ["electronic_tech_industrial", "electrician"]
+    }
+  ];
+  function positionsNeedReview(employerPosition, candidatePosition, { fold = false } = {}) {
+    const employerName = normalizePosition(employerPosition, { fold });
+    const candidateName = normalizePosition(candidatePosition, { fold });
+    if (!employerName || !candidateName || employerName === "-" || candidateName === "-") return false;
+    if (positionMatches(employerPosition, candidatePosition, { fold })) return false;
+    const employer = toPositionSlug(employerName, fold);
+    const candidate = toPositionSlug(candidateName, fold);
+    if (!employer || !candidate) return false;
+    return POSITION_REVIEW_GROUPS.some((group) => group.employer.includes(employer) && group.candidate.includes(candidate));
+  }
+  function positionRelated(employerPosition, candidatePosition, options) {
+    return positionsNeedReview(employerPosition, candidatePosition, options);
+  }
+
   // src/features/cem-ofm/questionnaire-evaluation.js
   var GREEN = "#d8f5d0";
   var RED = "#ffa8a8";
@@ -3465,26 +3590,18 @@
   var NOTES_ID = "werkia-om-notes-box";
   var COMPANY_FLAG = "[absprache vor ofm]";
   var QUESTIONNAIRE_LABELS2 = ["Reisehäufigkeit", "Montagebereitschaft", "Berufserfahrung", "Erforderliche Berufserfahrung", "Erforderliche Sprachkentnisse", "Sprachkentnisse", "Recognition status", "Mindestgehalt pro Monat", "Minimumgehalt", "Position", "Positionen", "Zusätzliche Information - OM", "Erforderliche Führerschein", "Führerschein"];
-  var EQUIV_GROUPS = [["anlagenmechaniker shk", "zentralheizungs- und lüftungsbauer", "gas- und wasserinstallateur"], ["mechatroniker für kältetechnik", "kälteanlagebauer"], ["elektroniker für energie- und gebäudetechnik", "elektroinstallateur"], ["elektroniker für betriebstechnik", "energieanlagenelektroniker"], ["elektroniker für geräte und systeme", "industrieelektriker", "elektroniker für maschinen- und antriebstechnik"], ["industriemechaniker", "werkzeugmechaniker", "anlagenmechaniker"], ["meister shk", "staatlich geprüfter techniker"], ["meister elektrotechnik", "meister energie- und gebäudetechnik", "staatlich geprüfter techniker"]];
-  var RELATED_GROUPS = [["elektroniker für betriebstechnik", "elektroniker für energie- und gebäudetechnik"], ["elektroniker für betriebstechnik", "elektroinstallateur"]];
-  var clean = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
-  var label = (value) => clean(value).replace(/:$/, "");
-  var empty = (value) => !clean(value) || clean(value) === "-" || clean(value) === "–" || clean(value) === "nicht angegeben";
+  var clean2 = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  var label = (value) => clean2(value).replace(/:$/, "");
+  var empty = (value) => !clean2(value) || clean2(value) === "-" || clean2(value) === "–" || clean2(value) === "nicht angegeben";
   var status = (value, detail) => detail ? { status: value, detail } : { status: value };
-  var rankIndex = (value, pairs) => pairs.findIndex((pair) => clean(value).includes(pair));
+  var rankIndex = (value, pairs) => pairs.findIndex((pair) => clean2(value).includes(pair));
   function travelRank(value) {
-    const text = clean(value);
+    const text = clean2(value);
     if (text.includes("keine reisebereitschaft")) return 0;
     if (text.includes("gering")) return 1;
     if (text.includes("regelmäßig")) return 2;
     if (text.includes("uneingeschränkt")) return 3;
     return null;
-  }
-  function positionMatches(first, second) {
-    const a = clean(first).replace(/&/g, "und");
-    const b = clean(second).replace(/&/g, "und");
-    if (!a || !b || a === "-" || b === "-" || a === "mechatroniker" || b === "mechatroniker") return false;
-    return a === b || EQUIV_GROUPS.some((group) => group.includes(a) && group.includes(b));
   }
   function executeQuestionnaireEvaluation(runtime) {
     runtime.registerSource("cem/toolbox/src/features/cem-ofm/questionnaire-evaluation.js");
@@ -3504,7 +3621,7 @@
     };
     const anyValue = (dialog, labels, last = false) => labels.map((fieldName) => value(dialog, fieldName, last)).find(Boolean) || null;
     const allowEmpty = (dialog, fieldName) => fields(dialog, fieldName)[0]?.querySelector("span.MuiTypography-body2") || fields(dialog, fieldName)[0] || null;
-    const positionValues = (dialog, fieldName) => fields(dialog, fieldName)[0] ? [...fields(dialog, fieldName)[0].querySelectorAll("span.MuiTypography-body2")].filter((element) => element.innerText?.trim() && clean(element.innerText) !== "berufsausbildung") : [];
+    const positionValues = (dialog, fieldName) => fields(dialog, fieldName)[0] ? [...fields(dialog, fieldName)[0].querySelectorAll("span.MuiTypography-body2")].filter((element) => element.innerText?.trim() && clean2(element.innerText) !== "berufsausbildung") : [];
     const dialogIsQuestionnaire = (dialog) => {
       if (!dialog || /Matchkommentare|Kandidat Dateien/i.test(dialog.innerText || dialog.textContent || "")) return false;
       const labels = new Set([...dialog.querySelectorAll("span.ra-field p span, span.ra-field p, div.ra-field p span, div.ra-field p, div.MuiStack-root p span, div.MuiStack-root p")].map((element) => label(element.innerText || element.textContent)));
@@ -3557,7 +3674,7 @@
       }, "Berufserfahrung");
       const recognition = (() => {
         const element = value(dialog, "Recognition status");
-        const text = clean(element?.innerText);
+        const text = clean2(element?.innerText);
         if (!element || text.includes("ja, ist anerkannt")) return status("send");
         if (text.includes("in anerkennung")) {
           mark(element, YELLOW, "In Anerkennung");
@@ -3572,10 +3689,10 @@
       const license = (() => {
         const required = anyValue(dialog, ["Erforderliche Führerschein", "Erforderlicher Führerschein", "Führerschein vorausgesetzt", "Auto muss da sein"]);
         const candidate = anyValue(dialog, ["Führerschein", "Führerschein Kandidat", "Führerschein Kandidat:in"], true);
-        const text = clean(required?.innerText);
+        const text = clean2(required?.innerText);
         if (!required || empty(text) || text === "nein" || text.includes("nicht erforderlich")) return status("send");
         if (!(text.includes("ja") || text.includes("führerschein") || text.includes("klasse") || text.includes("b"))) return status("send");
-        const candidateText = clean(candidate?.innerText);
+        const candidateText = clean2(candidate?.innerText);
         const detail = `Führerschein: vorausgesetzt → ${candidate?.innerText || "leer"}`;
         if (/ja|klasse|vorhanden/.test(candidateText)) {
           mark(required, GREEN);
@@ -3611,15 +3728,15 @@
         return color === RED ? status("no-send", detail) : status("send");
       })();
       const positions = (() => {
-        const employers = positionValues(dialog, "Position").map((element) => ({ element, text: clean(element.innerText) }));
-        const candidates = positionValues(dialog, "Positionen").map((element) => ({ element, text: clean(element.innerText) }));
+        const employers = positionValues(dialog, "Position").map((element) => ({ element, text: clean2(element.innerText) }));
+        const candidates = positionValues(dialog, "Positionen").map((element) => ({ element, text: clean2(element.innerText) }));
         if (!employers.length) return status("send");
         if (!candidates.length) return status("unclear", `Positionen: ${employers.map((item) => item.text).join(", ")} → leer`);
         let green = false;
         let yellow = false;
         employers.forEach((employer) => {
           const direct = candidates.find((candidate) => positionMatches(employer.text, candidate.text));
-          const related = !direct && candidates.find((candidate) => RELATED_GROUPS.some((group) => group.includes(employer.text) && group.includes(candidate.text)));
+          const related = !direct && candidates.find((candidate) => positionRelated(employer.text, candidate.text));
           const color = direct ? GREEN : related ? YELLOW : RED;
           green ||= Boolean(direct);
           yellow ||= Boolean(related);
@@ -3627,7 +3744,7 @@
         });
         candidates.forEach((candidate) => {
           const direct = employers.find((employer) => positionMatches(employer.text, candidate.text));
-          const related = !direct && employers.find((employer) => RELATED_GROUPS.some((group) => group.includes(employer.text) && group.includes(candidate.text)));
+          const related = !direct && employers.find((employer) => positionRelated(employer.text, candidate.text));
           mark(candidate.element, direct ? GREEN : related ? YELLOW : RED);
         });
         const detail = `Positionen: ${employers.map((item) => item.text).join(", ")} → ${candidates.map((item) => item.text).join(", ")}`;
@@ -3657,7 +3774,7 @@
       const stored = field.querySelector("span.MuiTypography-body2")?.innerText?.trim() || "";
       const employer = [...dialog.querySelectorAll("span.ra-field")].find((item) => item.querySelector("p span")?.innerText?.trim() === "Arbeitgeber");
       const employerName = employer?.querySelector("span.MuiTypography-body2, a, .MuiChip-label")?.textContent || "";
-      const flagged = /\bga[\s-]?tec\b/i.test(employerName) || clean(stored).includes(COMPANY_FLAG);
+      const flagged = /\bga[\s-]?tec\b/i.test(employerName) || clean2(stored).includes(COMPANY_FLAG);
       const text = stored.replace(new RegExp(COMPANY_FLAG.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "").replace(/^[\s,;|/-]+|[\s,;|/-]+$/g, "").trim();
       if ((!text || text === "-" || text === "–") && !flagged) return;
       const rect = dialog.getBoundingClientRect();
@@ -7018,9 +7135,9 @@
     const parsed = typeof raw === "string" ? parseJsonObject(raw, null) : raw;
     if (!parsed || typeof parsed !== "object") return emptyStore();
     const routes = parsed.routes && typeof parsed.routes === "object" ? parsed.routes : {};
-    const clean2 = {};
+    const clean3 = {};
     Object.keys(routes).forEach((route) => {
-      clean2[route] = (Array.isArray(routes[route]) ? routes[route] : []).filter((preset) => preset && typeof preset === "object" && preset.name).map((preset) => ({
+      clean3[route] = (Array.isArray(routes[route]) ? routes[route] : []).filter((preset) => preset && typeof preset === "object" && preset.name).map((preset) => ({
         id: String(preset.id || createPresetId()),
         name: String(preset.name),
         filter: preset.filter && typeof preset.filter === "object" ? preset.filter : {},
@@ -7029,7 +7146,7 @@
         perPage: Number.parseInt(preset.perPage, 10) || 0
       }));
     });
-    return { version: STORE_VERSION, routes: clean2 };
+    return { version: STORE_VERSION, routes: clean3 };
   }
   function presetsForRoute(store, route) {
     return store?.routes?.[route] ? [...store.routes[route]] : [];
