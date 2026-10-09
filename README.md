@@ -58,6 +58,7 @@ Enthaltene Funktionen:
 - Dropdown ueber der Liste mit gespeicherten Filterkombinationen. "Aktuellen Filter speichern" uebernimmt Filter, Sortierung und Seitengroesse der Ansicht; Vorlagen liegen lokal im Browser und ueberstehen Toolbox-Updates.
 - Warnt auf Potenzielle Matches, wenn ein vorgeschlagener Arbeitgeber bei diesem Kandidaten als No-Go hinterlegt ist - rot bei demselben Arbeitgeberprofil oder derselben Firmengruppe (gleicher Webauftritt), gelb bei einem blossen Namenstreffer, der noch geprueft werden muss.
 - Haken "Prio" im Terminvorschlag-Dialog: schreibt #prio in die Notizen des Termins, die VT Automatik postet VTA/VTV/VTS des Matches dann mit :alert11:.
+- Knopf "WA" in Meine Matches und Meine Kandidaten: fuellt eine WhatsApp-Vorlage mit Kandidaten- und Matchdaten, laesst sie fuer diese Nachricht bearbeiten und kopiert sie.
 
 ## OBC Toolbox
 

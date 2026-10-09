@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.134
+// @version      1.9.135
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2358,6 +2358,26 @@
       notes: [
         "Betrifft die Kandidat-WVL, nicht die CEM WVL der Matches. Die CEM WVL ändert „Alle ändern“ in den aufgeklappten Match-Tabellen.",
         "Nach dem Schließen lädt die Tabelle neu und zeigt die neuen Werte."
+      ]
+    },
+    {
+      id: "wa-templates",
+      title: "WhatsApp-Vorlagen",
+      page: "CEM › Meine Matches und Meine Kandidaten",
+      routes: onBulkPages,
+      kind: "local",
+      summary: "Der Knopf „WA“ in jeder Zeile füllt eine WhatsApp-Vorlage mit den Daten aus Kandidat und Match. Du passt den Text für diese eine Nachricht an und kopierst ihn.",
+      steps: [
+        "„WA“ in der Zeile klicken und die Vorlage wählen. In Match-Zeilen gibt es Match- und Kandidaten-Vorlagen, in Kandidaten-Zeilen nur Kandidaten-Vorlagen.",
+        "Gesprächsart und Ansprechpartner prüfen, falls angeboten. Die Gesprächsart kommt aus dem Termin, der Ansprechpartner ist der einzige oder der Haupt-AP des Arbeitgebers.",
+        "Den Text bei Bedarf ändern und „Kopieren“ klicken. Dann in WhatsApp einfügen."
+      ],
+      notes: [
+        "Was im Adminpanel fehlt, steht als [Lücke] im Text und im gelben Hinweis darüber. Vor dem Kopieren kommt eine Rückfrage, solange noch eine Lücke drin ist.",
+        "Terminvorschläge erscheinen als Zeitfenster von einer Stunde ab dem Vorschlag, z. B. „zw. 17-18 Uhr“.",
+        "Unterschrift und E-Mail kommen vom angemeldeten Adminpanel-Nutzer.",
+        "Bei der Terminbestätigung vor Ort wird die Fahrzeit vom Kandidaten zur Terminadresse nachgeladen.",
+        "Es wird nichts gespeichert und nichts im Adminpanel geändert. Gesendet wird nur, was du selbst in WhatsApp einfügst."
       ]
     },
     {
@@ -6234,7 +6254,7 @@
       team,
       isTargetPage: isTargetPage3,
       getRequest,
-      ids: IDS4,
+      ids: IDS5,
       fields,
       columns,
       statusOptions,
@@ -6314,13 +6334,13 @@
       return link?.href.match(/#\/Match\/([^/?]+)(?:[/?]|$)/i)?.[1] || "";
     }
     const kit = createBulkDialogKit({
-      ids: IDS4,
-      buttonIds: [IDS4.button, IDS4.statusButton, IDS4.forwardButton, IDS4.declinePastButton],
+      ids: IDS5,
+      buttonIds: [IDS5.button, IDS5.statusButton, IDS5.forwardButton, IDS5.declinePastButton],
       stopNoun: "Zeile",
       reloadMissingText: 'Änderung geprüft. Der interne Adminpanel-Button "Neu laden" wurde nicht gefunden.',
       extraCss: `
-      #${IDS4.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
-      #${IDS4.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }`
+      #${IDS5.feedbackShortcuts} { display: grid; gap: 5px; margin: 12px 0; font: 700 14px/1.4 Arial,sans-serif; }
+      #${IDS5.feedbackShortcuts} select { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #bbb; border-radius: 5px; font: inherit; background: #fff; }`
     });
     function visibleMatches() {
       const seen = /* @__PURE__ */ new Set();
@@ -6460,13 +6480,13 @@
       customInput.dispatchEvent(new Event("blur", { bubbles: true }));
     }
     function installNativeOutFeedbackDropdown(dialog) {
-      if (dialog.querySelector(`#${IDS4.feedbackShortcuts}`)) return;
+      if (dialog.querySelector(`#${IDS5.feedbackShortcuts}`)) return;
       const customInput = dialog.querySelector('input[name="customFeedback"], textarea[name="customFeedback"]');
       const othersRadio = dialog.querySelector('input[name="feedback"][value="others"]');
       const anchor = customInput?.closest(".MuiFormControl-root") || customInput?.parentElement || othersRadio?.closest("label") || othersRadio?.parentElement;
       if (!anchor) return;
       const shortcuts = document.createElement("label");
-      shortcuts.id = IDS4.feedbackShortcuts;
+      shortcuts.id = IDS5.feedbackShortcuts;
       shortcuts.innerHTML = `<span style="display:inline-flex;align-items:center;">${team}-Feedback${tip("outFeedback")}</span>
       <select name="werkia${team[0]}${team.slice(1).toLowerCase()}OutFeedback">
         <option value="">Bitte auswählen</option>
@@ -6766,10 +6786,10 @@
     function installHeaderButtons() {
       if (!isTargetPage3()) return;
       kit.injectStyle();
-      installButton(columns.followUp, IDS4.button, "Alle ändern", `${team}-WVL-Datum für angehakte sichtbare Matches ändern`, renderWvlDialog);
-      installButton(columns.status, IDS4.statusButton, "Alle ändern", `${team} Status für angehakte sichtbare Matches ändern`, renderStatusDialog);
-      installButton(columns.interview, IDS4.forwardButton, "Alle weiterleiten", "Terminvorschläge mit Status „Vorschlag“ für angehakte sichtbare Matches weiterleiten", () => renderInterviewDialog(INTERVIEW_ACTIONS.forward));
-      installButton(columns.interview, IDS4.declinePastButton, "Vergangene ablehnen", "Terminvorschläge, deren Termine alle in der Vergangenheit liegen, für angehakte sichtbare Matches ablehnen", () => renderInterviewDialog(INTERVIEW_ACTIONS.declinePast));
+      installButton(columns.followUp, IDS5.button, "Alle ändern", `${team}-WVL-Datum für angehakte sichtbare Matches ändern`, renderWvlDialog);
+      installButton(columns.status, IDS5.statusButton, "Alle ändern", `${team} Status für angehakte sichtbare Matches ändern`, renderStatusDialog);
+      installButton(columns.interview, IDS5.forwardButton, "Alle weiterleiten", "Terminvorschläge mit Status „Vorschlag“ für angehakte sichtbare Matches weiterleiten", () => renderInterviewDialog(INTERVIEW_ACTIONS.forward));
+      installButton(columns.interview, IDS5.declinePastButton, "Vergangene ablehnen", "Terminvorschläge, deren Termine alle in der Vergangenheit liegen, für angehakte sichtbare Matches ablehnen", () => renderInterviewDialog(INTERVIEW_ACTIONS.declinePast));
     }
     let scheduled = false;
     const scheduleInstall = () => {
@@ -8049,6 +8069,789 @@
     });
   }
 
+  // src/features/wa-templates/employee-gender.js
+  var EMPLOYEE_GENDER = {
+    // CEM (Stand 2026-10-09, Angaben Eno)
+    "cb5406bc-2ede-4b38-acb4-127fb46c3d05": "f",
+    // Carolin Gröne
+    "6db18ab4-8bc6-4068-9ccf-b7e5d5e26ce8": "f",
+    // Henriette Kienz
+    "bbddc4ce-81a8-4ff3-b247-3593404f81e6": "f",
+    // Isabel Sobetzki
+    "a30b0c6d-02f9-4744-8c2d-b389e040cf2b": "m",
+    // Leo Knau
+    "c748b17f-3401-4ade-ad3d-aab8ce165481": "m",
+    // Max Gladisch
+    "9b180b4f-eace-4238-8d56-db08a2648e73": "f",
+    // Melina Pérez Prada
+    "398cc16b-6054-4a67-acea-4e76d92efd9a": "f",
+    // Milena Miedeck
+    "abcdc1b1-f27c-4653-8a21-effa267cbf7b": "f",
+    // Sarah Buse
+    "25544016-ecbe-4736-abf5-c8c69e209753": "f",
+    // Vivian Kruse
+    "2a6af863-1c13-4cac-aa49-0ef41b371585": "m",
+    // Eno Lika (OPS, nutzt die Vorlagen)
+    // OBC (Stand 2026-10-09, Angaben Eno)
+    "d90dec0c-bfcf-4d68-8b3f-b92045d4bdb0": "f",
+    // Angelina Land
+    "1f01b45a-73a7-48c9-8ec3-7c2c6b189b55": "f",
+    // Annika Lorenz
+    "f9eda588-e0a3-419f-917d-8823b3ef4e3a": "m",
+    // Jan Silbe
+    "b6c81c15-60ba-4380-99f3-d70261b6e7ba": "m",
+    // Jonas Güssefeld
+    "83ac48c8-b582-4995-9cf6-d12c774bf058": "m",
+    // Jonathan Köhler
+    "76edb298-3be5-42c2-8cad-902dcace82a2": "m",
+    // Nico Schmolke
+    "f910ea81-7e8d-405d-b95d-250eb2e92799": "f"
+    // Madeleine Marondel (ehemals OBC, noch an Kandidaten)
+  };
+
+  // src/features/wa-templates/core.js
+  var TIME_ZONE = "Europe/Berlin";
+  var MODES = [
+    { value: "phone", label: "telefonisch" },
+    { value: "digital", label: "digital" },
+    { value: "onsite", label: "vor Ort" }
+  ];
+  var MODE_BY_INTERVIEW_TYPE = {
+    phone: "phone",
+    rescheduled_phone: "phone",
+    digital: "digital",
+    rescheduled_digital: "digital",
+    interview: "onsite",
+    rescheduled_interview: "onsite",
+    second_interview: "onsite",
+    rescheduled_second_interview: "onsite"
+  };
+  function modeForInterviewType(type) {
+    return MODE_BY_INTERVIEW_TYPE[String(type || "")] || "";
+  }
+  function berlinParts(date) {
+    const parts = new Intl.DateTimeFormat("de-DE", {
+      timeZone: TIME_ZONE,
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(date));
+    return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  }
+  function formatDay(date) {
+    const p = berlinParts(date);
+    return `${p.weekday.replace(/\.?$/, ".")}, ${p.day}.${p.month}.`;
+  }
+  function clock(hour, minute) {
+    return minute === "00" ? String(Number(hour)) : `${Number(hour)}:${minute}`;
+  }
+  function formatTime(date) {
+    const p = berlinParts(date);
+    return `${clock(p.hour, p.minute)} Uhr`;
+  }
+  function formatWindow(date) {
+    const start = berlinParts(date);
+    const end = berlinParts(new Date(new Date(date).getTime() + 60 * 60 * 1e3));
+    return `zw. ${clock(start.hour, start.minute)}-${clock(end.hour, end.minute)} Uhr`;
+  }
+  function berlinDayKey(date) {
+    const p = berlinParts(date);
+    return `${p.year}-${p.month}-${p.day}`;
+  }
+  function relativeDay(date, now = /* @__PURE__ */ new Date()) {
+    const key = berlinDayKey(date);
+    if (key === berlinDayKey(now)) return "heute";
+    if (key === berlinDayKey(new Date(new Date(now).getTime() + 24 * 60 * 60 * 1e3))) return "morgen";
+    return `am ${formatDay(date)}`;
+  }
+  var newestFirst = (a, b) => String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""));
+  function pickInterview(interviews, purpose) {
+    const list = (interviews || []).filter((item) => item && Array.isArray(item.dates) && item.dates.length).sort(newestFirst);
+    if (purpose === "suggestion") return list.find((item) => ["suggestion", "forwarded"].includes(item.status)) || null;
+    return list.find((item) => item.status === "confirmed") || list.find((item) => item.dates.length === 1 && !/declin|cancel/i.test(String(item.status || ""))) || null;
+  }
+  function pickContact(contacts) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const contact of (contacts || []).filter((item) => item?.id)) {
+      const key = contactName(contact).toLowerCase() || contact.id;
+      const known = byName.get(key);
+      if (!known || !known.phoneNumbers?.length && contact.phoneNumbers?.length || !known.isMain && contact.isMain) byName.set(key, contact);
+    }
+    const list = [...byName.values()];
+    if (list.length === 1) return list[0];
+    const main = list.filter((contact) => contact.isMain);
+    return main.length === 1 ? main[0] : null;
+  }
+  function contactName(contact) {
+    return [contact?.name, contact?.surname].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  }
+  function cleanAddress(value) {
+    return String(value || "").replace(/,\s*(Deutschland|Germany)\s*$/i, "").trim();
+  }
+  function pickAddress({ interview, interviewLocations, employerLocations }) {
+    const fromInterview = cleanAddress(interview?.location);
+    if (/\d/.test(fromInterview)) return fromInterview;
+    const fallback = [...interviewLocations || [], ...employerLocations || []].find((location2) => location2?.name);
+    return cleanAddress(fallback?.name);
+  }
+  function pickRegion({ jobLocation, employerLocations }) {
+    const location2 = jobLocation?.postalCode || jobLocation?.city ? jobLocation : (employerLocations || []).find((item) => item?.postalCode || item?.city);
+    return [location2?.postalCode, location2?.city].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  }
+  function cleanJobTitle(title) {
+    return String(title || "").replace(/\s*\((?:m|w|d|f|x|i)(?:\s*\/\s*(?:m|w|d|f|x|i))+\)/gi, "").replace(/\s{2,}/g, " ").trim();
+  }
+  function jobLink(jobPositionId) {
+    return jobPositionId ? `https://werkia.de/bewerben/${jobPositionId}` : "";
+  }
+  function genderOf(employee) {
+    return EMPLOYEE_GENDER[String(employee?.id || "").toLowerCase()] || "";
+  }
+  var TEMPLATES = [
+    { id: "vta", scope: "match", label: "1. WA mit Terminvorschlägen (VTA)", needs: ["mode"], interview: "suggestion" },
+    { id: "tb", scope: "match", label: "Terminbestätigung", needs: ["mode", "contact"], interview: "confirmed" },
+    { id: "te", scope: "match", label: "Termin-Erinnerung (Vortag)", needs: ["mode"], interview: "confirmed" },
+    { id: "fbvt", scope: "match", label: "Feedback zum Termin", needs: [], interview: "confirmed" },
+    { id: "ul", scope: "candidate", label: "1. WA Unterlagen (UL)", needs: [] },
+    { id: "krm", scope: "candidate", label: "Nicht erreicht, Prozesse beenden", needs: [] },
+    { id: "out", scope: "candidate", label: "Hat selbst neue Stelle", needs: [] },
+    { id: "google", scope: "candidate", label: "Google-Bewertung", needs: [] }
+  ];
+  var GOOGLE_REVIEW_LINK = "https://maps.app.goo.gl/LxBtymnTfbt6BP3F7?g_st=iw";
+  function introLines(ctx, slot) {
+    const cemGender = genderOf(ctx.cem);
+    const obcGender = genderOf(ctx.obc);
+    const emoji = cemGender === "f" ? "👩🏼‍🔧" : cemGender === "m" ? "👨🏼‍🔧" : "🧑🏼‍🔧";
+    const partner = cemGender === "f" ? "Ansprechpartnerin" : cemGender === "m" ? "Ansprechpartner" : slot("Ansprechpartnerin/Ansprechpartner", "");
+    const colleague = obcGender === "f" ? "meiner Kollegin" : obcGender === "m" ? "meinem Kollegen" : slot("meinem Kollegen/meiner Kollegin", "");
+    return [
+      `Hallo ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+      "",
+      `ich bin ${slot("Vorname CEM", ctx.cem?.firstName)} von werkia.de ${emoji}`,
+      "",
+      `Ab heute bin ich Deine persönliche ${partner} für die Jobsuche und versorge Dich mit neuen Stellen und Terminvorschlägen. 😊`,
+      "",
+      `Du hattest bereits Kontakt mit ${colleague} ${slot("Vorname OBC", ctx.obc?.firstName)}. Daher liegen mir Deine wichtigsten Suchkriterien bereits vor. 🫱🏻‍🫲🏻`
+    ];
+  }
+  var MODE_ADJECTIVE = { phone: "telefonisch", digital: "digital", onsite: "vor Ort" };
+  var BUILDERS = {
+    ul: (ctx, slot) => [
+      ...introLines(ctx, slot),
+      "",
+      `Es wäre toll, wenn Du mir einmal Deine Unterlagen (Lebenslauf, Gesellenbrief, Arbeitszeugnisse, …) hier per WA oder per Email an ${slot("E-Mail CEM", ctx.cem?.email)} senden könntest.`,
+      "Ich melde mich zeitnah mit Stellenangeboten und Terminanfragen bei Dir.",
+      "",
+      "Beste Grüße",
+      slot("Vorname CEM", ctx.cem?.firstName)
+    ],
+    vta: (ctx, slot) => {
+      const dates = [...ctx.interview?.dates || []].sort();
+      const several = dates.length > 1;
+      return [
+        ...introLines(ctx, slot),
+        "",
+        `Gute Neuigkeiten, folgender Betrieb möchte Dich gerne *${slot("telefonisch/digital/vor Ort", MODE_ADJECTIVE[ctx.mode])}* kennenlernen:`,
+        "",
+        `📍 ${slot("Arbeitgeber", ctx.employerName)}`,
+        `🏡 Raum ${slot("PLZ Ort", ctx.region)}`,
+        `🛠️ ${slot("Jobtitel", ctx.jobTitle)}`,
+        `🛜 ${slot("Link zur Stelle", ctx.jobLink)}`,
+        "",
+        `📆 *${several ? "Terminvorschläge" : "Terminvorschlag"}*:`,
+        ...dates.length ? dates.map((date) => `# ${formatDay(date)} ${formatWindow(date)}`) : [`# ${slot("Terminvorschlag", "")}`],
+        "",
+        `Kannst und möchtest Du ${several ? "einen der Termine" : "diesen Termin"} wahrnehmen?`
+      ];
+    },
+    tb: (ctx, slot) => {
+      const date = ctx.interview?.dates?.[0];
+      const closing = {
+        phone: () => "Das Erstgespräch findet *telefonisch* statt und dauert in der Regel 20min. 🙂",
+        digital: () => "Das Erstgespräch findet *digital* über Microsoft Teams statt. Bitte klicke schon 5min vorher auf den Link (folgt). 🙂",
+        onsite: () => `Das Erstgespräch findet *vor Ort* statt. Du fährst ca. ${slot("Fahrzeit", ctx.commuteMinutes ? String(ctx.commuteMinutes) : "")}min mit Auto dorthin 🙂`
+      }[ctx.mode]?.() || slot("Gesprächsart wählen", "");
+      return [
+        "*Terminbestätigung*",
+        "",
+        `📍 ${slot("Arbeitgeber", ctx.employerName)}`,
+        `👤 ${slot("Ansprechpartner", contactName(ctx.contact))}`,
+        `📞 ${slot("Telefon Ansprechpartner", ctx.contact?.phoneNumbers?.[0])}`,
+        `🏡 ${slot("Adresse", ctx.address)}`,
+        `🛠️ ${slot("Jobtitel", ctx.jobTitle)}`,
+        `🛜 ${slot("Link zur Stelle", ctx.jobLink)}`,
+        "",
+        `📆 *${date ? `${formatDay(date)} um ${formatTime(date)}` : slot("Termin", "")}*`,
+        "",
+        closing
+      ];
+    },
+    te: (ctx, slot) => {
+      const date = ctx.interview?.dates?.[0];
+      const when = date ? relativeDay(date, ctx.now) : slot("morgen", "");
+      const time = date ? formatTime(date) : slot("Uhrzeit", "");
+      const employer = slot("Arbeitgeber", ctx.employerName);
+      const sign = `LG ${slot("Vorname CEM", ctx.cem?.firstName)}`;
+      if (ctx.mode === "onsite") return [
+        `Hi ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+        `für Deinen vor Ort Termin ${when} bei ${employer} um ${time} wünsche ich Dir viel Erfolg 🍀 Bring gerne Deine Unterlagen zum Gespräch mit.`,
+        "Falls Du Dich verspäten solltest, melde Dich bitte schnellstmöglich bei Deinem Ansprechpartner.",
+        "",
+        "Freue mich danach auf Dein Feedback. 🙂",
+        "",
+        sign
+      ];
+      if (ctx.mode === "digital") return [
+        `Hi ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+        `für Deinen digitalen Termin ${when} mit ${employer} um ${time} wünsche ich Dir viel Erfolg 🍀`,
+        "Bitte teste den Link zum Gespräch heute schonmal und logge Dich morgen 5-10min vor dem Gespräch ein.",
+        "",
+        "Freue mich danach auf Dein Feedback. 🙂",
+        "",
+        sign
+      ];
+      return [
+        `Hi ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+        "",
+        `für Deinen ${ctx.mode === "phone" ? "Telefontermin" : slot("Telefontermin/Termin", "")} ${when} bei ${employer} um ${time} wünsche ich Dir viel Erfolg 🍀`,
+        "",
+        "Bitte stell sicher, dass Du erreichbar bist und rufe ggf. zurück.",
+        "",
+        "Freue mich danach auf Dein Feedback. 🙂",
+        "",
+        sign
+      ];
+    },
+    fbvt: (ctx, slot) => {
+      const date = ctx.interview?.dates?.[0];
+      return [
+        `Hey ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+        "",
+        `wollte mal fragen wie Dein Termin ${date ? relativeDay(date, ctx.now) : "heute"} mit ${slot("Arbeitgeber", ctx.employerName)} gelaufen ist 😃`,
+        "",
+        "Hat das alles geklappt? Wie seid ihr verblieben? Soll es einen weiteren Termin geben?",
+        "",
+        "Freue mich auf Dein Feedback!",
+        "",
+        `LG ${slot("Vorname CEM", ctx.cem?.firstName)}`
+      ];
+    },
+    krm: (ctx, slot) => [
+      `Hallo ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+      "",
+      "ich hoffe Dir geht’s gut. 🤗",
+      "",
+      "Hab Dich leider die letzten Tage nicht erreichen können, daher gehe ich davon aus, dass Du aktuell nicht auf Jobsuche bist und vielleicht schon selbst etwas Neues gefunden hast. 🙂 Ich würde bei mir nun alle Deine laufenden Bewerbungsprozesse beenden.",
+      "",
+      "Falls Du in Zukunft nochmal auf Jobsuche sein solltest, kannst Du Dich natürlich jederzeit bei mir melden 🙏🏻",
+      "",
+      "Hab einen schönen Tag.",
+      "",
+      `LG ${slot("Vorname CEM", ctx.cem?.firstName)}`
+    ],
+    out: (ctx, slot) => [
+      `Hallo ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+      "",
+      "vielen Dank für Deine Nachricht! Herzlichen Glückwunsch zur neuen Stelle 👏🏻 wann geht's los?😃",
+      "",
+      "Dann kann ich Dir nur anbieten, dass Du Dich natürlich jederzeit melden kannst, falls Du in Zukunft nochmal auf Jobsuche sein solltest 👍",
+      "",
+      "Hab eine schöne Woche.",
+      "",
+      `LG ${slot("Vorname CEM", ctx.cem?.firstName)}`
+    ],
+    google: (ctx, slot) => [
+      `Hallo ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+      "",
+      "für Deine neue Stelle wünsche ich Dir alles Gute.",
+      "",
+      "Wie eben besprochen freuen wir uns sehr über eine Google Bewertung, hier der Link dazu 😇",
+      "",
+      GOOGLE_REVIEW_LINK,
+      "",
+      "Vielen Dank im Voraus und hab eine schöne Woche!",
+      "",
+      `LG ${slot("Vorname CEM", ctx.cem?.firstName)}`
+    ]
+  };
+  function renderTemplate(templateId, ctx) {
+    const build = BUILDERS[templateId];
+    if (!build) throw new Error(`Unbekannte Vorlage: ${templateId}`);
+    const gaps = [];
+    const slot = (label2, value) => {
+      const text = String(value ?? "").trim();
+      if (text) return text;
+      if (!gaps.includes(label2)) gaps.push(label2);
+      return `[${label2}]`;
+    };
+    return { text: build(ctx, slot).join("\n"), gaps };
+  }
+  function remainingGaps(text, gaps) {
+    return (gaps || []).filter((label2) => String(text || "").includes(`[${label2}]`));
+  }
+
+  // src/features/wa-templates/data.js
+  var WA_MATCH_QUERY = `query Match($id: UUID!) {
+  data: Match(id: $id) {
+    id
+    candidate { id firstName obcEmployeeId __typename }
+    jobPosition {
+      id
+      mainTitle
+      location { postalCode city __typename }
+      employer { id name __typename }
+      __typename
+    }
+    interviews { id type status dates location createdAt __typename }
+    __typename
+  }
+  me: currentEmployee { id firstName lastName email __typename }
+}`;
+  var WA_CANDIDATE_QUERY = `query Candidate($id: UUID!) {
+  data: Candidate(id: $id) { id firstName obcEmployeeId __typename }
+  me: currentEmployee { id firstName lastName email __typename }
+}`;
+  var WA_EMPLOYEE_QUERY = `query allEmployees($ids: [UUID!]) {
+  items: allEmployees(filter: { ids: $ids }) { id firstName lastName __typename }
+}`;
+  var WA_EMPLOYER_QUERY = `query WaEmployer($employerId: UUID) {
+  contacts: allMatchContactPeople(filter: { employerId: $employerId }, perPage: 100) {
+    id name surname gender isMain phoneNumbers __typename
+  }
+  interviewLocations: allEmployerInterviewLocations(filter: { employerId: $employerId }, perPage: 20) {
+    id name postalCode city __typename
+  }
+  employerLocations: allEmployerLocations(filter: { employerId: $employerId }, perPage: 20) {
+    id name postalCode city __typename
+  }
+}`;
+  async function loadEmployee(request, id) {
+    if (!id) return null;
+    const result = await request(WA_EMPLOYEE_QUERY, { ids: [id] });
+    return (result?.items || []).find((item) => item?.id === id) || null;
+  }
+  async function loadCandidateContext(request, candidateId) {
+    const result = await request(WA_CANDIDATE_QUERY, { id: candidateId });
+    const candidate = result?.data;
+    if (!candidate?.id) throw new Error("Kandidat konnte nicht geladen werden.");
+    return {
+      candidateId: candidate.id,
+      candidateFirstName: candidate.firstName || "",
+      cem: result?.me || null,
+      obc: await loadEmployee(request, candidate.obcEmployeeId)
+    };
+  }
+  async function loadMatchContext(request, matchId) {
+    const result = await request(WA_MATCH_QUERY, { id: matchId });
+    const match = result?.data;
+    const jobPosition = match?.jobPosition;
+    const employer = jobPosition?.employer;
+    if (!match?.id || !match.candidate?.id || !jobPosition?.id || !employer?.id) throw new Error("Matchdaten konnten nicht vollständig geladen werden.");
+    const [employerData, obc] = await Promise.all([
+      request(WA_EMPLOYER_QUERY, { employerId: employer.id }),
+      loadEmployee(request, match.candidate.obcEmployeeId)
+    ]);
+    const employerLocations = employerData?.employerLocations || [];
+    return {
+      matchId: match.id,
+      candidateId: match.candidate.id,
+      candidateFirstName: match.candidate.firstName || "",
+      cem: result?.me || null,
+      obc,
+      employerName: employer.name || "",
+      jobTitle: cleanJobTitle(jobPosition.mainTitle),
+      jobLink: jobLink(jobPosition.id),
+      region: pickRegion({ jobLocation: jobPosition.location, employerLocations }),
+      interviews: match.interviews || [],
+      contacts: employerData?.contacts || [],
+      defaultContact: pickContact(employerData?.contacts),
+      interviewLocations: employerData?.interviewLocations || [],
+      employerLocations
+    };
+  }
+  function addressFor(context, interview) {
+    return pickAddress({ interview, interviewLocations: context.interviewLocations, employerLocations: context.employerLocations });
+  }
+
+  // src/features/wa-templates/index.js
+  var SOURCE_PATH = "cem/toolbox/src/features/wa-templates/index.js";
+  var ROUTE_RE = /#\/CEM\/(?:My(?:Cem)?Matches|MyCandidates)(?:[/?]|$)/i;
+  var ROW_SELECTOR5 = "tbody tr.RaDataTable-row";
+  var MATCH_ID_RE = /#\/Match\/([0-9a-f-]{36})/i;
+  var CANDIDATE_ID_RE = /#\/Candidate\/([0-9a-f-]{36})/i;
+  var BUTTON_CLASS = "werkia-wa-button";
+  var CELL_CLASS = "werkia-wa-cell";
+  var PANEL_WIDENED_ATTR = "data-werkia-wa-widened";
+  var IDS4 = { style: "werkia-wa-style", menu: "werkia-wa-menu", dialog: "werkia-wa-dialog", toast: "werkia-wa-toast" };
+  var CACHE_MS2 = 2 * 60 * 1e3;
+  var CSS = `
+  .${BUTTON_CLASS} { margin:4px 0 0 6px; min-height:30px; padding:5px 14px; border:1px solid #1f9a6b; border-radius:999px; background:#e6f7f0; color:#1f9a6b; cursor:pointer; font:700 13px/1 system-ui,-apple-system,"Segoe UI",sans-serif; vertical-align:middle; }
+  .${CELL_CLASS} .${BUTTON_CLASS} { margin:0; }
+  .${CELL_CLASS} { width:1%; white-space:nowrap; padding-left:4px !important; padding-right:4px !important; text-align:center; }
+  th.${CELL_CLASS} { font-weight:500; }
+  .${BUTTON_CLASS}:hover { background:#1f9a6b; color:#fff; }
+  #${IDS4.menu} { position:fixed; z-index:2147483640; min-width:320px; padding:8px; border:1px solid #e2e0e8; border-radius:16px; background:#fff; box-shadow:0 12px 32px rgba(28,26,34,.18); font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
+  #${IDS4.menu} .wa-group { padding:8px 12px 3px; color:#6b6775; font-size:11px; font-weight:650; letter-spacing:.02em; }
+  #${IDS4.menu} button { display:block; width:100%; padding:10px 12px; border:0; border-radius:10px; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
+  #${IDS4.menu} button:hover { background:#f1edff; color:#6d4aff; }
+  #${IDS4.dialog} { position:fixed; inset:0; z-index:2147483641; display:flex; align-items:center; justify-content:center; background:rgba(28,26,34,.55); font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
+  #${IDS4.dialog} .wa-card { width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 32px); display:flex; flex-direction:column; border-radius:20px; background:#f6f5f8; box-shadow:0 24px 64px rgba(28,26,34,.3); overflow:hidden; }
+  #${IDS4.dialog} .wa-head { display:flex; align-items:center; gap:8px; padding:12px 16px; background:#3a3548; color:#fff; }
+  #${IDS4.dialog} .wa-head h2 { flex:1; margin:0; font-size:18px; font-weight:650; }
+  #${IDS4.dialog} .wa-head .wa-sub { color:#cfcad9; font-size:13px; font-weight:500; }
+  #${IDS4.dialog} .wa-body { display:flex; flex-direction:column; gap:10px; padding:16px; overflow:auto; }
+  #${IDS4.dialog} label { display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:#6b6775; }
+  #${IDS4.dialog} select, #${IDS4.dialog} textarea { border:1px solid #e2e0e8; border-radius:10px; background:#fff; color:#1c1a22; font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; padding:8px 10px; }
+  #${IDS4.dialog} select:focus, #${IDS4.dialog} textarea:focus { outline:2px solid #b6a4ff; }
+  #${IDS4.dialog} textarea { min-height:440px; resize:vertical; }
+  #${IDS4.dialog} .wa-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; }
+  #${IDS4.dialog} .wa-gaps { padding:8px 10px; border-radius:10px; background:#fbf1de; color:#b17a12; font-size:13px; }
+  #${IDS4.dialog} .wa-error { padding:8px 10px; border-radius:10px; background:#fbe6e6; color:#c23f3f; font-size:12px; }
+  #${IDS4.dialog} .wa-loading { color:#6b6775; }
+  #${IDS4.dialog} .wa-foot { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid #e2e0e8; background:#fff; }
+  #${IDS4.dialog} .wa-foot button, #${IDS4.dialog} .wa-close { padding:9px 18px; border-radius:16px; font:600 14px system-ui,-apple-system,"Segoe UI",sans-serif; cursor:pointer; }
+  #${IDS4.dialog} .wa-primary { border:0; background:#6d4aff; color:#fff; }
+  #${IDS4.dialog} .wa-primary:hover { background:#5535d6; }
+  #${IDS4.dialog} .wa-primary:disabled { opacity:.6; cursor:wait; }
+  #${IDS4.dialog} .wa-neutral { border:1px solid #e2e0e8; background:transparent; color:#6b6775; }
+  #${IDS4.dialog} .wa-close { padding:2px 10px; border:1px solid rgba(255,255,255,.35); background:transparent; color:#fff; }
+  #${IDS4.toast} { position:fixed; left:50%; bottom:24px; z-index:2147483642; transform:translateX(-50%); max-width:min(480px,calc(100vw - 32px)); padding:10px 14px; border-radius:16px; background:#3a3548; color:#fff; box-shadow:0 12px 32px rgba(28,26,34,.3); font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  #${IDS4.toast} .wa-preview { margin-top:4px; color:#cfcad9; font-size:12px; white-space:pre-line; }
+`;
+  function executeWaTemplates(runtime) {
+    runtime.registerSource(SOURCE_PATH);
+    const cache = /* @__PURE__ */ new Map();
+    let syncTimer = null;
+    let toastTimer = null;
+    function ensureStyle() {
+      if (document.getElementById(IDS4.style)) return;
+      const style = document.createElement("style");
+      style.id = IDS4.style;
+      style.textContent = CSS;
+      document.head.appendChild(style);
+    }
+    function cached(key, load2) {
+      const entry = cache.get(key);
+      if (entry && entry.expiresAt > Date.now()) return entry.promise;
+      const promise = load2();
+      cache.set(key, { promise, expiresAt: Date.now() + CACHE_MS2 });
+      promise.catch(() => cache.delete(key));
+      return promise;
+    }
+    const request = (query, variables) => getCemGraphqlAdapter().request(query, variables);
+    const loadMatch = (matchId) => cached(`match:${matchId}`, () => loadMatchContext(request, matchId));
+    const loadCandidate = (candidateId) => cached(`candidate:${candidateId}`, () => loadCandidateContext(request, candidateId));
+    function addButton(row) {
+      if (row.querySelector("tr") || row.querySelector(`:scope > td .${BUTTON_CLASS}`)) return;
+      if (row.querySelector(`:scope > td.${CELL_CLASS}`)) return;
+      const cells = [...row.querySelectorAll(":scope > td")];
+      const matchLink = cells.map((cell) => cell.querySelector('a[href*="#/Match/"]')).find(Boolean);
+      const matchId = matchLink?.getAttribute("href")?.match(MATCH_ID_RE)?.[1];
+      let target = null;
+      if (matchId) target = { matchId, cell: matchLink.closest("td") };
+      else if (row.querySelector(":scope > td.column-status")) {
+        const candidateLink = cells.map((cell) => cell.querySelector('a[href*="#/Candidate/"]')).find(Boolean);
+        const candidateId = candidateLink?.getAttribute("href")?.match(CANDIDATE_ID_RE)?.[1];
+        if (candidateId) target = { candidateId, cell: candidateCell(row) };
+      }
+      if (!target?.cell) return;
+      const button2 = document.createElement("button");
+      button2.type = "button";
+      button2.className = BUTTON_CLASS;
+      button2.textContent = target.matchId ? "Match WA" : "WA";
+      button2.title = "WhatsApp-Vorlage ausfüllen und kopieren";
+      button2.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenu(button2, target);
+      });
+      target.cell.appendChild(button2);
+    }
+    function candidateCell(row) {
+      const contact = row.querySelector(":scope > td.column-lastName");
+      if (!contact) return row.querySelector(":scope > td.column-candidateActions") || null;
+      const cell = document.createElement("td");
+      cell.className = `${CELL_CLASS} MuiTableCell-root MuiTableCell-body MuiTableCell-sizeSmall`;
+      contact.after(cell);
+      addHeaderCell(row.closest("table"));
+      return cell;
+    }
+    function addHeaderCell(table) {
+      const contactHead = table?.querySelector(":scope > thead th.column-lastName");
+      if (!contactHead || contactHead.nextElementSibling?.classList.contains(CELL_CLASS)) return;
+      const head = document.createElement("th");
+      head.className = `${CELL_CLASS} MuiTableCell-root MuiTableCell-head MuiTableCell-sizeSmall`;
+      head.textContent = "WA";
+      contactHead.after(head);
+    }
+    function widenExpandedPanels() {
+      document.querySelectorAll(`th.${CELL_CLASS}`).forEach((head) => {
+        head.closest("table")?.querySelectorAll(":scope > tbody > tr > td[colspan]").forEach((cell) => {
+          if (cell.hasAttribute(PANEL_WIDENED_ATTR)) return;
+          cell.setAttribute(PANEL_WIDENED_ATTR, cell.colSpan);
+          cell.colSpan += 1;
+        });
+      });
+    }
+    function removeAll() {
+      document.querySelectorAll(`.${CELL_CLASS}`).forEach((element2) => element2.remove());
+      document.querySelectorAll(`[${PANEL_WIDENED_ATTR}]`).forEach((cell) => {
+        cell.colSpan = Number(cell.getAttribute(PANEL_WIDENED_ATTR)) || cell.colSpan;
+        cell.removeAttribute(PANEL_WIDENED_ATTR);
+      });
+      document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((element2) => element2.remove());
+      closeMenu();
+    }
+    function sync() {
+      if (!ROUTE_RE.test(location.hash)) {
+        removeAll();
+        return;
+      }
+      ensureStyle();
+      document.querySelectorAll(ROW_SELECTOR5).forEach(addButton);
+      widenExpandedPanels();
+    }
+    function scheduleSync() {
+      if (syncTimer !== null) return;
+      syncTimer = runtime.setTimeout(() => {
+        syncTimer = null;
+        sync();
+      }, 150);
+    }
+    function closeMenu() {
+      document.getElementById(IDS4.menu)?.remove();
+    }
+    function openMenu(button2, target) {
+      closeMenu();
+      const menu = document.createElement("div");
+      menu.id = IDS4.menu;
+      const groups = target.matchId ? [["Match", "match"], ["Kandidat", "candidate"]] : [["Kandidat", "candidate"]];
+      for (const [title, scope] of groups) {
+        const heading = document.createElement("div");
+        heading.className = "wa-group";
+        heading.textContent = title;
+        menu.appendChild(heading);
+        for (const template of TEMPLATES.filter((item) => item.scope === scope)) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.textContent = template.label;
+          item.addEventListener("click", () => {
+            closeMenu();
+            openDialog(template, target);
+          });
+          menu.appendChild(item);
+        }
+      }
+      document.body.appendChild(menu);
+      const rect = button2.getBoundingClientRect();
+      const top = Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8);
+      const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
+      Object.assign(menu.style, { top: `${Math.max(8, top)}px`, left: `${Math.max(8, left)}px` });
+    }
+    function onDocumentClick(event) {
+      const menu = document.getElementById(IDS4.menu);
+      if (menu && !menu.contains(event.target)) closeMenu();
+    }
+    function element(tag, props = {}, children = []) {
+      const node = document.createElement(tag);
+      Object.assign(node, props);
+      children.forEach((child) => node.append(child));
+      return node;
+    }
+    function closeDialog() {
+      document.getElementById(IDS4.dialog)?.remove();
+      document.removeEventListener("keydown", onDialogKey, true);
+    }
+    function onDialogKey(event) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        closeDialog();
+      }
+    }
+    async function commuteMinutes(candidateId, address) {
+      if (!address) return 0;
+      try {
+        const candidateLocation = await getCemGraphqlAdapter().commuteProvider.loadCandidateLocation(candidateId);
+        if (!candidateLocation) return 0;
+        const route = await getRoute(candidateLocation, { address });
+        const seconds = Number(route?.fastestDurationSeconds);
+        return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds / 60) : 0;
+      } catch (error) {
+        console.warn("[Werkia WA] Fahrzeit nicht berechenbar:", error);
+        return 0;
+      }
+    }
+    async function openDialog(template, target) {
+      closeDialog();
+      const subtitle = element("div", { className: "wa-sub", textContent: "lädt …" });
+      const closeButton = element("button", { type: "button", className: "wa-close", textContent: "✕", title: "Schließen (Esc)" });
+      const head = element("div", { className: "wa-head" }, [element("div", { style: "flex:1" }, [element("h2", { textContent: template.label }), subtitle])]);
+      const tip = cemHelp.tip("wa-templates", { tone: "dark" });
+      if (tip) head.append(tip);
+      head.append(closeButton);
+      const body = element("div", { className: "wa-body" }, [element("div", { className: "wa-loading", textContent: "Daten werden geladen …" })]);
+      const copyButton = element("button", { type: "button", className: "wa-primary", textContent: "Kopieren", disabled: true });
+      const cancelButton = element("button", { type: "button", className: "wa-neutral", textContent: "Abbrechen" });
+      const card = element("div", { className: "wa-card" }, [head, body, element("div", { className: "wa-foot" }, [cancelButton, copyButton])]);
+      const overlay = element("div", { id: IDS4.dialog }, [card]);
+      overlay.addEventListener("mousedown", (event) => {
+        if (event.target === overlay) closeDialog();
+      });
+      closeButton.addEventListener("click", closeDialog);
+      cancelButton.addEventListener("click", closeDialog);
+      document.addEventListener("keydown", onDialogKey, true);
+      document.body.appendChild(overlay);
+      let context;
+      try {
+        context = target.matchId ? await loadMatch(target.matchId) : await loadCandidate(target.candidateId);
+      } catch (error) {
+        body.replaceChildren(element("div", { className: "wa-error", textContent: `Daten konnten nicht geladen werden: ${error?.message || error}` }));
+        subtitle.textContent = "";
+        return;
+      }
+      if (!document.body.contains(overlay)) return;
+      const interview = template.interview ? pickInterview(context.interviews, template.interview) : null;
+      subtitle.textContent = [context.candidateFirstName, context.employerName].filter(Boolean).join(" · ");
+      const state = { mode: modeForInterviewType(interview?.type), contact: context.defaultContact || null, commuteMinutes: 0, dirty: false, gaps: [] };
+      const controls = element("div", { className: "wa-row" });
+      let modeSelect = null;
+      if (template.needs.includes("mode")) {
+        modeSelect = element("select");
+        modeSelect.append(element("option", { value: "", textContent: "– wählen –" }));
+        MODES.forEach((mode) => modeSelect.append(element("option", { value: mode.value, textContent: mode.label })));
+        modeSelect.value = state.mode;
+        controls.append(element("label", { textContent: "Gesprächsart" }, [modeSelect]));
+      }
+      let contactSelect = null;
+      if (template.needs.includes("contact")) {
+        contactSelect = element("select");
+        contactSelect.append(element("option", { value: "", textContent: context.contacts.length ? "– wählen –" : "kein Ansprechpartner im AP" }));
+        context.contacts.forEach((contact) => contactSelect.append(element("option", {
+          value: contact.id,
+          textContent: [contactName(contact) || "ohne Namen", contact.isMain ? "(Haupt-AP)" : "", contact.phoneNumbers?.length ? "" : "· ohne Telefon"].filter(Boolean).join(" ")
+        })));
+        contactSelect.value = state.contact?.id || "";
+        controls.append(element("label", { textContent: "Ansprechpartner" }, [contactSelect]));
+      }
+      const gapsBox = element("div", { className: "wa-gaps", hidden: true });
+      const textarea = element("textarea", { spellcheck: true });
+      body.replaceChildren(...controls.childElementCount ? [controls] : [], gapsBox, element("label", { textContent: "Nachricht (für diese Nachricht frei bearbeitbar)" }, [textarea]));
+      const showGaps = () => {
+        const open = remainingGaps(textarea.value, state.gaps);
+        gapsBox.hidden = !open.length;
+        gapsBox.textContent = open.length ? `Nicht im Adminpanel gefunden, bitte im Text ergänzen: ${open.join(", ")}` : "";
+      };
+      const render = () => {
+        const result = renderTemplate(template.id, {
+          ...context,
+          interview,
+          mode: state.mode,
+          contact: state.contact,
+          address: addressFor(context, interview),
+          commuteMinutes: state.commuteMinutes,
+          now: /* @__PURE__ */ new Date()
+        });
+        state.gaps = result.gaps;
+        textarea.value = result.text;
+        state.dirty = false;
+        showGaps();
+      };
+      const refreshCommute = async () => {
+        if (template.id !== "tb" || state.mode !== "onsite" || state.commuteMinutes) return;
+        const minutes = await commuteMinutes(context.candidateId, addressFor(context, interview));
+        if (!minutes || !document.body.contains(overlay)) return;
+        state.commuteMinutes = minutes;
+        if (state.dirty) textarea.value = textarea.value.replace("[Fahrzeit]", String(minutes));
+        else render();
+        showGaps();
+      };
+      const rerender = () => {
+        if (state.dirty && !window.confirm("Die Nachricht wurde bearbeitet. Neu ausfüllen und die Änderungen verwerfen?")) return false;
+        render();
+        refreshCommute();
+        return true;
+      };
+      modeSelect?.addEventListener("change", () => {
+        const previous = state.mode;
+        state.mode = modeSelect.value;
+        if (!rerender()) {
+          state.mode = previous;
+          modeSelect.value = previous;
+        }
+      });
+      contactSelect?.addEventListener("change", () => {
+        const previous = state.contact;
+        state.contact = context.contacts.find((contact) => contact.id === contactSelect.value) || null;
+        if (!rerender()) {
+          state.contact = previous;
+          contactSelect.value = previous?.id || "";
+        }
+      });
+      textarea.addEventListener("input", () => {
+        state.dirty = true;
+        showGaps();
+      });
+      copyButton.addEventListener("click", async () => {
+        const text = textarea.value;
+        const open = remainingGaps(text, state.gaps);
+        if (open.length && !window.confirm(`Im Text fehlen noch: ${open.join(", ")}.
+Trotzdem kopieren?`)) return;
+        copyButton.disabled = true;
+        await copyText(text);
+        closeDialog();
+        showToast(template, context, text);
+      });
+      render();
+      copyButton.disabled = false;
+      textarea.focus();
+      textarea.setSelectionRange(0, 0);
+      refreshCommute();
+    }
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const helper = document.createElement("textarea");
+        helper.value = text;
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        helper.remove();
+      }
+    }
+    function showToast(template, context, text) {
+      document.getElementById(IDS4.toast)?.remove();
+      if (toastTimer !== null) runtime.clearTimeout(toastTimer);
+      const preview = text.split("\n").filter((line) => line.trim()).slice(0, 2).join("\n");
+      const toast = element("div", { id: IDS4.toast }, [
+        element("div", { textContent: `✓ Kopiert: ${template.label}${context.candidateFirstName ? ` für ${context.candidateFirstName}` : ""}` }),
+        element("div", { className: "wa-preview", textContent: preview })
+      ]);
+      document.body.appendChild(toast);
+      toastTimer = runtime.setTimeout(() => {
+        toastTimer = null;
+        toast.remove();
+      }, 5e3);
+    }
+    runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
+    runtime.addWindowListener("hashchange", scheduleSync);
+    document.addEventListener("mousedown", onDocumentClick, true);
+    runtime.addCleanup?.(() => {
+      if (syncTimer !== null) runtime.clearTimeout(syncTimer);
+      if (toastTimer !== null) runtime.clearTimeout(toastTimer);
+      document.removeEventListener("mousedown", onDocumentClick, true);
+      removeAll();
+      closeDialog();
+      document.getElementById(IDS4.toast)?.remove();
+      document.getElementById(IDS4.style)?.remove();
+    });
+    scheduleSync();
+  }
+
   // src/main.js
   initCemGraphqlAdapter();
   bootstrapToolbox({ label: "CEM", marker: "data-werkia-cem-toolbox-loaded" }, [
@@ -8074,6 +8877,7 @@
     // element has to be inserted after theirs so a No-Go warning is not
     // overpainted by a less severe highlight.
     { id: "no-go-check", execute: executeNoGoCheck2 },
-    { id: "appointment-prio", execute: executeAppointmentPrio2 }
+    { id: "appointment-prio", execute: executeAppointmentPrio2 },
+    { id: "wa-templates", execute: executeWaTemplates }
   ]);
 })();
