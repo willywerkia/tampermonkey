@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KAM Toolbox
 // @namespace    https://werkia.de/kam-toolbox
-// @version      1.7.131
+// @version      1.7.133
 // @description  Vereint die KAM Suite und dringende Vakanzen fuer KAM.
 // @match        https://admin.werkia.de/*
 // @match        https://staging-admin.werkia.de/*
@@ -2166,7 +2166,7 @@
         "VTV nimmt den spätesten Termin aus der Zeile.",
         "„Dringend“ schreibt den Befehl in #dringende_vakanzen. Der Bot setzt innerhalb einer Minute den Tag [dringende Suche] und fragt nach 14 Tagen nach, ob die Suche noch dringend ist. Nur veröffentlichte Vakanzen können dringend werden.",
         "Rot umrandet: nicht dringend. Rot mit Haken: dringend, ein Klick beendet die dringende Suche nach einer Rückfrage. Gelb: angefragt, der Bot hat noch nicht bestätigt.",
-        "„Push“ postet eine Push Request an @push in #push-requests. Danach steht „Push ✓“ am Knopf, ein zweiter Versand braucht deine Bestätigung."
+        "„Push“ postet eine Push Request in #push-requests. Der Push-Bot pusht sie innerhalb von ein, zwei Minuten und antwortet im Thread. Danach steht „Push ✓“ am Knopf, ein zweiter Versand braucht deine Bestätigung."
       ]
     },
     {
