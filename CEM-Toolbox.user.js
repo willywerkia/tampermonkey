@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.136
+// @version      1.9.137
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2377,7 +2377,9 @@
         "Terminvorschläge erscheinen mit Datum und Uhrzeit wie im Adminpanel, z. B. „Do., 08.10. um 16 Uhr“.",
         "Unterschrift und E-Mail kommen vom angemeldeten Adminpanel-Nutzer.",
         "Bei der VT Bestätigung vor Ort wird die Fahrzeit vom Kandidaten zur Terminadresse nachgeladen.",
-        "Es wird nichts gespeichert und nichts im Adminpanel geändert. Gesendet wird nur, was du selbst in WhatsApp einfügst."
+        "Eigene Vorlagen: im WA-Menü „+ Neue Vorlage …“. Name, „Kandidat“ oder „Match“ wählen und Text schreiben; Platzhalter wie {Vorname Kandidat} oder {Arbeitgeber} per Klick einfügen, sie werden beim Verwenden gefüllt. Danach stehen sie unter „Meine Vorlagen“.",
+        "Eigene Vorlagen liegen nur in deinem Browser. „Vorlagen verwalten …“ zum Bearbeiten, Löschen und für Export/Import beim PC-Wechsel.",
+        "Im Adminpanel wird nichts geändert. Gesendet wird nur, was du selbst in WhatsApp einfügst."
       ]
     },
     {
@@ -6928,13 +6930,13 @@
     const kit = createBulkDialogKit({ ids: IDS2, buttonIds: [IDS2.wvlButton, IDS2.statusButton], stopNoun: "Kandidat" });
     const { setStatus } = kit;
     const tip = (id) => cemHelp.tipHtml(id, { tone: "dark" });
-    const normalize4 = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const normalize5 = (value) => String(value || "").replace(/\s+/g, " ").trim();
     function getCandidates() {
       const seen = /* @__PURE__ */ new Set();
       return [...document.querySelectorAll(ROW_SELECTOR3)].filter((row) => row.querySelector(":scope > td.column-status") && row.querySelector(":scope > td.column-followUpDate")).map((row) => {
         const link = row.querySelector(`:scope > td ${CANDIDATE_LINK_SELECTOR2}`);
         const id = candidateIdFromHref(link?.getAttribute("href") || link?.href);
-        return id ? { id, name: normalize4(link.textContent) || id } : null;
+        return id ? { id, name: normalize5(link.textContent) || id } : null;
       }).filter((candidate) => candidate && !seen.has(candidate.id) && seen.add(candidate.id));
     }
     function candidateChecklist(candidates) {
@@ -8170,13 +8172,13 @@
     return list.find((item) => item.status === "confirmed") || list.find((item) => item.dates.length === 1 && !/declin|cancel/i.test(String(item.status || ""))) || null;
   }
   function pickContact(contacts) {
-    const byName = /* @__PURE__ */ new Map();
+    const byName2 = /* @__PURE__ */ new Map();
     for (const contact of (contacts || []).filter((item) => item?.id)) {
       const key = contactName(contact).toLowerCase() || contact.id;
-      const known = byName.get(key);
-      if (!known || !known.phoneNumbers?.length && contact.phoneNumbers?.length || !known.isMain && contact.isMain) byName.set(key, contact);
+      const known = byName2.get(key);
+      if (!known || !known.phoneNumbers?.length && contact.phoneNumbers?.length || !known.isMain && contact.isMain) byName2.set(key, contact);
     }
-    const list = [...byName.values()];
+    const list = [...byName2.values()];
     if (list.length === 1) return list[0];
     const main = list.filter((contact) => contact.isMain);
     return main.length === 1 ? main[0] : null;
@@ -8504,6 +8506,138 @@
     return pickAddress({ interview, interviewLocations: context.interviewLocations, employerLocations: context.employerLocations });
   }
 
+  // src/features/wa-templates/custom-templates.js
+  var STORAGE_KEY2 = "werkia_cem_wa_custom_templates_v1";
+  var STORE_VERSION2 = 1;
+  var SCOPES = [
+    { value: "candidate", label: "Kandidat (überall)" },
+    { value: "match", label: "Match (nur in Match-Zeilen)" }
+  ];
+  var PLACEHOLDERS = [
+    { key: "Vorname Kandidat", scope: "candidate", value: (ctx) => ctx.candidateFirstName },
+    { key: "Mein Vorname", scope: "candidate", value: (ctx) => ctx.cem?.firstName },
+    { key: "Meine E-Mail", scope: "candidate", value: (ctx) => ctx.cem?.email },
+    { key: "Vorname OBC", scope: "candidate", value: (ctx) => ctx.obc?.firstName },
+    { key: "Arbeitgeber", scope: "match", value: (ctx) => ctx.employerName },
+    { key: "Jobtitel", scope: "match", value: (ctx) => ctx.jobTitle },
+    { key: "Link zur Stelle", scope: "match", value: (ctx) => ctx.jobLink },
+    { key: "Raum", scope: "match", value: (ctx) => ctx.region },
+    { key: "Adresse", scope: "match", value: (ctx) => ctx.address },
+    { key: "Gesprächsart", scope: "match", value: (ctx) => MODE_ADJECTIVE[ctx.mode] },
+    { key: "Termin", scope: "match", value: (ctx) => ctx.interview?.dates?.[0] ? `${formatDay(ctx.interview.dates[0])} um ${formatTime(ctx.interview.dates[0])}` : "" },
+    { key: "Termin Tag", scope: "match", value: (ctx) => ctx.interview?.dates?.[0] ? relativeDay(ctx.interview.dates[0], ctx.now) : "" },
+    { key: "Terminvorschläge", scope: "match", value: (ctx) => [...ctx.suggestion?.dates || []].sort().map((date) => `# ${formatDay(date)} um ${formatTime(date)}`).join("\n") },
+    { key: "Ansprechpartner", scope: "match", value: (ctx) => contactName(ctx.contact) },
+    { key: "Telefon Ansprechpartner", scope: "match", value: (ctx) => ctx.contact?.phoneNumbers?.[0] }
+  ];
+  var PLACEHOLDER_BY_KEY = new Map(PLACEHOLDERS.map((item) => [item.key.toLowerCase(), item]));
+  var PLACEHOLDER_RE = /\{([^{}\n]{1,40})\}/g;
+  function placeholdersFor(scope) {
+    return PLACEHOLDERS.filter((item) => scope === "match" || item.scope === "candidate");
+  }
+  function usedPlaceholders(text) {
+    const keys = /* @__PURE__ */ new Set();
+    for (const [, raw] of String(text || "").matchAll(PLACEHOLDER_RE)) {
+      const item = PLACEHOLDER_BY_KEY.get(raw.trim().toLowerCase());
+      if (item) keys.add(item.key);
+    }
+    return [...keys];
+  }
+  function matchOnlyPlaceholders(text) {
+    return usedPlaceholders(text).filter((key) => PLACEHOLDER_BY_KEY.get(key.toLowerCase()).scope === "match");
+  }
+  function needsFor(text) {
+    const used = new Set(usedPlaceholders(text));
+    const needs = [];
+    if (used.has("Gesprächsart")) needs.push("mode");
+    if (used.has("Ansprechpartner") || used.has("Telefon Ansprechpartner")) needs.push("contact");
+    return needs;
+  }
+  function renderCustom(text, ctx) {
+    const gaps = [];
+    const filled = String(text || "").replace(PLACEHOLDER_RE, (whole, raw) => {
+      const item = PLACEHOLDER_BY_KEY.get(raw.trim().toLowerCase());
+      if (!item) return whole;
+      const value = String(item.value(ctx) ?? "").trim();
+      if (value) return value;
+      if (!gaps.includes(item.key)) gaps.push(item.key);
+      return `[${item.key}]`;
+    });
+    return { text: filled, gaps };
+  }
+  function createTemplateId(now = Date.now(), entropy = Math.random()) {
+    return `own-${now.toString(36)}-${Math.floor(entropy * 1e8).toString(36)}`;
+  }
+  function normalize4(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    const name = String(entry.name || "").trim();
+    const text = String(entry.text || "");
+    if (!name || !text.trim()) return null;
+    return {
+      id: String(entry.id || createTemplateId()),
+      name: name.slice(0, 80),
+      scope: entry.scope === "match" ? "match" : "candidate",
+      text
+    };
+  }
+  function parseStore2(raw) {
+    let parsed = raw;
+    if (typeof raw === "string") {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
+    }
+    const list = Array.isArray(parsed?.templates) ? parsed.templates : [];
+    return { version: STORE_VERSION2, templates: list.map(normalize4).filter(Boolean) };
+  }
+  var byName = (a, b) => a.name.localeCompare(b.name, "de");
+  function upsertTemplate(store, template) {
+    const clean3 = normalize4(template);
+    if (!clean3) throw new Error("Name und Text dürfen nicht leer sein.");
+    const kept = (store?.templates || []).filter((entry) => entry.id !== clean3.id);
+    return { version: STORE_VERSION2, templates: [...kept, clean3].sort(byName) };
+  }
+  function removeTemplate(store, id) {
+    return { version: STORE_VERSION2, templates: (store?.templates || []).filter((entry) => entry.id !== id) };
+  }
+  function findNameClash(store, name, ownId = "") {
+    const wanted = String(name || "").trim().toLowerCase();
+    return (store?.templates || []).find((entry) => entry.id !== ownId && entry.name.toLowerCase() === wanted) || null;
+  }
+  function mergeStores2(base, incoming) {
+    let result = parseStore2(base);
+    for (const template of parseStore2(incoming).templates) {
+      const existing = findNameClash(result, template.name);
+      result = upsertTemplate(result, { ...template, id: existing?.id || template.id });
+    }
+    return result;
+  }
+  function createTemplateStorage({ read, write, backupRead, backupWrite }) {
+    const safe = (fn) => {
+      try {
+        return fn();
+      } catch {
+        return null;
+      }
+    };
+    return {
+      load() {
+        const primary = parseStore2(safe(read));
+        if (primary.templates.length) return primary;
+        const backup = parseStore2(safe(backupRead));
+        if (backup.templates.length) safe(() => write(JSON.stringify(backup)));
+        return backup;
+      },
+      save(store) {
+        const serialized = JSON.stringify(parseStore2(store));
+        safe(() => write(serialized));
+        safe(() => backupWrite(serialized));
+      }
+    };
+  }
+
   // src/features/wa-templates/index.js
   var SOURCE_PATH = "cem/toolbox/src/features/wa-templates/index.js";
   var ROUTE_RE = /#\/CEM\/(?:My(?:Cem)?Matches|MyCandidates)(?:[/?]|$)/i;
@@ -8546,6 +8680,22 @@
   #${IDS4.dialog} .wa-primary:disabled { opacity:.6; cursor:wait; }
   #${IDS4.dialog} .wa-neutral { border:1px solid #e2e0e8; background:transparent; color:#6b6775; }
   #${IDS4.dialog} .wa-close { padding:2px 10px; border:1px solid rgba(255,255,255,.35); background:transparent; color:#fff; }
+  #${IDS4.menu} .wa-hint { padding:4px 12px 6px; color:#6b6775; font-size:12px; }
+  #${IDS4.menu} button.wa-action { color:#6d4aff; font-weight:600; }
+  #${IDS4.menu} .wa-sep { height:1px; margin:6px 4px; background:#e2e0e8; }
+  #${IDS4.dialog} input[type=text] { border:1px solid #e2e0e8; border-radius:10px; background:#fff; color:#1c1a22; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; padding:8px 10px; }
+  #${IDS4.dialog} input[type=text]:focus { outline:2px solid #b6a4ff; }
+  #${IDS4.dialog} .wa-chips { display:flex; flex-wrap:wrap; gap:6px; }
+  #${IDS4.dialog} .wa-chip { padding:4px 10px; border:1px solid #cbbcff; border-radius:999px; background:#f1edff; color:#5535d6; font:600 12px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif; cursor:pointer; }
+  #${IDS4.dialog} .wa-chip:hover { background:#6d4aff; color:#fff; }
+  #${IDS4.dialog} .wa-note { color:#6b6775; font-size:12px; }
+  #${IDS4.dialog} .wa-list { display:flex; flex-direction:column; gap:8px; }
+  #${IDS4.dialog} .wa-list-row { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid #e2e0e8; border-radius:12px; background:#fff; }
+  #${IDS4.dialog} .wa-list-row .wa-name { flex:1; font-weight:600; }
+  #${IDS4.dialog} .wa-tag { padding:2px 8px; border-radius:999px; background:#f1eef7; color:#6b6775; font-size:11px; font-weight:600; }
+  #${IDS4.dialog} .wa-small { padding:5px 12px !important; font-size:12px !important; }
+  #${IDS4.dialog} .wa-danger { border:1px solid #c23f3f; background:transparent; color:#c23f3f; }
+  #${IDS4.dialog} .wa-spacer { flex:1; }
   #${IDS4.toast} { position:fixed; left:50%; bottom:24px; z-index:2147483642; transform:translateX(-50%); max-width:min(480px,calc(100vw - 32px)); padding:10px 14px; border-radius:16px; background:#3a3548; color:#fff; box-shadow:0 12px 32px rgba(28,26,34,.3); font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
   #${IDS4.toast} .wa-preview { margin-top:4px; color:#cfcad9; font-size:12px; white-space:pre-line; }
 `;
@@ -8572,6 +8722,22 @@
     const request = (query, variables) => getCemGraphqlAdapter().request(query, variables);
     const loadMatch = (matchId) => cached(`match:${matchId}`, () => loadMatchContext(request, matchId));
     const loadCandidate = (candidateId) => cached(`candidate:${candidateId}`, () => loadCandidateContext(request, candidateId));
+    const storage = createTemplateStorage({
+      read: () => localStorage.getItem(STORAGE_KEY2),
+      write: (value) => localStorage.setItem(STORAGE_KEY2, value),
+      backupRead: () => typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY2, null) : null,
+      backupWrite: (value) => {
+        if (typeof GM_setValue === "function") GM_setValue(STORAGE_KEY2, value);
+      }
+    });
+    const asDialogTemplate = (own) => ({
+      id: own.id,
+      label: own.name,
+      scope: own.scope,
+      needs: needsFor(own.text),
+      interview: own.scope === "match" ? "confirmed" : null,
+      custom: own.text
+    });
     function addButton(row) {
       if (row.querySelector("tr") || row.querySelector(`:scope > td .${BUTTON_CLASS}`)) return;
       if (row.querySelector(`:scope > td.${CELL_CLASS}`)) return;
@@ -8673,6 +8839,24 @@
           menu.appendChild(item);
         }
       }
+      const addItem = (label2, onClick, className = "") => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.textContent = label2;
+        if (className) item.className = className;
+        item.addEventListener("click", () => {
+          closeMenu();
+          onClick();
+        });
+        menu.appendChild(item);
+      };
+      menu.appendChild(element("div", { className: "wa-sep" }));
+      menu.appendChild(element("div", { className: "wa-group", textContent: "Meine Vorlagen" }));
+      const own = storage.load().templates.filter((item) => item.scope === "candidate" || target.matchId);
+      if (!own.length) menu.appendChild(element("div", { className: "wa-hint", textContent: "Noch keine eigenen Vorlagen." }));
+      own.forEach((item) => addItem(item.name, () => openDialog(asDialogTemplate(item), target)));
+      addItem("+ Neue Vorlage …", () => openEditor(null), "wa-action");
+      addItem("Vorlagen verwalten …", () => openManager(), "wa-action");
       document.body.appendChild(menu);
       const rect = button2.getBoundingClientRect();
       const top = Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8);
@@ -8742,8 +8926,9 @@
       }
       if (!document.body.contains(overlay)) return;
       const interview = template.interview ? pickInterview(context.interviews, template.interview) : null;
+      const suggestion = template.custom && context.interviews ? pickInterview(context.interviews, "suggestion") : null;
       subtitle.textContent = [context.candidateFirstName, context.employerName].filter(Boolean).join(" · ");
-      const state = { mode: modeForInterviewType(interview?.type), contact: context.defaultContact || null, commuteMinutes: 0, dirty: false, gaps: [] };
+      const state = { mode: modeForInterviewType((interview || suggestion)?.type), contact: context.defaultContact || null, commuteMinutes: 0, dirty: false, gaps: [] };
       const controls = element("div", { className: "wa-row" });
       let modeSelect = null;
       if (template.needs.includes("mode")) {
@@ -8778,9 +8963,11 @@
         gapsBox.textContent = open.length ? `Nicht im Adminpanel gefunden, bitte im Text ergänzen: ${open.join(", ")}` : "";
       };
       const render = () => {
-        const result = renderTemplate(template.id, {
+        const fill = template.custom ? (ctx) => renderCustom(template.custom, ctx) : (ctx) => renderTemplate(template.id, ctx);
+        const result = fill({
           ...context,
           interview,
+          suggestion,
           mode: state.mode,
           contact: state.contact,
           address: addressFor(context, interview),
@@ -8843,6 +9030,148 @@ Trotzdem kopieren?`)) return;
       textarea.setSelectionRange(0, 0);
       refreshCommute();
     }
+    function openModal(title, subtitle = "") {
+      closeDialog();
+      const closeButton = element("button", { type: "button", className: "wa-close", textContent: "✕", title: "Schließen (Esc)" });
+      const head = element("div", { className: "wa-head" }, [element("div", { style: "flex:1" }, [
+        element("h2", { textContent: title }),
+        element("div", { className: "wa-sub", textContent: subtitle })
+      ])]);
+      const tip = cemHelp.tip("wa-templates", { tone: "dark" });
+      if (tip) head.append(tip);
+      head.append(closeButton);
+      const body = element("div", { className: "wa-body" });
+      const foot = element("div", { className: "wa-foot" });
+      const overlay = element("div", { id: IDS4.dialog }, [element("div", { className: "wa-card" }, [head, body, foot])]);
+      overlay.addEventListener("mousedown", (event) => {
+        if (event.target === overlay) closeDialog();
+      });
+      closeButton.addEventListener("click", closeDialog);
+      document.addEventListener("keydown", onDialogKey, true);
+      document.body.appendChild(overlay);
+      return { body, foot };
+    }
+    function insertAtCursor(textarea, value) {
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? start;
+      textarea.value = textarea.value.slice(0, start) + value + textarea.value.slice(end);
+      textarea.focus();
+      textarea.setSelectionRange(start + value.length, start + value.length);
+    }
+    function openEditor(existing, { backToManager = false } = {}) {
+      const { body, foot } = openModal(existing ? "Eigene Vorlage bearbeiten" : "Neue eigene Vorlage", "Nur in deinem Browser gespeichert");
+      const nameInput = element("input", { type: "text", value: existing?.name || "", placeholder: "z. B. Nachfrage Unterlagen", maxLength: 80 });
+      const scopeSelect = element("select");
+      SCOPES.forEach((scope) => scopeSelect.append(element("option", { value: scope.value, textContent: scope.label })));
+      scopeSelect.value = existing?.scope || "candidate";
+      const textarea = element("textarea", { value: existing?.text || "", spellcheck: true, placeholder: "Hallo {Vorname Kandidat},\n\n…\n\nLG {Mein Vorname}" });
+      textarea.style.minHeight = "300px";
+      const chips = element("div", { className: "wa-chips" });
+      const renderChips = () => {
+        chips.replaceChildren(...placeholdersFor(scopeSelect.value).map((item) => {
+          const chip = element("button", { type: "button", className: "wa-chip", textContent: `{${item.key}}`, title: "An der Cursor-Position einfügen" });
+          chip.addEventListener("mousedown", (event) => event.preventDefault());
+          chip.addEventListener("click", () => insertAtCursor(textarea, `{${item.key}}`));
+          return chip;
+        }));
+      };
+      scopeSelect.addEventListener("change", renderChips);
+      renderChips();
+      const errorBox = element("div", { className: "wa-error", hidden: true });
+      body.append(
+        element("div", { className: "wa-row" }, [
+          element("label", { textContent: "Name im Menü" }, [nameInput]),
+          element("label", { textContent: "Verfügbar für" }, [scopeSelect])
+        ]),
+        element("label", { textContent: "Platzhalter (Klick fügt ein, wird beim Verwenden automatisch gefüllt)" }, [chips]),
+        element("label", { textContent: "Text" }, [textarea]),
+        element("div", { className: "wa-note", textContent: "WhatsApp-Formatierung geht wie gewohnt: *fett*, _kursiv_. Was beim Verwenden fehlt, erscheint als [Lücke]." }),
+        errorBox
+      );
+      const fail = (message) => {
+        errorBox.textContent = message;
+        errorBox.hidden = false;
+      };
+      const back = () => backToManager ? openManager() : closeDialog();
+      const saveButton = element("button", { type: "button", className: "wa-primary", textContent: "Speichern" });
+      const cancelButton = element("button", { type: "button", className: "wa-neutral", textContent: "Abbrechen" });
+      cancelButton.addEventListener("click", back);
+      saveButton.addEventListener("click", () => {
+        const store = storage.load();
+        const name = nameInput.value.trim();
+        if (!name) return fail("Bitte einen Namen eingeben.");
+        if (!textarea.value.trim()) return fail("Bitte einen Text eingeben.");
+        if (findNameClash(store, name, existing?.id)) return fail(`Es gibt schon eine Vorlage „${name}“.`);
+        const matchOnly = scopeSelect.value === "candidate" ? matchOnlyPlaceholders(textarea.value) : [];
+        if (matchOnly.length) return fail(`Diese Platzhalter gibt es nur bei Match-Vorlagen: ${matchOnly.map((key) => `{${key}}`).join(", ")}. Bitte „Match“ wählen oder sie entfernen.`);
+        storage.save(upsertTemplate(store, { id: existing?.id, name, scope: scopeSelect.value, text: textarea.value }));
+        back();
+        showNotice(`✓ Vorlage „${name}“ gespeichert. Sie steht im WA-Menü unter „Meine Vorlagen“.`);
+        return void 0;
+      });
+      if (existing) {
+        const deleteButton = element("button", { type: "button", className: "wa-danger", textContent: "Löschen" });
+        deleteButton.addEventListener("click", () => {
+          if (!window.confirm(`Vorlage „${existing.name}“ löschen?`)) return;
+          storage.save(removeTemplate(storage.load(), existing.id));
+          back();
+        });
+        foot.append(deleteButton);
+      }
+      foot.append(element("div", { className: "wa-spacer" }), cancelButton, saveButton);
+      nameInput.focus();
+    }
+    function openManager() {
+      const { body, foot } = openModal("Meine Vorlagen", "Nur in deinem Browser gespeichert");
+      const store = storage.load();
+      const list = element("div", { className: "wa-list" });
+      if (!store.templates.length) list.append(element("div", { className: "wa-note", textContent: "Noch keine eigenen Vorlagen. Mit „+ Neue Vorlage“ anlegen." }));
+      store.templates.forEach((template) => {
+        const edit = element("button", { type: "button", className: "wa-neutral wa-small", textContent: "Bearbeiten" });
+        edit.addEventListener("click", () => openEditor(template, { backToManager: true }));
+        const remove = element("button", { type: "button", className: "wa-danger wa-small", textContent: "Löschen" });
+        remove.addEventListener("click", () => {
+          if (!window.confirm(`Vorlage „${template.name}“ löschen?`)) return;
+          storage.save(removeTemplate(storage.load(), template.id));
+          openManager();
+        });
+        list.append(element("div", { className: "wa-list-row" }, [
+          element("span", { className: "wa-name", textContent: template.name }),
+          element("span", { className: "wa-tag", textContent: template.scope === "match" ? "Match" : "Kandidat" }),
+          edit,
+          remove
+        ]));
+      });
+      body.append(list, element("div", { className: "wa-note", textContent: "Die Vorlagen liegen nur in diesem Browser. Für einen neuen PC: hier exportieren, dort importieren. Beim Import werden Vorlagen mit gleichem Namen ersetzt, die übrigen bleiben." }));
+      const exportButton = element("button", { type: "button", className: "wa-neutral", textContent: "Exportieren", disabled: !store.templates.length });
+      exportButton.addEventListener("click", () => {
+        const blob = new Blob([JSON.stringify(storage.load(), null, 2)], { type: "application/json" });
+        const link = element("a", { href: URL.createObjectURL(blob), download: "cem-wa-vorlagen.json" });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        runtime.setTimeout(() => URL.revokeObjectURL(link.href), 1e3);
+      });
+      const fileInput = element("input", { type: "file", accept: ".json,application/json", hidden: true });
+      fileInput.addEventListener("change", async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        try {
+          const before = storage.load().templates.length;
+          const merged = mergeStores2(storage.load(), await file.text());
+          storage.save(merged);
+          openManager();
+          showNotice(`✓ Import fertig: ${merged.templates.length - before} neu, ${merged.templates.length} insgesamt.`);
+        } catch (error) {
+          window.alert(`Import fehlgeschlagen: ${error?.message || error}`);
+        }
+      });
+      const importButton = element("button", { type: "button", className: "wa-neutral", textContent: "Importieren" });
+      importButton.addEventListener("click", () => fileInput.click());
+      const newButton = element("button", { type: "button", className: "wa-primary", textContent: "+ Neue Vorlage" });
+      newButton.addEventListener("click", () => openEditor(null, { backToManager: true }));
+      foot.append(fileInput, importButton, exportButton, element("div", { className: "wa-spacer" }), newButton);
+    }
     async function copyText(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -8854,6 +9183,16 @@ Trotzdem kopieren?`)) return;
         document.execCommand("copy");
         helper.remove();
       }
+    }
+    function showNotice(message) {
+      document.getElementById(IDS4.toast)?.remove();
+      if (toastTimer !== null) runtime.clearTimeout(toastTimer);
+      const toast = element("div", { id: IDS4.toast, textContent: message });
+      document.body.appendChild(toast);
+      toastTimer = runtime.setTimeout(() => {
+        toastTimer = null;
+        toast.remove();
+      }, 4e3);
     }
     function showToast(template, context, text) {
       document.getElementById(IDS4.toast)?.remove();
