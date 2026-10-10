@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.138
+// @version      1.9.139
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2378,7 +2378,8 @@
         "Unterschrift und E-Mail kommen vom angemeldeten Adminpanel-Nutzer.",
         "Bei der VT Bestätigung vor Ort wird die Fahrzeit vom Kandidaten zur Terminadresse nachgeladen.",
         "Eigene Vorlagen: im WA-Menü „+ Neue Vorlage …“. Name, „Kandidat“ oder „Match“ wählen und Text schreiben; Platzhalter wie {Vorname Kandidat} oder {Arbeitgeber} per Klick einfügen, sie werden beim Verwenden gefüllt. Danach stehen sie unter „Meine Vorlagen“.",
-        "Eigene Vorlagen liegen nur in deinem Browser. „Vorlagen verwalten …“ zum Bearbeiten und Löschen. „Text kopieren“ kopiert den Rohtext mit Platzhaltern; wer ihn bekommt (oder du auf einem neuen PC), fügt ihn unter „+ Neue Vorlage“ ein.",
+        "Im „Match WA“-Menü sind „Kandidat“ und „Meine Vorlagen“ zugeklappt; ein Klick auf die Überschrift öffnet sie. Rechtsklick auf eine eigene Vorlage: Bearbeiten oder Löschen (mit Rückfrage).",
+        "Eigene Vorlagen liegen nur in deinem Browser. „Vorlagen verwalten …“ zum Bearbeiten, Löschen und Sortieren (↑/↓ = Reihenfolge im Menü). „Text kopieren“ kopiert den Rohtext mit Platzhaltern; wer ihn bekommt (oder du auf einem neuen PC), fügt ihn unter „+ Neue Vorlage“ ein.",
         "Im Adminpanel wird nichts geändert. Gesendet wird nur, was du selbst in WhatsApp einfügst."
       ]
     },
@@ -8172,13 +8173,13 @@
     return list.find((item) => item.status === "confirmed") || list.find((item) => item.dates.length === 1 && !/declin|cancel/i.test(String(item.status || ""))) || null;
   }
   function pickContact(contacts) {
-    const byName2 = /* @__PURE__ */ new Map();
+    const byName = /* @__PURE__ */ new Map();
     for (const contact of (contacts || []).filter((item) => item?.id)) {
       const key = contactName(contact).toLowerCase() || contact.id;
-      const known = byName2.get(key);
-      if (!known || !known.phoneNumbers?.length && contact.phoneNumbers?.length || !known.isMain && contact.isMain) byName2.set(key, contact);
+      const known = byName.get(key);
+      if (!known || !known.phoneNumbers?.length && contact.phoneNumbers?.length || !known.isMain && contact.isMain) byName.set(key, contact);
     }
-    const list = [...byName2.values()];
+    const list = [...byName.values()];
     if (list.length === 1) return list[0];
     const main = list.filter((contact) => contact.isMain);
     return main.length === 1 ? main[0] : null;
@@ -8603,12 +8604,23 @@
     const list = Array.isArray(parsed?.templates) ? parsed.templates : [];
     return { version: STORE_VERSION2, templates: list.map(normalize4).filter(Boolean) };
   }
-  var byName = (a, b) => a.name.localeCompare(b.name, "de");
   function upsertTemplate(store, template) {
     const clean3 = normalize4(template);
     if (!clean3) throw new Error("Name und Text dürfen nicht leer sein.");
-    const kept = (store?.templates || []).filter((entry) => entry.id !== clean3.id);
-    return { version: STORE_VERSION2, templates: [...kept, clean3].sort(byName) };
+    const templates = [...store?.templates || []];
+    const index = templates.findIndex((entry) => entry.id === clean3.id);
+    if (index >= 0) templates[index] = clean3;
+    else templates.push(clean3);
+    return { version: STORE_VERSION2, templates };
+  }
+  function moveTemplate(store, id, delta) {
+    const templates = [...store?.templates || []];
+    const from = templates.findIndex((entry) => entry.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= templates.length) return { version: STORE_VERSION2, templates };
+    const [moved] = templates.splice(from, 1);
+    templates.splice(to, 0, moved);
+    return { version: STORE_VERSION2, templates };
   }
   function removeTemplate(store, id) {
     return { version: STORE_VERSION2, templates: (store?.templates || []).filter((entry) => entry.id !== id) };
@@ -8650,7 +8662,7 @@
   var BUTTON_CLASS = "werkia-wa-button";
   var CELL_CLASS = "werkia-wa-cell";
   var PANEL_WIDENED_ATTR = "data-werkia-wa-widened";
-  var IDS4 = { style: "werkia-wa-style", menu: "werkia-wa-menu", dialog: "werkia-wa-dialog", toast: "werkia-wa-toast" };
+  var IDS4 = { style: "werkia-wa-style", menu: "werkia-wa-menu", context: "werkia-wa-context", dialog: "werkia-wa-dialog", confirm: "werkia-wa-confirm", toast: "werkia-wa-toast" };
   var CACHE_MS2 = 2 * 60 * 1e3;
   var CSS = `
   .${BUTTON_CLASS} { margin:4px 0 0 6px; min-height:30px; padding:5px 14px; border:1px solid #1f9a6b; border-radius:999px; background:#e6f7f0; color:#1f9a6b; cursor:pointer; font:700 13px/1 system-ui,-apple-system,"Segoe UI",sans-serif; vertical-align:middle; }
@@ -8685,6 +8697,23 @@
   #${IDS4.dialog} .wa-close { padding:2px 10px; border:1px solid rgba(255,255,255,.35); background:transparent; color:#fff; }
   #${IDS4.menu} .wa-hint { padding:4px 12px 6px; color:#6b6775; font-size:12px; }
   #${IDS4.menu} button.wa-action { color:#6d4aff; font-weight:600; }
+  #${IDS4.menu} button.wa-group-toggle { display:flex; justify-content:space-between; align-items:center; padding:9px 12px; color:#3a3548; font-weight:650; }
+  #${IDS4.menu} button.wa-group-toggle .wa-arrow { color:#6b6775; font-size:12px; }
+  #${IDS4.menu} .wa-group-items { padding-left:8px; }
+  #${IDS4.context} { position:fixed; z-index:2147483643; min-width:180px; padding:6px; border:1px solid #e2e0e8; border-radius:14px; background:#fff; box-shadow:0 12px 32px rgba(28,26,34,.22); font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
+  #${IDS4.context} button { display:block; width:100%; padding:8px 12px; border:0; border-radius:10px; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
+  #${IDS4.context} button:hover { background:#f1edff; color:#6d4aff; }
+  #${IDS4.context} button.wa-delete { color:#c23f3f; }
+  #${IDS4.context} button.wa-delete:hover { background:#fbe6e6; color:#c23f3f; }
+  #${IDS4.confirm} { position:fixed; inset:0; z-index:2147483644; display:flex; align-items:center; justify-content:center; background:rgba(28,26,34,.45); font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
+  #${IDS4.confirm} .wa-card { width:min(440px,calc(100vw - 32px)); border-radius:20px; background:#fff; box-shadow:0 24px 64px rgba(28,26,34,.3); overflow:hidden; }
+  #${IDS4.confirm} h2 { margin:0; padding:14px 18px; background:#3a3548; color:#fff; font-size:16px; font-weight:650; }
+  #${IDS4.confirm} p { margin:0; padding:16px 18px; }
+  #${IDS4.confirm} .wa-foot { display:flex; justify-content:flex-end; gap:8px; padding:12px 18px; border-top:1px solid #e2e0e8; }
+  #${IDS4.confirm} button { padding:9px 18px; border-radius:16px; font:600 14px system-ui,-apple-system,"Segoe UI",sans-serif; cursor:pointer; }
+  #${IDS4.confirm} .wa-neutral { border:1px solid #e2e0e8; background:transparent; color:#6b6775; }
+  #${IDS4.confirm} .wa-delete-solid { border:0; background:#c23f3f; color:#fff; }
+  #${IDS4.confirm} .wa-delete-solid:hover { background:#a83232; }
   #${IDS4.menu} .wa-sep { height:1px; margin:6px 4px; background:#e2e0e8; }
   #${IDS4.dialog} input[type=text] { border:1px solid #e2e0e8; border-radius:10px; background:#fff; color:#1c1a22; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; padding:8px 10px; }
   #${IDS4.dialog} input[type=text]:focus { outline:2px solid #b6a4ff; }
@@ -8697,6 +8726,8 @@
   #${IDS4.dialog} .wa-list-row .wa-name { flex:1; font-weight:600; }
   #${IDS4.dialog} .wa-tag { padding:2px 8px; border-radius:999px; background:#f1eef7; color:#6b6775; font-size:11px; font-weight:600; }
   #${IDS4.dialog} .wa-small { padding:5px 12px !important; font-size:12px !important; }
+  #${IDS4.dialog} .wa-move { padding:4px 9px !important; }
+  #${IDS4.dialog} .wa-move:disabled { opacity:.35; cursor:default; }
   #${IDS4.dialog} .wa-danger { border:1px solid #c23f3f; background:transparent; color:#c23f3f; }
   #${IDS4.dialog} .wa-spacer { flex:1; }
   #${IDS4.toast} { position:fixed; left:50%; bottom:24px; z-index:2147483642; transform:translateX(-50%); max-width:min(480px,calc(100vw - 32px)); padding:10px 14px; border-radius:16px; background:#3a3548; color:#fff; box-shadow:0 12px 32px rgba(28,26,34,.3); font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
@@ -8820,55 +8851,129 @@
     }
     function closeMenu() {
       document.getElementById(IDS4.menu)?.remove();
+      closeContextMenu();
     }
     function openMenu(button2, target) {
       closeMenu();
       const menu = document.createElement("div");
       menu.id = IDS4.menu;
-      const groups = target.matchId ? [["Match", "match"], ["Kandidat", "candidate"]] : [["Kandidat", "candidate"]];
-      for (const [title, scope] of groups) {
-        const heading = document.createElement("div");
-        heading.className = "wa-group";
-        heading.textContent = title;
-        menu.appendChild(heading);
-        for (const template of TEMPLATES.filter((item) => item.scope === scope)) {
-          const item = document.createElement("button");
-          item.type = "button";
-          item.textContent = template.label;
-          item.addEventListener("click", () => {
-            closeMenu();
-            openDialog(template, target);
-          });
-          menu.appendChild(item);
-        }
-      }
-      const addItem = (label2, onClick, className = "") => {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.textContent = label2;
+      const place = () => {
+        const rect = button2.getBoundingClientRect();
+        const height = menu.offsetHeight;
+        let top = rect.bottom + 4;
+        if (top + height > window.innerHeight - 8) top = rect.top - height - 4 >= 8 ? rect.top - height - 4 : window.innerHeight - height - 8;
+        const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
+        Object.assign(menu.style, { top: `${Math.max(8, top)}px`, left: `${Math.max(8, left)}px` });
+      };
+      const addItem = (parent, label2, onClick, className = "") => {
+        const item = element("button", { type: "button", textContent: label2 });
         if (className) item.className = className;
         item.addEventListener("click", () => {
           closeMenu();
           onClick();
         });
-        menu.appendChild(item);
+        parent.appendChild(item);
+        return item;
       };
+      const group = (title, collapsible2) => {
+        if (!collapsible2) {
+          menu.appendChild(element("div", { className: "wa-group", textContent: title }));
+          return menu;
+        }
+        const arrow = element("span", { className: "wa-arrow", textContent: "▸" });
+        const toggle = element("button", { type: "button", className: "wa-group-toggle" }, [element("span", { textContent: title }), arrow]);
+        const items = element("div", { className: "wa-group-items", hidden: true });
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.addEventListener("click", () => {
+          items.hidden = !items.hidden;
+          arrow.textContent = items.hidden ? "▸" : "▾";
+          toggle.setAttribute("aria-expanded", String(!items.hidden));
+          place();
+        });
+        menu.append(toggle, items);
+        return items;
+      };
+      const collapsible = Boolean(target.matchId);
+      const scopes = target.matchId ? [["Match", "match", false], ["Kandidat", "candidate", true]] : [["Kandidat", "candidate", false]];
+      for (const [title, scope, collapsed] of scopes) {
+        const parent = group(title, collapsed);
+        TEMPLATES.filter((item) => item.scope === scope).forEach((template) => addItem(parent, template.label, () => openDialog(template, target)));
+      }
       menu.appendChild(element("div", { className: "wa-sep" }));
-      menu.appendChild(element("div", { className: "wa-group", textContent: "Meine Vorlagen" }));
+      const ownParent = group("Meine Vorlagen", collapsible);
       const own = storage.load().templates.filter((item) => item.scope === "candidate" || target.matchId);
-      if (!own.length) menu.appendChild(element("div", { className: "wa-hint", textContent: "Noch keine eigenen Vorlagen." }));
-      own.forEach((item) => addItem(item.name, () => openDialog(asDialogTemplate(item), target)));
-      addItem("+ Neue Vorlage …", () => openEditor(null), "wa-action");
-      addItem("Vorlagen verwalten …", () => openManager(), "wa-action");
+      if (!own.length) ownParent.appendChild(element("div", { className: "wa-hint", textContent: "Noch keine eigenen Vorlagen." }));
+      own.forEach((item) => {
+        const entry = addItem(ownParent, item.name, () => openDialog(asDialogTemplate(item), target));
+        entry.title = "Rechtsklick: bearbeiten oder löschen";
+        entry.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openContextMenu(event, item);
+        });
+      });
+      addItem(ownParent, "+ Neue Vorlage …", () => openEditor(null), "wa-action");
+      addItem(ownParent, "Vorlagen verwalten …", () => openManager(), "wa-action");
       document.body.appendChild(menu);
-      const rect = button2.getBoundingClientRect();
-      const height = menu.offsetHeight;
-      let top = rect.bottom + 4;
-      if (top + height > window.innerHeight - 8) top = rect.top - height - 4 >= 8 ? rect.top - height - 4 : window.innerHeight - height - 8;
-      const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
-      Object.assign(menu.style, { top: `${Math.max(8, top)}px`, left: `${Math.max(8, left)}px` });
+      place();
+    }
+    function closeContextMenu() {
+      document.getElementById(IDS4.context)?.remove();
+    }
+    function openContextMenu(event, template) {
+      closeContextMenu();
+      const context = element("div", { id: IDS4.context });
+      const editButton = element("button", { type: "button", textContent: "Bearbeiten" });
+      editButton.addEventListener("click", () => {
+        closeMenu();
+        openEditor(template);
+      });
+      const deleteButton = element("button", { type: "button", className: "wa-delete", textContent: "Löschen" });
+      deleteButton.addEventListener("click", () => {
+        closeMenu();
+        confirmDelete(template, () => showNotice(`Vorlage „${template.name}“ gelöscht.`));
+      });
+      context.append(editButton, deleteButton);
+      document.body.appendChild(context);
+      const left = Math.min(event.clientX, window.innerWidth - context.offsetWidth - 8);
+      const top = Math.min(event.clientY, window.innerHeight - context.offsetHeight - 8);
+      Object.assign(context.style, { left: `${Math.max(8, left)}px`, top: `${Math.max(8, top)}px` });
+    }
+    function confirmDelete(template, onDeleted) {
+      document.getElementById(IDS4.confirm)?.remove();
+      const close = () => {
+        document.getElementById(IDS4.confirm)?.remove();
+        window.removeEventListener("keydown", onKey, true);
+      };
+      const onKey = (keyEvent) => {
+        if (keyEvent.key !== "Escape") return;
+        keyEvent.stopPropagation();
+        close();
+      };
+      const cancelButton = element("button", { type: "button", className: "wa-neutral", textContent: "Abbrechen" });
+      const deleteButton = element("button", { type: "button", className: "wa-delete-solid", textContent: "Löschen" });
+      const overlay = element("div", { id: IDS4.confirm }, [element("div", { className: "wa-card" }, [
+        element("h2", { textContent: "Vorlage löschen?" }),
+        element("p", { textContent: `Möchtest du die Vorlage „${template.name}“ wirklich löschen? Das lässt sich nicht rückgängig machen.` }),
+        element("div", { className: "wa-foot" }, [cancelButton, deleteButton])
+      ])]);
+      overlay.addEventListener("mousedown", (mouseEvent) => {
+        if (mouseEvent.target === overlay) close();
+      });
+      cancelButton.addEventListener("click", close);
+      deleteButton.addEventListener("click", () => {
+        storage.save(removeTemplate(storage.load(), template.id));
+        close();
+        onDeleted?.();
+      });
+      window.addEventListener("keydown", onKey, true);
+      document.body.appendChild(overlay);
+      cancelButton.focus();
     }
     function onDocumentClick(event) {
+      const context = document.getElementById(IDS4.context);
+      if (context?.contains(event.target)) return;
+      closeContextMenu();
       const menu = document.getElementById(IDS4.menu);
       if (menu && !menu.contains(event.target)) closeMenu();
     }
@@ -9140,11 +9245,10 @@ Trotzdem speichern?`)) return void 0;
       });
       if (existing) {
         const deleteButton = element("button", { type: "button", className: "wa-danger", textContent: "Löschen" });
-        deleteButton.addEventListener("click", () => {
-          if (!window.confirm(`Vorlage „${existing.name}“ löschen?`)) return;
-          storage.save(removeTemplate(storage.load(), existing.id));
+        deleteButton.addEventListener("click", () => confirmDelete(existing, () => {
           back();
-        });
+          showNotice(`Vorlage „${existing.name}“ gelöscht.`);
+        }));
         foot.append(deleteButton);
       }
       foot.append(element("div", { className: "wa-spacer" }), cancelButton, saveButton);
@@ -9155,7 +9259,15 @@ Trotzdem speichern?`)) return void 0;
       const store = storage.load();
       const list = element("div", { className: "wa-list" });
       if (!store.templates.length) list.append(element("div", { className: "wa-note", textContent: "Noch keine eigenen Vorlagen. Mit „+ Neue Vorlage“ anlegen." }));
-      store.templates.forEach((template) => {
+      store.templates.forEach((template, index) => {
+        const move = (delta, label2, disabled) => {
+          const moveButton = element("button", { type: "button", className: "wa-neutral wa-small wa-move", textContent: label2, disabled, title: delta < 0 ? "Im Menü nach oben" : "Im Menü nach unten" });
+          moveButton.addEventListener("click", () => {
+            storage.save(moveTemplate(storage.load(), template.id, delta));
+            openManager();
+          });
+          return moveButton;
+        };
         const edit = element("button", { type: "button", className: "wa-neutral wa-small", textContent: "Bearbeiten" });
         edit.addEventListener("click", () => openEditor(template, { backToManager: true }));
         const share = element("button", { type: "button", className: "wa-neutral wa-small", textContent: "Text kopieren", title: "Rohtext mit Platzhaltern kopieren, z. B. für Slack" });
@@ -9164,12 +9276,10 @@ Trotzdem speichern?`)) return void 0;
           showNotice(`✓ Text von „${template.name}“ kopiert. Wer ihn bekommt, fügt ihn unter „+ Neue Vorlage“ ein.`);
         });
         const remove = element("button", { type: "button", className: "wa-danger wa-small", textContent: "Löschen" });
-        remove.addEventListener("click", () => {
-          if (!window.confirm(`Vorlage „${template.name}“ löschen?`)) return;
-          storage.save(removeTemplate(storage.load(), template.id));
-          openManager();
-        });
+        remove.addEventListener("click", () => confirmDelete(template, () => openManager()));
         list.append(element("div", { className: "wa-list-row" }, [
+          move(-1, "↑", index === 0),
+          move(1, "↓", index === store.templates.length - 1),
           element("span", { className: "wa-name", textContent: template.name }),
           element("span", { className: "wa-tag", textContent: template.scope === "match" ? "Match" : "Kandidat" }),
           share,
@@ -9177,7 +9287,7 @@ Trotzdem speichern?`)) return void 0;
           remove
         ]));
       });
-      body.append(list, element("div", { className: "wa-note", textContent: "Die Vorlagen liegen nur in diesem Browser. Zum Weitergeben oder für einen neuen PC: „Text kopieren“, z. B. in Slack schicken und dort unter „+ Neue Vorlage“ einfügen. Die Platzhalter bleiben erhalten." }));
+      body.append(list, element("div", { className: "wa-note", textContent: "Die Vorlagen liegen nur in diesem Browser. Mit ↑/↓ legst du die Reihenfolge im WA-Menü fest. Zum Weitergeben oder für einen neuen PC: „Text kopieren“, z. B. in Slack schicken und dort unter „+ Neue Vorlage“ einfügen. Die Platzhalter bleiben erhalten." }));
       const newButton = element("button", { type: "button", className: "wa-primary", textContent: "+ Neue Vorlage" });
       newButton.addEventListener("click", () => openEditor(null, { backToManager: true }));
       foot.append(element("div", { className: "wa-spacer" }), newButton);
@@ -9230,6 +9340,7 @@ Trotzdem speichern?`)) return void 0;
       document.removeEventListener("scroll", onDocumentScroll, true);
       removeAll();
       closeDialog();
+      document.getElementById(IDS4.confirm)?.remove();
       document.getElementById(IDS4.toast)?.remove();
       document.getElementById(IDS4.style)?.remove();
     });
