@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.139
+// @version      1.9.140
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -8676,7 +8676,8 @@
   #${IDS4.menu} button:hover { background:#f1edff; color:#6d4aff; }
   #${IDS4.dialog} { position:fixed; inset:0; z-index:2147483641; display:flex; align-items:center; justify-content:center; background:rgba(28,26,34,.55); font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
   #${IDS4.dialog} .wa-card { width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 32px); display:flex; flex-direction:column; border-radius:20px; background:#f6f5f8; box-shadow:0 24px 64px rgba(28,26,34,.3); overflow:hidden; }
-  #${IDS4.dialog} .wa-head { display:flex; align-items:center; gap:8px; padding:12px 16px; background:#3a3548; color:#fff; }
+  #${IDS4.dialog} .wa-head { display:flex; align-items:center; gap:8px; padding:12px 16px; background:#3a3548; color:#fff; cursor:move; user-select:none; touch-action:none; }
+  #${IDS4.dialog} .wa-head button { cursor:pointer; }
   #${IDS4.dialog} .wa-head h2 { flex:1; margin:0; font-size:18px; font-weight:650; }
   #${IDS4.dialog} .wa-head .wa-sub { color:#cfcad9; font-size:13px; font-weight:500; }
   #${IDS4.dialog} .wa-body { display:flex; flex-direction:column; gap:10px; padding:16px; overflow:auto; }
@@ -8849,8 +8850,11 @@
         sync();
       }, 150);
     }
+    let activeMenu = null;
+    let followFrame = 0;
     function closeMenu() {
       document.getElementById(IDS4.menu)?.remove();
+      activeMenu = null;
       closeContextMenu();
     }
     function openMenu(button2, target) {
@@ -8916,6 +8920,7 @@
       addItem(ownParent, "Vorlagen verwalten …", () => openManager(), "wa-action");
       document.body.appendChild(menu);
       place();
+      activeMenu = { button: button2, place };
     }
     function closeContextMenu() {
       document.getElementById(IDS4.context)?.remove();
@@ -8979,7 +8984,20 @@
     }
     function onDocumentScroll(event) {
       const menu = document.getElementById(IDS4.menu);
-      if (menu && !(event.target instanceof Node && menu.contains(event.target))) closeMenu();
+      if (!menu || event.target instanceof Node && menu.contains(event.target)) return;
+      closeContextMenu();
+      if (followFrame) return;
+      followFrame = window.requestAnimationFrame(() => {
+        followFrame = 0;
+        if (!activeMenu) return;
+        const { button: button2, place } = activeMenu;
+        const rect = button2.isConnected ? button2.getBoundingClientRect() : null;
+        if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) {
+          closeMenu();
+          return;
+        }
+        place();
+      });
     }
     function element(tag, props = {}, children = []) {
       const node = document.createElement(tag);
@@ -9022,6 +9040,7 @@
       const copyButton = element("button", { type: "button", className: "wa-primary", textContent: "Kopieren", disabled: true });
       const cancelButton = element("button", { type: "button", className: "wa-neutral", textContent: "Abbrechen" });
       const card = element("div", { className: "wa-card" }, [head, body, element("div", { className: "wa-foot" }, [cancelButton, copyButton])]);
+      makeDraggable(card, head);
       const overlay = element("div", { id: IDS4.dialog }, [card]);
       overlay.addEventListener("mousedown", (event) => {
         if (event.target === overlay) closeDialog();
@@ -9156,7 +9175,9 @@ Trotzdem kopieren?`)) return;
       head.append(closeButton);
       const body = element("div", { className: "wa-body" });
       const foot = element("div", { className: "wa-foot" });
-      const overlay = element("div", { id: IDS4.dialog }, [element("div", { className: "wa-card" }, [head, body, foot])]);
+      const card = element("div", { className: "wa-card" }, [head, body, foot]);
+      makeDraggable(card, head);
+      const overlay = element("div", { id: IDS4.dialog }, [card]);
       overlay.addEventListener("mousedown", (event) => {
         if (event.target === overlay) closeDialog();
       });
@@ -9164,6 +9185,40 @@ Trotzdem kopieren?`)) return;
       document.addEventListener("keydown", onDialogKey, true);
       document.body.appendChild(overlay);
       return { body, foot };
+    }
+    function makeDraggable(card, handle) {
+      let drag = null;
+      let offset = { x: 0, y: 0 };
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest("button")) return;
+        const rect = card.getBoundingClientRect();
+        drag = {
+          id: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          baseLeft: rect.left - offset.x,
+          baseTop: rect.top - offset.y,
+          width: rect.width,
+          from: { ...offset }
+        };
+        handle.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!drag || event.pointerId !== drag.id) return;
+        const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+        const left = clamp(drag.baseLeft + drag.from.x + event.clientX - drag.startX, 120 - drag.width, window.innerWidth - 120);
+        const top = clamp(drag.baseTop + drag.from.y + event.clientY - drag.startY, 0, window.innerHeight - handle.offsetHeight);
+        offset = { x: left - drag.baseLeft, y: top - drag.baseTop };
+        card.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+      });
+      const stop = (event) => {
+        if (!drag || event.pointerId !== drag.id) return;
+        handle.releasePointerCapture?.(event.pointerId);
+        drag = null;
+      };
+      handle.addEventListener("pointerup", stop);
+      handle.addEventListener("pointercancel", stop);
     }
     function insertAtCursor(textarea, value) {
       const start = textarea.selectionStart ?? textarea.value.length;
@@ -9338,6 +9393,7 @@ Trotzdem speichern?`)) return void 0;
       if (toastTimer !== null) runtime.clearTimeout(toastTimer);
       document.removeEventListener("mousedown", onDocumentClick, true);
       document.removeEventListener("scroll", onDocumentScroll, true);
+      if (followFrame) window.cancelAnimationFrame(followFrame);
       removeAll();
       closeDialog();
       document.getElementById(IDS4.confirm)?.remove();
