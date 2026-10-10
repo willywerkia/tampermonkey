@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.135
+// @version      1.9.136
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2374,9 +2374,9 @@
       ],
       notes: [
         "Was im Adminpanel fehlt, steht als [Lücke] im Text und im gelben Hinweis darüber. Vor dem Kopieren kommt eine Rückfrage, solange noch eine Lücke drin ist.",
-        "Terminvorschläge erscheinen als Zeitfenster von einer Stunde ab dem Vorschlag, z. B. „zw. 17-18 Uhr“.",
+        "Terminvorschläge erscheinen mit Datum und Uhrzeit wie im Adminpanel, z. B. „Do., 08.10. um 16 Uhr“.",
         "Unterschrift und E-Mail kommen vom angemeldeten Adminpanel-Nutzer.",
-        "Bei der Terminbestätigung vor Ort wird die Fahrzeit vom Kandidaten zur Terminadresse nachgeladen.",
+        "Bei der VT Bestätigung vor Ort wird die Fahrzeit vom Kandidaten zur Terminadresse nachgeladen.",
         "Es wird nichts gespeichert und nichts im Adminpanel geändert. Gesendet wird nur, was du selbst in WhatsApp einfügst."
       ]
     },
@@ -8153,11 +8153,6 @@
     const p = berlinParts(date);
     return `${clock(p.hour, p.minute)} Uhr`;
   }
-  function formatWindow(date) {
-    const start = berlinParts(date);
-    const end = berlinParts(new Date(new Date(date).getTime() + 60 * 60 * 1e3));
-    return `zw. ${clock(start.hour, start.minute)}-${clock(end.hour, end.minute)} Uhr`;
-  }
   function berlinDayKey(date) {
     const p = berlinParts(date);
     return `${p.year}-${p.month}-${p.day}`;
@@ -8213,11 +8208,11 @@
   }
   var TEMPLATES = [
     { id: "vta", scope: "match", label: "1. WA mit Terminvorschlägen (VTA)", needs: ["mode"], interview: "suggestion" },
-    { id: "tb", scope: "match", label: "Terminbestätigung", needs: ["mode", "contact"], interview: "confirmed" },
-    { id: "te", scope: "match", label: "Termin-Erinnerung (Vortag)", needs: ["mode"], interview: "confirmed" },
-    { id: "fbvt", scope: "match", label: "Feedback zum Termin", needs: [], interview: "confirmed" },
+    { id: "tb", scope: "match", label: "VT Bestätigung", needs: ["mode", "contact"], interview: "confirmed" },
+    { id: "te", scope: "match", label: "VT Erinnerung", needs: ["mode"], interview: "confirmed" },
+    { id: "fbvt", scope: "match", label: "VT Feedback", needs: [], interview: "confirmed" },
     { id: "ul", scope: "candidate", label: "1. WA Unterlagen (UL)", needs: [] },
-    { id: "krm", scope: "candidate", label: "Nicht erreicht, Prozesse beenden", needs: [] },
+    { id: "krm", scope: "candidate", label: "OUT - krm Bew", needs: [] },
     { id: "out", scope: "candidate", label: "Hat selbst neue Stelle", needs: [] },
     { id: "google", scope: "candidate", label: "Google-Bewertung", needs: [] }
   ];
@@ -8239,11 +8234,20 @@
     ];
   }
   var MODE_ADJECTIVE = { phone: "telefonisch", digital: "digital", onsite: "vor Ort" };
+  function appointmentPhrase(mode, several) {
+    const [singular, plural] = {
+      phone: ["Telefontermin", "Telefontermine"],
+      digital: ["digitalen Termin", "digitalen Termine"],
+      onsite: ["vor Ort Termin", "vor Ort Termine"]
+    }[mode] || ["Termin", "Termine"];
+    return several ? `einen dieser ${plural}` : `diesen ${singular}`;
+  }
   var BUILDERS = {
     ul: (ctx, slot) => [
       ...introLines(ctx, slot),
       "",
-      `Es wäre toll, wenn Du mir einmal Deine Unterlagen (Lebenslauf, Gesellenbrief, Arbeitszeugnisse, …) hier per WA oder per Email an ${slot("E-Mail CEM", ctx.cem?.email)} senden könntest.`,
+      `Es wäre toll, wenn Du mir einmal Deine *Unterlagen* (Lebenslauf, Gesellenbrief, Arbeitszeugnisse, …) hier per WA oder per Email an ${slot("E-Mail CEM", ctx.cem?.email)} senden könntest.`,
+      "",
       "Ich melde mich zeitnah mit Stellenangeboten und Terminanfragen bei Dir.",
       "",
       "Beste Grüße",
@@ -8263,9 +8267,9 @@
         `🛜 ${slot("Link zur Stelle", ctx.jobLink)}`,
         "",
         `📆 *${several ? "Terminvorschläge" : "Terminvorschlag"}*:`,
-        ...dates.length ? dates.map((date) => `# ${formatDay(date)} ${formatWindow(date)}`) : [`# ${slot("Terminvorschlag", "")}`],
+        ...dates.length ? dates.map((date) => `# ${formatDay(date)} um ${formatTime(date)}`) : [`# ${slot("Terminvorschlag", "")}`],
         "",
-        `Kannst und möchtest Du ${several ? "einen der Termine" : "diesen Termin"} wahrnehmen?`
+        `Kannst und möchtest Du *${appointmentPhrase(ctx.mode, several)}* wahrnehmen?`
       ];
     },
     tb: (ctx, slot) => {
@@ -8399,78 +8403,101 @@
   data: Match(id: $id) {
     id
     candidate { id firstName obcEmployeeId __typename }
-    jobPosition {
-      id
-      mainTitle
-      location { postalCode city __typename }
-      employer { id name __typename }
-      __typename
-    }
+    jobPosition { id mainTitle employer { id name __typename } __typename }
     interviews { id type status dates location createdAt __typename }
     __typename
   }
-  me: currentEmployee { id firstName lastName email __typename }
 }`;
   var WA_CANDIDATE_QUERY = `query Candidate($id: UUID!) {
   data: Candidate(id: $id) { id firstName obcEmployeeId __typename }
+}`;
+  var WA_ME_QUERY = `query currentEmployee {
   me: currentEmployee { id firstName lastName email __typename }
+}`;
+  var WA_JOB_LOCATION_QUERY = `query JobPosition($id: UUID!) {
+  data: JobPosition(id: $id) { id location { postalCode city __typename } __typename }
 }`;
   var WA_EMPLOYEE_QUERY = `query allEmployees($ids: [UUID!]) {
   items: allEmployees(filter: { ids: $ids }) { id firstName lastName __typename }
 }`;
-  var WA_EMPLOYER_QUERY = `query WaEmployer($employerId: UUID) {
-  contacts: allMatchContactPeople(filter: { employerId: $employerId }, perPage: 100) {
+  var WA_CONTACTS_QUERY = `query allMatchContactPeople($employerId: UUID) {
+  items: allMatchContactPeople(filter: { employerId: $employerId }, perPage: 100) {
     id name surname gender isMain phoneNumbers __typename
   }
-  interviewLocations: allEmployerInterviewLocations(filter: { employerId: $employerId }, perPage: 20) {
-    id name postalCode city __typename
-  }
-  employerLocations: allEmployerLocations(filter: { employerId: $employerId }, perPage: 20) {
+}`;
+  var WA_INTERVIEW_LOCATIONS_QUERY = `query allEmployerInterviewLocations($employerId: UUID) {
+  items: allEmployerInterviewLocations(filter: { employerId: $employerId }, perPage: 20) {
     id name postalCode city __typename
   }
 }`;
+  var WA_EMPLOYER_LOCATIONS_QUERY = `query allEmployerLocations($employerId: UUID) {
+  items: allEmployerLocations(filter: { employerId: $employerId }, perPage: 20) {
+    id name postalCode city __typename
+  }
+}`;
+  function optional(unavailable, label2, promise, fallback) {
+    return promise.catch((error) => {
+      console.warn(`[Werkia WA] ${label2} nicht ladbar:`, error?.message || error);
+      unavailable.push(label2);
+      return fallback;
+    });
+  }
   async function loadEmployee(request, id) {
     if (!id) return null;
     const result = await request(WA_EMPLOYEE_QUERY, { ids: [id] });
     return (result?.items || []).find((item) => item?.id === id) || null;
   }
+  var loadMe = (request) => request(WA_ME_QUERY, {}).then((result) => result?.me || null);
   async function loadCandidateContext(request, candidateId) {
-    const result = await request(WA_CANDIDATE_QUERY, { id: candidateId });
+    const unavailable = [];
+    const [result, cem] = await Promise.all([
+      request(WA_CANDIDATE_QUERY, { id: candidateId }),
+      optional(unavailable, "eigener Name/E-Mail", loadMe(request), null)
+    ]);
     const candidate = result?.data;
     if (!candidate?.id) throw new Error("Kandidat konnte nicht geladen werden.");
     return {
       candidateId: candidate.id,
       candidateFirstName: candidate.firstName || "",
-      cem: result?.me || null,
-      obc: await loadEmployee(request, candidate.obcEmployeeId)
+      cem,
+      obc: await optional(unavailable, "OBC-Mitarbeiter", loadEmployee(request, candidate.obcEmployeeId), null),
+      unavailable
     };
   }
   async function loadMatchContext(request, matchId) {
-    const result = await request(WA_MATCH_QUERY, { id: matchId });
+    const unavailable = [];
+    const [result, cem] = await Promise.all([
+      request(WA_MATCH_QUERY, { id: matchId }),
+      optional(unavailable, "eigener Name/E-Mail", loadMe(request), null)
+    ]);
     const match = result?.data;
     const jobPosition = match?.jobPosition;
     const employer = jobPosition?.employer;
     if (!match?.id || !match.candidate?.id || !jobPosition?.id || !employer?.id) throw new Error("Matchdaten konnten nicht vollständig geladen werden.");
-    const [employerData, obc] = await Promise.all([
-      request(WA_EMPLOYER_QUERY, { employerId: employer.id }),
-      loadEmployee(request, match.candidate.obcEmployeeId)
+    const items = (query) => (result2) => result2?.[query] || [];
+    const [obc, jobLocation, contacts, interviewLocations, employerLocations] = await Promise.all([
+      optional(unavailable, "OBC-Mitarbeiter", loadEmployee(request, match.candidate.obcEmployeeId), null),
+      optional(unavailable, "Ort der Vakanz", request(WA_JOB_LOCATION_QUERY, { id: jobPosition.id }).then((result2) => result2?.data?.location || null), null),
+      optional(unavailable, "Ansprechpartner", request(WA_CONTACTS_QUERY, { employerId: employer.id }).then(items("items")), []),
+      optional(unavailable, "Terminadressen", request(WA_INTERVIEW_LOCATIONS_QUERY, { employerId: employer.id }).then(items("items")), []),
+      optional(unavailable, "Standorte", request(WA_EMPLOYER_LOCATIONS_QUERY, { employerId: employer.id }).then(items("items")), [])
     ]);
-    const employerLocations = employerData?.employerLocations || [];
     return {
       matchId: match.id,
       candidateId: match.candidate.id,
       candidateFirstName: match.candidate.firstName || "",
-      cem: result?.me || null,
+      cem,
       obc,
       employerName: employer.name || "",
       jobTitle: cleanJobTitle(jobPosition.mainTitle),
       jobLink: jobLink(jobPosition.id),
-      region: pickRegion({ jobLocation: jobPosition.location, employerLocations }),
+      region: pickRegion({ jobLocation, employerLocations }),
       interviews: match.interviews || [],
-      contacts: employerData?.contacts || [],
-      defaultContact: pickContact(employerData?.contacts),
-      interviewLocations: employerData?.interviewLocations || [],
-      employerLocations
+      contacts,
+      defaultContact: pickContact(contacts),
+      interviewLocations,
+      employerLocations,
+      unavailable
     };
   }
   function addressFor(context, interview) {
@@ -8738,8 +8765,13 @@
         controls.append(element("label", { textContent: "Ansprechpartner" }, [contactSelect]));
       }
       const gapsBox = element("div", { className: "wa-gaps", hidden: true });
+      const unavailableBox = element("div", {
+        className: "wa-gaps",
+        hidden: !context.unavailable?.length,
+        textContent: context.unavailable?.length ? `Für dein Konto nicht abrufbar: ${context.unavailable.join(", ")}. Diese Angaben bitte von Hand ergänzen.` : ""
+      });
       const textarea = element("textarea", { spellcheck: true });
-      body.replaceChildren(...controls.childElementCount ? [controls] : [], gapsBox, element("label", { textContent: "Nachricht (für diese Nachricht frei bearbeitbar)" }, [textarea]));
+      body.replaceChildren(...controls.childElementCount ? [controls] : [], unavailableBox, gapsBox, element("label", { textContent: "Nachricht (für diese Nachricht frei bearbeitbar)" }, [textarea]));
       const showGaps = () => {
         const open = remainingGaps(textarea.value, state.gaps);
         gapsBox.hidden = !open.length;
