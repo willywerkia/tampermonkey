@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.140
+// @version      1.9.141
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -8239,9 +8239,9 @@
   var MODE_ADJECTIVE = { phone: "telefonisch", digital: "digital", onsite: "vor Ort" };
   function appointmentPhrase(mode, several) {
     const [singular, plural] = {
-      phone: ["Telefontermin", "Telefontermine"],
-      digital: ["digitalen Termin", "digitalen Termine"],
-      onsite: ["vor Ort Termin", "vor Ort Termine"]
+      phone: ["*Telefontermin*", "*Telefontermine*"],
+      digital: ["*digitalen Termin*", "*digitalen Termine*"],
+      onsite: ["*vor Ort Termin*", "*vor Ort Termine*"]
     }[mode] || ["Termin", "Termine"];
     return several ? `einen dieser ${plural}` : `diesen ${singular}`;
   }
@@ -8272,7 +8272,7 @@
         `📆 *${several ? "Terminvorschläge" : "Terminvorschlag"}*:`,
         ...dates.length ? dates.map((date) => `# ${formatDay(date)} um ${formatTime(date)}`) : [`# ${slot("Terminvorschlag", "")}`],
         "",
-        `Kannst und möchtest Du *${appointmentPhrase(ctx.mode, several)}* wahrnehmen?`
+        `Kannst und möchtest Du ${appointmentPhrase(ctx.mode, several)} wahrnehmen?`
       ];
     },
     tb: (ctx, slot) => {
@@ -8305,7 +8305,11 @@
       const sign = `LG ${slot("Vorname CEM", ctx.cem?.firstName)}`;
       if (ctx.mode === "onsite") return [
         `Hi ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
-        `für Deinen vor Ort Termin ${when} bei ${employer} um ${time} wünsche ich Dir viel Erfolg 🍀 Bring gerne Deine Unterlagen zum Gespräch mit.`,
+        "",
+        `für Deinen vor Ort Termin ${when} bei ${employer} um ${time} wünsche ich Dir viel Erfolg 🍀`,
+        "",
+        "Bring gerne Deine Unterlagen zum Gespräch mit.",
+        "",
         "Falls Du Dich verspäten solltest, melde Dich bitte schnellstmöglich bei Deinem Ansprechpartner.",
         "",
         "Freue mich danach auf Dein Feedback. 🙂",
@@ -8314,7 +8318,9 @@
       ];
       if (ctx.mode === "digital") return [
         `Hi ${slot("Vorname Kandidat", ctx.candidateFirstName)},`,
+        "",
         `für Deinen digitalen Termin ${when} mit ${employer} um ${time} wünsche ich Dir viel Erfolg 🍀`,
+        "",
         "Bitte teste den Link zum Gespräch heute schonmal und logge Dich morgen 5-10min vor dem Gespräch ein.",
         "",
         "Freue mich danach auf Dein Feedback. 🙂",
