@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CEM Toolbox
 // @namespace    https://werkia.de/cem-toolbox
-// @version      1.9.137
+// @version      1.9.138
 // @description  Vereint CEM-OFM, Vakanz-Kandidateninfos und dringende Vakanzen fuer CEM.
 // @icon64       https://raw.githubusercontent.com/willywerkia/werkiaFavicons/main/CEM.svg
 // @match        https://admin.werkia.de/*
@@ -2378,7 +2378,7 @@
         "Unterschrift und E-Mail kommen vom angemeldeten Adminpanel-Nutzer.",
         "Bei der VT Bestätigung vor Ort wird die Fahrzeit vom Kandidaten zur Terminadresse nachgeladen.",
         "Eigene Vorlagen: im WA-Menü „+ Neue Vorlage …“. Name, „Kandidat“ oder „Match“ wählen und Text schreiben; Platzhalter wie {Vorname Kandidat} oder {Arbeitgeber} per Klick einfügen, sie werden beim Verwenden gefüllt. Danach stehen sie unter „Meine Vorlagen“.",
-        "Eigene Vorlagen liegen nur in deinem Browser. „Vorlagen verwalten …“ zum Bearbeiten, Löschen und für Export/Import beim PC-Wechsel.",
+        "Eigene Vorlagen liegen nur in deinem Browser. „Vorlagen verwalten …“ zum Bearbeiten und Löschen. „Text kopieren“ kopiert den Rohtext mit Platzhaltern; wer ihn bekommt (oder du auf einem neuen PC), fügt ihn unter „+ Neue Vorlage“ ein.",
         "Im Adminpanel wird nichts geändert. Gesendet wird nur, was du selbst in WhatsApp einfügst."
       ]
     },
@@ -8546,6 +8546,17 @@
   function matchOnlyPlaceholders(text) {
     return usedPlaceholders(text).filter((key) => PLACEHOLDER_BY_KEY.get(key.toLowerCase()).scope === "match");
   }
+  function unknownPlaceholders(text) {
+    const result = [];
+    for (const [whole, raw] of String(text || "").matchAll(PLACEHOLDER_RE)) {
+      const wanted = raw.trim().toLowerCase();
+      if (!wanted || PLACEHOLDER_BY_KEY.has(wanted) || result.some((item) => item.text === whole)) continue;
+      const words = wanted.split(/\s+/).filter((word) => word.length > 2);
+      const suggestion = PLACEHOLDERS.find((item) => item.key.toLowerCase().includes(wanted)) || PLACEHOLDERS.find((item) => words.some((word) => item.key.toLowerCase().includes(word)));
+      result.push({ text: whole, suggestion: suggestion ? `{${suggestion.key}}` : "" });
+    }
+    return result;
+  }
   function needsFor(text) {
     const used = new Set(usedPlaceholders(text));
     const needs = [];
@@ -8606,14 +8617,6 @@
     const wanted = String(name || "").trim().toLowerCase();
     return (store?.templates || []).find((entry) => entry.id !== ownId && entry.name.toLowerCase() === wanted) || null;
   }
-  function mergeStores2(base, incoming) {
-    let result = parseStore2(base);
-    for (const template of parseStore2(incoming).templates) {
-      const existing = findNameClash(result, template.name);
-      result = upsertTemplate(result, { ...template, id: existing?.id || template.id });
-    }
-    return result;
-  }
   function createTemplateStorage({ read, write, backupRead, backupWrite }) {
     const safe = (fn) => {
       try {
@@ -8655,7 +8658,7 @@
   .${CELL_CLASS} { width:1%; white-space:nowrap; padding-left:4px !important; padding-right:4px !important; text-align:center; }
   th.${CELL_CLASS} { font-weight:500; }
   .${BUTTON_CLASS}:hover { background:#1f9a6b; color:#fff; }
-  #${IDS4.menu} { position:fixed; z-index:2147483640; min-width:320px; padding:8px; border:1px solid #e2e0e8; border-radius:16px; background:#fff; box-shadow:0 12px 32px rgba(28,26,34,.18); font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
+  #${IDS4.menu} { position:fixed; z-index:2147483640; min-width:320px; max-height:calc(100vh - 16px); overflow-y:auto; overscroll-behavior:contain; box-sizing:border-box; padding:8px; border:1px solid #e2e0e8; border-radius:16px; background:#fff; box-shadow:0 12px 32px rgba(28,26,34,.18); font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1c1a22; }
   #${IDS4.menu} .wa-group { padding:8px 12px 3px; color:#6b6775; font-size:11px; font-weight:650; letter-spacing:.02em; }
   #${IDS4.menu} button { display:block; width:100%; padding:10px 12px; border:0; border-radius:10px; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
   #${IDS4.menu} button:hover { background:#f1edff; color:#6d4aff; }
@@ -8859,13 +8862,19 @@
       addItem("Vorlagen verwalten …", () => openManager(), "wa-action");
       document.body.appendChild(menu);
       const rect = button2.getBoundingClientRect();
-      const top = Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8);
+      const height = menu.offsetHeight;
+      let top = rect.bottom + 4;
+      if (top + height > window.innerHeight - 8) top = rect.top - height - 4 >= 8 ? rect.top - height - 4 : window.innerHeight - height - 8;
       const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
       Object.assign(menu.style, { top: `${Math.max(8, top)}px`, left: `${Math.max(8, left)}px` });
     }
     function onDocumentClick(event) {
       const menu = document.getElementById(IDS4.menu);
       if (menu && !menu.contains(event.target)) closeMenu();
+    }
+    function onDocumentScroll(event) {
+      const menu = document.getElementById(IDS4.menu);
+      if (menu && !(event.target instanceof Node && menu.contains(event.target))) closeMenu();
     }
     function element(tag, props = {}, children = []) {
       const node = document.createElement(tag);
@@ -9078,6 +9087,16 @@ Trotzdem kopieren?`)) return;
       scopeSelect.addEventListener("change", renderChips);
       renderChips();
       const errorBox = element("div", { className: "wa-error", hidden: true });
+      const scopeNote = element("div", { className: "wa-gaps", hidden: true });
+      const adjustScope = () => {
+        const matchOnly = scopeSelect.value === "candidate" ? matchOnlyPlaceholders(textarea.value) : [];
+        if (!matchOnly.length) return;
+        scopeSelect.value = "match";
+        renderChips();
+        scopeNote.textContent = `Auf „Match“ umgestellt, weil ${matchOnly.map((key) => `{${key}}`).join(", ")} nur bei Matches gefüllt werden kann.`;
+        scopeNote.hidden = false;
+      };
+      textarea.addEventListener("input", adjustScope);
       body.append(
         element("div", { className: "wa-row" }, [
           element("label", { textContent: "Name im Menü" }, [nameInput]),
@@ -9085,7 +9104,8 @@ Trotzdem kopieren?`)) return;
         ]),
         element("label", { textContent: "Platzhalter (Klick fügt ein, wird beim Verwenden automatisch gefüllt)" }, [chips]),
         element("label", { textContent: "Text" }, [textarea]),
-        element("div", { className: "wa-note", textContent: "WhatsApp-Formatierung geht wie gewohnt: *fett*, _kursiv_. Was beim Verwenden fehlt, erscheint als [Lücke]." }),
+        scopeNote,
+        element("div", { className: "wa-note", textContent: "WhatsApp-Formatierung geht wie gewohnt: *fett*, _kursiv_. Was beim Verwenden fehlt, erscheint als [Lücke]. Eine Vorlage von Kolleg:innen (aus Slack o. Ä.) einfach hier einfügen." }),
         errorBox
       );
       const fail = (message) => {
@@ -9104,6 +9124,15 @@ Trotzdem kopieren?`)) return;
         if (findNameClash(store, name, existing?.id)) return fail(`Es gibt schon eine Vorlage „${name}“.`);
         const matchOnly = scopeSelect.value === "candidate" ? matchOnlyPlaceholders(textarea.value) : [];
         if (matchOnly.length) return fail(`Diese Platzhalter gibt es nur bei Match-Vorlagen: ${matchOnly.map((key) => `{${key}}`).join(", ")}. Bitte „Match“ wählen oder sie entfernen.`);
+        const unknown = unknownPlaceholders(textarea.value);
+        if (unknown.length) {
+          const lines = unknown.map((item) => `• ${item.text}${item.suggestion ? ` – meintest du ${item.suggestion}?` : ""}`).join("\n");
+          if (!window.confirm(`Diese Angaben in {…} sind keine Platzhalter und würden genau so beim Kandidaten ankommen:
+
+${lines}
+
+Trotzdem speichern?`)) return void 0;
+        }
         storage.save(upsertTemplate(store, { id: existing?.id, name, scope: scopeSelect.value, text: textarea.value }));
         back();
         showNotice(`✓ Vorlage „${name}“ gespeichert. Sie steht im WA-Menü unter „Meine Vorlagen“.`);
@@ -9129,6 +9158,11 @@ Trotzdem kopieren?`)) return;
       store.templates.forEach((template) => {
         const edit = element("button", { type: "button", className: "wa-neutral wa-small", textContent: "Bearbeiten" });
         edit.addEventListener("click", () => openEditor(template, { backToManager: true }));
+        const share = element("button", { type: "button", className: "wa-neutral wa-small", textContent: "Text kopieren", title: "Rohtext mit Platzhaltern kopieren, z. B. für Slack" });
+        share.addEventListener("click", async () => {
+          await copyText(template.text);
+          showNotice(`✓ Text von „${template.name}“ kopiert. Wer ihn bekommt, fügt ihn unter „+ Neue Vorlage“ ein.`);
+        });
         const remove = element("button", { type: "button", className: "wa-danger wa-small", textContent: "Löschen" });
         remove.addEventListener("click", () => {
           if (!window.confirm(`Vorlage „${template.name}“ löschen?`)) return;
@@ -9138,39 +9172,15 @@ Trotzdem kopieren?`)) return;
         list.append(element("div", { className: "wa-list-row" }, [
           element("span", { className: "wa-name", textContent: template.name }),
           element("span", { className: "wa-tag", textContent: template.scope === "match" ? "Match" : "Kandidat" }),
+          share,
           edit,
           remove
         ]));
       });
-      body.append(list, element("div", { className: "wa-note", textContent: "Die Vorlagen liegen nur in diesem Browser. Für einen neuen PC: hier exportieren, dort importieren. Beim Import werden Vorlagen mit gleichem Namen ersetzt, die übrigen bleiben." }));
-      const exportButton = element("button", { type: "button", className: "wa-neutral", textContent: "Exportieren", disabled: !store.templates.length });
-      exportButton.addEventListener("click", () => {
-        const blob = new Blob([JSON.stringify(storage.load(), null, 2)], { type: "application/json" });
-        const link = element("a", { href: URL.createObjectURL(blob), download: "cem-wa-vorlagen.json" });
-        document.body.append(link);
-        link.click();
-        link.remove();
-        runtime.setTimeout(() => URL.revokeObjectURL(link.href), 1e3);
-      });
-      const fileInput = element("input", { type: "file", accept: ".json,application/json", hidden: true });
-      fileInput.addEventListener("change", async () => {
-        const file = fileInput.files?.[0];
-        if (!file) return;
-        try {
-          const before = storage.load().templates.length;
-          const merged = mergeStores2(storage.load(), await file.text());
-          storage.save(merged);
-          openManager();
-          showNotice(`✓ Import fertig: ${merged.templates.length - before} neu, ${merged.templates.length} insgesamt.`);
-        } catch (error) {
-          window.alert(`Import fehlgeschlagen: ${error?.message || error}`);
-        }
-      });
-      const importButton = element("button", { type: "button", className: "wa-neutral", textContent: "Importieren" });
-      importButton.addEventListener("click", () => fileInput.click());
+      body.append(list, element("div", { className: "wa-note", textContent: "Die Vorlagen liegen nur in diesem Browser. Zum Weitergeben oder für einen neuen PC: „Text kopieren“, z. B. in Slack schicken und dort unter „+ Neue Vorlage“ einfügen. Die Platzhalter bleiben erhalten." }));
       const newButton = element("button", { type: "button", className: "wa-primary", textContent: "+ Neue Vorlage" });
       newButton.addEventListener("click", () => openEditor(null, { backToManager: true }));
-      foot.append(fileInput, importButton, exportButton, element("div", { className: "wa-spacer" }), newButton);
+      foot.append(element("div", { className: "wa-spacer" }), newButton);
     }
     async function copyText(text) {
       try {
@@ -9211,10 +9221,13 @@ Trotzdem kopieren?`)) return;
     runtime.createMutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
     runtime.addWindowListener("hashchange", scheduleSync);
     document.addEventListener("mousedown", onDocumentClick, true);
+    document.addEventListener("scroll", onDocumentScroll, true);
+    runtime.addWindowListener("resize", closeMenu);
     runtime.addCleanup?.(() => {
       if (syncTimer !== null) runtime.clearTimeout(syncTimer);
       if (toastTimer !== null) runtime.clearTimeout(toastTimer);
       document.removeEventListener("mousedown", onDocumentClick, true);
+      document.removeEventListener("scroll", onDocumentScroll, true);
       removeAll();
       closeDialog();
       document.getElementById(IDS4.toast)?.remove();
